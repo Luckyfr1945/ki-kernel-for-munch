@@ -52,7 +52,8 @@ struct binder_buffer {
 	unsigned free:1;
 	unsigned allow_user_free:1;
 	unsigned async_transaction:1;
-	unsigned debug_id:29;
+	unsigned clear_on_free:1; /* zero buffer before returning to free pool */
+	unsigned debug_id:28;
 
 	struct binder_transaction *transaction;
 
@@ -137,6 +138,8 @@ extern void binder_alloc_vma_close(struct binder_alloc *alloc);
 extern struct binder_buffer *
 binder_alloc_prepare_to_free(struct binder_alloc *alloc,
 			     uintptr_t user_ptr);
+extern void binder_alloc_clear_buf(struct binder_alloc *alloc,
+				   struct binder_buffer *buffer);
 extern void binder_alloc_free_buf(struct binder_alloc *alloc,
 				  struct binder_buffer *buffer);
 extern int binder_alloc_mmap_handler(struct binder_alloc *alloc,

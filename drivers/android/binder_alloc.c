@@ -766,6 +766,26 @@ static void binder_free_buf_locked(struct binder_alloc *alloc,
  *
  * Free the buffer allocated via binder_alloc_new_buffer()
  */
+/**
+ * binder_alloc_clear_buf() - zero a binder buffer's user-space data region
+ * @alloc:	binder_alloc for this proc
+ * @buffer:	buffer to clear
+ *
+ * Zero the user-space data region of @buffer to prevent sensitive IPC payload
+ * data from leaking into subsequent transactions that reuse the same memory.
+ * Called when the transaction has TF_CLEAR_BUF set.
+ * The buffer user_data is a contiguous mmap region so a single clear_user()
+ * covers the full allocation.
+ */
+void binder_alloc_clear_buf(struct binder_alloc *alloc,
+			    struct binder_buffer *buffer)
+{
+	size_t bytes = binder_alloc_buffer_size(alloc, buffer);
+
+	if (bytes && buffer->user_data)
+		clear_user(buffer->user_data, bytes);
+}
+
 void binder_alloc_free_buf(struct binder_alloc *alloc,
 			    struct binder_buffer *buffer)
 {

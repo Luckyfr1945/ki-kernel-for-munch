@@ -11,8 +11,8 @@
 						 * or not
 						 */
 #define DEF_GC_THREAD_URGENT_SLEEP_TIME	500	/* 500 ms */
-#define DEF_GC_THREAD_MIN_SLEEP_TIME	10000	/* milliseconds */
-#define DEF_GC_THREAD_MAX_SLEEP_TIME	60000
+#define DEF_GC_THREAD_MIN_SLEEP_TIME	120000	/* milliseconds (2 min) */
+#define DEF_GC_THREAD_MAX_SLEEP_TIME	240000	/* 4 min */
 #define DEF_GC_THREAD_NOGC_SLEEP_TIME	300000	/* wait 5 min */
 
 /* choose candidates from sections which has age of more than 7 days */
