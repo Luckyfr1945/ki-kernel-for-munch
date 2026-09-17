@@ -2606,7 +2606,11 @@ int smblib_get_prop_batt_status(struct smb_charger *chg,
 			return 0;
 		}
 	}
-	if (chg->report_input_absent || chg->bypass_active) {
+	if (chg->bypass_active) {
+		val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		return 0;
+	}
+	if (chg->report_input_absent) {
 		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
 		return 0;
 	}
@@ -5797,8 +5801,8 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 	}
 
 	if (chg->bypass_active) {
-		val->intval = false;
-		return 0;
+		rc = smblib_get_prop_usb_present(chg, val);
+		return rc;
 	}
 
 	if (get_client_vote_locked(chg->usb_icl_votable, USER_VOTER) == 0) {
