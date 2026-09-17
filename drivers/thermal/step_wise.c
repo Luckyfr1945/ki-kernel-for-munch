@@ -23,6 +23,7 @@
  */
 
 #include <linux/thermal.h>
+#include <linux/ki_profile.h>
 #include <trace/events/thermal.h>
 
 #include "thermal_core.h"
@@ -180,6 +181,10 @@ static void thermal_zone_trip_update(struct thermal_zone_device *tz, int trip)
 			 old_target != THERMAL_NO_TARGET))
 			throttle = true;
 		else
+			throttle = false;
+
+		/* Ki-Thermal: Gaming Unlocked bypass */
+		if (unlikely(!ki_thermal_throttle_enabled))
 			throttle = false;
 
 		instance->target = get_target_state(instance, trend, throttle);

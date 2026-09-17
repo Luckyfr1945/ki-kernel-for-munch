@@ -150,6 +150,7 @@ chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 # Ki-kernel profile node permissions
 chmod 666 /sys/kernel/ki_profile/mode 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 
 # Double Tap to Wake (DT2W) node permissions for AOSP
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null

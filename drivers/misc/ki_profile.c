@@ -110,14 +110,39 @@ static ssize_t available_modes_show(struct kobject *kobj, struct kobj_attribute 
 	return scnprintf(buf, PAGE_SIZE, "0: Battery Saver\n1: Balanced\n2: Performance/Gaming Turbo\n");
 }
 
+bool ki_thermal_throttle_enabled = true;
+EXPORT_SYMBOL_GPL(ki_thermal_throttle_enabled);
+
+static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", ki_thermal_throttle_enabled ? 1 : 0);
+}
+
+static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribute *attr,
+				      const char *buf, size_t count)
+{
+	int val;
+
+	if (kstrtoint(buf, 10, &val))
+		return -EINVAL;
+
+	ki_thermal_throttle_enabled = (val != 0);
+	pr_info("ki_profile: Thermal throttle %s\n",
+		ki_thermal_throttle_enabled ? "enabled (Safe)" : "disabled (Gaming Unlocked)");
+
+	return count;
+}
+
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
+static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
 
 static struct attribute *ki_profile_attrs[] = {
 	&mode_attr.attr,
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
+	&thermal_throttle_attr.attr,
 	NULL,
 };
 

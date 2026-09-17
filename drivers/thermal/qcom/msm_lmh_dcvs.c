@@ -22,6 +22,7 @@
 #include <linux/atomic.h>
 #include <linux/regulator/consumer.h>
 #include <linux/cpufreq.h>
+#include <linux/ki_profile.h>
 
 #include <asm/smp_plat.h>
 #include <asm/cacheflush.h>
@@ -181,6 +182,11 @@ static unsigned long limits_mitigation_notify(struct limits_dcvs_hw *hw)
 
 	if (max_cpu_ct == cpumask_weight(&hw->core_map))
 		max_limit = max_cpu_limit;
+
+	/* Ki-Thermal: Gaming Unlocked bypass */
+	if (unlikely(!ki_thermal_throttle_enabled))
+		max_limit = max_cpu_limit ? max_cpu_limit : hw->max_freq[0];
+
 	sched_update_cpu_freq_min_max(&hw->core_map, 0, max_limit);
 	pr_debug("CPU:%d max limit:%lu\n", cpumask_first(&hw->core_map),
 			max_limit);

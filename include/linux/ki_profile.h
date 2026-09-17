@@ -13,4 +13,6 @@ int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned
 void sched_set_updown_migrate(unsigned int up, unsigned int down);
 int sched_set_boost(int type);
 
+extern bool ki_thermal_throttle_enabled;
+
 #endif /* _LINUX_KI_PROFILE_H */

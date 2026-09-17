@@ -123,7 +123,7 @@ git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --dep
 
 # Configure version string
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.3"
+KERNEL_VERSION="v1.4"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
 
 export KBUILD_BUILD_USER="build-user"
