@@ -135,4 +135,11 @@ all.config
 # fetched Android config fragments
 kernel/configs/android-*.cfg
 
+out/*.zip
+*.zip
+/*.zip
 out/
+anykernel/
+release/
+debug/
+rilis

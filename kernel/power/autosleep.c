@@ -54,11 +54,13 @@ static void try_to_suspend(struct work_struct *work)
 		goto out;
 
 	/*
-	 * If the wakeup occured for an unknown reason, wait to prevent the
-	 * system from trying to suspend and waking up in a tight loop.
+	 * Faster sleep:
+	 * If the wakeup occured for an unknown reason, wait 50ms instead of
+	 * HZ / 2 (500ms) so the device can enter deep sleep 10x faster
+	 * when screen is off and wakelocks drop.
 	 */
 	if (final_count == initial_count)
-		schedule_timeout_uninterruptible(HZ / 2);
+		schedule_timeout_uninterruptible(msecs_to_jiffies(50));
 
  out:
 	queue_up_suspend_work();
@@ -120,7 +122,7 @@ int __init pm_autosleep_init(void)
 	if (!autosleep_ws)
 		return -ENOMEM;
 
-	autosleep_wq = alloc_ordered_workqueue("autosleep", 0);
+	autosleep_wq = alloc_ordered_workqueue("autosleep", WQ_HIGHPRI | WQ_FREEZABLE);
 	if (autosleep_wq)
 		return 0;
 

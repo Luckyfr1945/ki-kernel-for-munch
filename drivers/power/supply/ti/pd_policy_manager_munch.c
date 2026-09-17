@@ -70,8 +70,8 @@ static struct pdpm_config pm_config = {
 	.fc2_taper_current = TAPER_DONE_NORMAL_MA,
 	.fc2_steps = 1,
 
-	.min_adapter_volt_required = 10000,
-	.min_adapter_curr_required = 2000,
+	.min_adapter_volt_required = 8500,
+	.min_adapter_curr_required = 1500,
 
 	.min_vbat_for_cp = 3500,
 
@@ -367,27 +367,7 @@ static bool pd_disable_cp_by_jeita_status(struct usbpd_pm *pdpm)
 /* get bq27z561 fastcharge mode to enable or disabled */
 static bool pd_get_bms_digest_verified(struct usbpd_pm *pdpm)
 {
-	union power_supply_propval pval = {
-		0,
-	};
-	int rc;
-
-	if (!pdpm->bms_psy)
-		return false;
-
-	rc = power_supply_get_property(pdpm->bms_psy,
-				       POWER_SUPPLY_PROP_AUTHENTIC, &pval);
-	if (rc < 0) {
-		pr_info("Couldn't get fastcharge mode:%d\n", rc);
-		return false;
-	}
-
-	pr_err("pval.intval: %d\n", pval.intval);
-
-	if (pval.intval == 1)
-		return true;
-	else
-		return false;
+	return true;
 }
 
 /* get bq27z561 chip ok*/
@@ -932,9 +912,8 @@ static void usbpd_pm_evaluate_src_caps(struct usbpd_pm *pdpm)
 		if (pdpm->pdo[i].type == PD_SRC_PDO_TYPE_AUGMENTED &&
 		    pdpm->pdo[i].pps && pdpm->pdo[i].pos) {
 			if (pdpm->pdo[i].max_volt_mv >= pdpm->apdo_max_volt &&
-			    pdpm->pdo[i].curr_ma >= pdpm->apdo_max_curr &&
-			    pdpm->pdo[i].max_volt_mv <= APDO_MAX_VOLT) {
-				pdpm->apdo_max_volt = pdpm->pdo[i].max_volt_mv;
+			    pdpm->pdo[i].curr_ma >= pdpm->apdo_max_curr) {
+				pdpm->apdo_max_volt = min(pdpm->pdo[i].max_volt_mv, APDO_MAX_VOLT);
 				pdpm->apdo_max_curr = pdpm->pdo[i].curr_ma;
 				pdpm->apdo_selected_pdo = pdpm->pdo[i].pos;
 				pdpm->pps_supported = true;
@@ -953,7 +932,17 @@ static void usbpd_pm_evaluate_src_caps(struct usbpd_pm *pdpm)
 		power_supply_set_property(pdpm->usb_psy,
 					  POWER_SUPPLY_PROP_APDO_MAX, &pval);
 	} else {
-		pr_info("Not qualified PPS adapter\n");
+		pr_info("Not qualified PPS adapter, falling back to 9V fixed PD\n");
+		if (pdpm->fcc_votable)
+			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, true,
+			     NON_PPS_PD_FCC_LIMIT);
+		for (i = 0; i < PDO_MAX_NUM; i++) {
+			if (pdpm->pdo[i].type == PD_SRC_PDO_TYPE_FIXED &&
+			    pdpm->pdo[i].max_volt_mv == 9000 && pdpm->pdo[i].pos) {
+				usbpd_select_pdo(pdpm->pd, pdpm->pdo[i].pos, 0, 0);
+				break;
+			}
+		}
 	}
 }
 
@@ -1356,7 +1345,7 @@ static void usbpd_pm_move_state(struct usbpd_pm *pdpm, enum pm_state state)
 
 static int usbpd_pm_sm(struct usbpd_pm *pdpm)
 {
-	int ret;
+	int ret, i;
 	int rc = 0;
 	static int tune_vbus_retry;
 	static bool stop_sw;
@@ -1622,8 +1611,16 @@ static int usbpd_pm_sm(struct usbpd_pm *pdpm)
 		break;
 
 	case PD_PM_STATE_FC2_EXIT:
-		/* select default 5V*/
-		usbpd_select_pdo(pdpm->pd, 1, 0, 0);
+		/* Try to select fixed 9V instead of dropping immediately to 5V */
+		for (i = 0; i < PDO_MAX_NUM; i++) {
+			if (pdpm->pdo[i].type == PD_SRC_PDO_TYPE_FIXED &&
+			    pdpm->pdo[i].max_volt_mv == 9000 && pdpm->pdo[i].pos) {
+				usbpd_select_pdo(pdpm->pd, pdpm->pdo[i].pos, 0, 0);
+				break;
+			}
+		}
+		if (i == PDO_MAX_NUM)
+			usbpd_select_pdo(pdpm->pd, 1, 0, 0);
 		pdpm->no_need_en_slave_bq = false;
 		pdpm->master_ibus_below_critical_low_count = 0;
 		pdpm->chip_ok_count = 0;
@@ -1765,6 +1762,9 @@ static void usbpd_pps_non_verified_contact(struct usbpd_pm *pdpm, int status)
 
 	if (status) {
 		usbpd_pm_evaluate_src_caps(pdpm);
+		if (pdpm->fcc_votable)
+			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, true,
+			     NON_PPS_PD_FCC_LIMIT);
 		if (pdpm->pps_supported)
 			schedule_delayed_work(&pdpm->pm_work, 5 * HZ);
 	} else {

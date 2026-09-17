@@ -182,8 +182,13 @@ static inline int performance_multiplier(unsigned long nr_iowaiters, unsigned lo
 	 */
 	/* mult += 2 * get_loadavg(); */
 
-	/* for IO wait tasks (per cpu!) we add 5x each */
-	mult += 10 * nr_iowaiters;
+	/*
+	 * Smarter idle handling:
+	 * Moderate the multiplier for IO wait tasks (cap at 5)
+	 * to prevent locking idle CPUs into shallow power states
+	 * when light background IO occurs.
+	 */
+	mult += min_t(int, 4, 2 * nr_iowaiters);
 
 	return mult;
 }

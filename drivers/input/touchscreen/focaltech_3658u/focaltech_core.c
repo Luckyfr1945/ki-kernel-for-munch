@@ -43,6 +43,9 @@
 #include <linux/earlysuspend.h>
 #define FTS_SUSPEND_LEVEL 1     /* Early-suspend level */
 #endif
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+#include <linux/input/tp_common.h>
+#endif
 #include "focaltech_core.h"
 
 /*****************************************************************************
@@ -1348,6 +1351,18 @@ static void fts_resume_work(struct work_struct *work)
 	fts_ts_resume(ts_data->dev);
 }
 
+static void fts_init_work(struct work_struct *work)
+{
+	struct fts_ts_data *ts_data = container_of(work, struct fts_ts_data,
+								  init_work.work);
+
+	FTS_INFO("init_work: checking delayed touch initialization");
+	if (ts_data->suspended) {
+		FTS_INFO("init_work: triggering touch resume for recovery / coldboot");
+		fts_ts_resume(ts_data->dev);
+	}
+}
+
 #if defined(CONFIG_DRM)
 static int drm_notifier_callback(struct notifier_block *self,
 		unsigned long event, void *data)
@@ -1691,6 +1706,7 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
 
 	if (ts_data->ts_workqueue) {
 		INIT_WORK(&ts_data->resume_work, fts_resume_work);
+		INIT_DELAYED_WORK(&ts_data->init_work, fts_init_work);
 	}
 
 	device_init_wakeup(ts_data->dev, true);
@@ -1718,6 +1734,11 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
 	INIT_WORK(&ts_data->power_supply_work, fts_power_supply_work);
 	ts_data->power_supply_notifier.notifier_call = fts_power_supply_event;
 	power_supply_reg_notifier(&ts_data->power_supply_notifier);
+
+	ts_data->suspended = true;
+	if (ts_data->ts_workqueue) {
+		queue_delayed_work(ts_data->ts_workqueue, &ts_data->init_work, msecs_to_jiffies(1500));
+	}
 
 	FTS_FUNC_EXIT();
 	return 0;
@@ -1780,8 +1801,10 @@ static int fts_ts_remove_entry(struct fts_ts_data *ts_data)
 	power_supply_unreg_notifier(&ts_data->power_supply_notifier);
 	mutex_destroy(&ts_data->power_supply_lock);
 
-	if (ts_data->ts_workqueue)
+	if (ts_data->ts_workqueue) {
+		cancel_delayed_work_sync(&ts_data->init_work);
 		destroy_workqueue(ts_data->ts_workqueue);
+	}
 
 #if defined(CONFIG_DRM)
 	if (mi_drm_unregister_client(&ts_data->fb_notif))
@@ -1821,6 +1844,8 @@ static int fts_ts_suspend(struct device *dev)
 		FTS_INFO("Already in suspend state");
 		return 0;
 	}
+
+	cancel_delayed_work_sync(&ts_data->init_work);
 
 	if (ts_data->fw_loading) {
 		FTS_INFO("fw upgrade in process, can't suspend");
@@ -1878,14 +1903,15 @@ static int fts_ts_resume(struct device *dev)
 		return 0;
 	}
 
+	cancel_delayed_work(&ts_data->init_work);
+
 	fts_release_all_finger();
 
-	if (!ts_data->ic_info.is_incell) {
 #if FTS_POWER_SOURCE_CUST_EN
+	if (!ts_data->ic_info.is_incell)
 		fts_power_source_resume(ts_data);
 #endif
-		fts_reset_proc(200);
-	}
+	fts_reset_proc(200);
 
 	fts_wait_tp_to_valid();
 	fts_ex_mode_recovery(ts_data);
@@ -2214,16 +2240,15 @@ static void fts_update_touchmode_data(struct fts_ts_data *ts_data)
 
 static void fts_update_gesture_state(struct fts_ts_data *ts_data, int bit, bool enable)
 {
-	if (ts_data->suspended) {
-		FTS_ERROR("TP is suspended, do not update gesture state");
+	if (!ts_data || !ts_data->input_dev)
 		return;
-	}
+
 	mutex_lock(&ts_data->input_dev->mutex);
 	if (enable)
 		ts_data->gesture_status |= 1 << bit;
 	else
 		ts_data->gesture_status &= ~(1 << bit);
-	FTS_INFO("gesture state:0x%02X", ts_data->gesture_status);
+	FTS_INFO("gesture state:0x%02X, suspended:%d", ts_data->gesture_status, ts_data->suspended);
 	ts_data->gesture_mode = ts_data->gesture_status != 0 ? ENABLE : DISABLE;
 	mutex_unlock(&ts_data->input_dev->mutex);
 }
@@ -2249,8 +2274,8 @@ static int fts_set_cur_value(int mode, int value)
 	FTS_INFO("touch mode:%d, value:%d", mode, value);
 
 	if (mode >= Touch_Mode_NUM) {
-		FTS_ERROR("mode is error:%d", mode);
-		return -EINVAL;
+		FTS_DEBUG("mode is not supported:%d", mode);
+		return 0;
 	} else if (mode == Touch_Doubletap_Mode && value >= 0) {
 		fts_update_gesture_state(fts_data, GESTURE_DOUBLETAP, value != 0 ? true : false);
 		return 0;
@@ -2286,7 +2311,7 @@ static int fts_reset_mode(int mode)
 	} else if (mode < Touch_Mode_NUM) {
 		fts_restore_mode_value(mode, GET_DEF_VALUE);
 	} else {
-		FTS_ERROR("mode:%d don't support");
+		FTS_DEBUG("mode:%d don't support", mode);
 	}
 
 	FTS_INFO("mode:%d reset", mode);
@@ -2304,7 +2329,7 @@ static int fts_get_mode_value(int mode, int value_type)
 		value = xiaomi_touch_interfaces.touch_mode[mode][value_type];
 		FTS_INFO("mode:%d, value_type:%d, value:%d", mode, value_type, value);
 	} else {
-		FTS_ERROR("mode:%d don't support");
+		FTS_DEBUG("mode:%d don't support", mode);
 	}
 
 	return value;
@@ -2354,6 +2379,43 @@ static int fts_get_touch_super_resolution_factor(void)
 	FTS_INFO("current super resolution factor is: %d", SUPER_RESOLUTION_FACOTR);
 	return SUPER_RESOLUTION_FACOTR;
 }
+
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+static ssize_t fts_double_tap_show(struct kobject *kobj,
+				   struct kobj_attribute *attr, char *buf)
+{
+	int enable = 0;
+
+	if (fts_data)
+		enable = (fts_data->gesture_status & (1 << GESTURE_DOUBLETAP)) ? 1 : 0;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", enable);
+}
+
+static ssize_t fts_double_tap_store(struct kobject *kobj,
+				    struct kobj_attribute *attr,
+				    const char *buf, size_t count)
+{
+	int rc, val;
+
+	rc = kstrtoint(buf, 10, &val);
+	if (rc)
+		return -EINVAL;
+
+	if (fts_data) {
+		fts_update_gesture_state(fts_data, GESTURE_DOUBLETAP, !!val);
+		if (fts_data->suspended && fts_data->gesture_mode)
+			fts_gesture_recovery(fts_data);
+	}
+
+	return count;
+}
+
+static struct tp_common_ops fts_double_tap_ops = {
+	.show = fts_double_tap_show,
+	.store = fts_double_tap_store,
+};
+#endif
 
 #endif
 
@@ -2416,6 +2478,9 @@ static int fts_ts_probe(struct spi_device *spi)
 
 	fts_init_touch_mode_data(ts_data);
 	xiaomitouch_register_modedata(&xiaomi_touch_interfaces);
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+	tp_common_set_double_tap_ops(&fts_double_tap_ops);
+#endif
 #endif
 
 	FTS_INFO("Touch Screen(SPI BUS) driver prboe successfully");

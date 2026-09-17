@@ -261,6 +261,8 @@ void tcp_get_available_congestion_control(char *buf, size_t maxlen)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ca, &tcp_cong_list, list) {
+		if (!strcmp(ca->name, "reno"))
+			continue;
 		offs += snprintf(buf + offs, maxlen - offs,
 				 "%s%s",
 				 offs == 0 ? "" : " ", ca->name);
@@ -288,6 +290,8 @@ void tcp_get_allowed_congestion_control(char *buf, size_t maxlen)
 	*buf = '\0';
 	rcu_read_lock();
 	list_for_each_entry_rcu(ca, &tcp_cong_list, list) {
+		if (!strcmp(ca->name, "reno"))
+			continue;
 		if (!(ca->flags & TCP_CONG_NON_RESTRICTED))
 			continue;
 		offs += snprintf(buf + offs, maxlen - offs,

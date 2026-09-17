@@ -18,6 +18,7 @@
 #include <linux/of_gpio.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/kobject.h>
 #include <linux/firmware.h>
 #include <linux/slab.h>
 #include <linux/version.h>
@@ -4233,11 +4234,122 @@ irqreturn_t aw86927_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static struct aw86927 *g_aw86927;
+static struct kobject *haptics_kobj;
+
+static ssize_t haptics_gain_show(struct kobject *kobj,
+				struct kobj_attribute *attr, char *buf)
+{
+	if (!g_aw86927)
+		return -ENODEV;
+	return scnprintf(buf, PAGE_SIZE, "%u\n", g_aw86927->gain);
+}
+
+static ssize_t haptics_gain_store(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned int val = 0;
+	int rc;
+
+	if (!g_aw86927)
+		return -ENODEV;
+
+	rc = kstrtouint(buf, 0, &val);
+	if (rc < 0)
+		return rc;
+
+	if (val > 0x80)
+		val = 0x80;
+
+	mutex_lock(&g_aw86927->lock);
+	g_aw86927->gain = (unsigned char)val;
+	aw86927_haptic_set_gain(g_aw86927, g_aw86927->gain);
+	mutex_unlock(&g_aw86927->lock);
+
+	return count;
+}
+static struct kobj_attribute haptics_gain_attr =
+	__ATTR(gain, 0664, haptics_gain_show, haptics_gain_store);
+
+static ssize_t haptics_vmax_show(struct kobject *kobj,
+				struct kobj_attribute *attr, char *buf)
+{
+	if (!g_aw86927)
+		return -ENODEV;
+	return scnprintf(buf, PAGE_SIZE, "%u\n", g_aw86927->vmax);
+}
+
+static ssize_t haptics_vmax_store(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned int val = 0;
+	int rc;
+
+	if (!g_aw86927)
+		return -ENODEV;
+
+	rc = kstrtouint(buf, 0, &val);
+	if (rc < 0)
+		return rc;
+
+	mutex_lock(&g_aw86927->lock);
+	g_aw86927->vmax = val;
+	aw86927_haptic_set_bst_vol(g_aw86927, g_aw86927->vmax);
+	mutex_unlock(&g_aw86927->lock);
+
+	return count;
+}
+static struct kobj_attribute haptics_vmax_attr =
+	__ATTR(vmax, 0664, haptics_vmax_show, haptics_vmax_store);
+
+static ssize_t haptics_level_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	if (!g_aw86927)
+		return -ENODEV;
+	return scnprintf(buf, PAGE_SIZE, "%u\n", g_aw86927->level);
+}
+
+static ssize_t haptics_level_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	unsigned int val = 0;
+	int rc;
+
+	if (!g_aw86927)
+		return -ENODEV;
+
+	rc = kstrtouint(buf, 0, &val);
+	if (rc < 0)
+		return rc;
+
+	mutex_lock(&g_aw86927->lock);
+	g_aw86927->level = val;
+	aw86927_haptic_set_gain(g_aw86927, g_aw86927->level);
+	mutex_unlock(&g_aw86927->lock);
+
+	return count;
+}
+static struct kobj_attribute haptics_level_attr =
+	__ATTR(level, 0664, haptics_level_show, haptics_level_store);
+
 int aw86927_vibrator_init(struct aw86927 *aw86927)
 {
 	int ret = 0;
 
 	aw_info("%s enter\n", __func__);
+	g_aw86927 = aw86927;
+	if (!haptics_kobj) {
+		haptics_kobj = kobject_create_and_add("haptics", kernel_kobj);
+		if (haptics_kobj) {
+			sysfs_create_file(haptics_kobj, &haptics_gain_attr.attr);
+			sysfs_create_file(haptics_kobj, &haptics_vmax_attr.attr);
+			sysfs_create_file(haptics_kobj, &haptics_level_attr.attr);
+		}
+	}
 	ret = sysfs_create_group(&aw86927->i2c->dev.kobj,
 				 &aw86927_vibrator_attribute_group);
 	if (ret < 0) {

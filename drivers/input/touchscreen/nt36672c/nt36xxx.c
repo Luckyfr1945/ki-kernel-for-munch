@@ -36,6 +36,9 @@
 #if defined(CONFIG_HAS_EARLYSUSPEND)
 #include <linux/earlysuspend.h>
 #endif
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+#include <linux/input/tp_common.h>
+#endif
 
 #include "nt36xxx.h"
 #ifndef NVT_SAVE_TESTDATA_IN_FILE
@@ -1925,8 +1928,8 @@ static int nvt_set_cur_value(int nvt_mode, int nvt_value)
 	uint8_t ret = 0;
 
 	if (nvt_mode >= Touch_Mode_NUM || nvt_mode < 0) {
-		NVT_ERR("%s, nvt mode is error:%d", __func__, nvt_mode);
-		return -EINVAL;
+		NVT_DBG("%s, nvt mode is not supported:%d", __func__, nvt_mode);
+		return 0;
 	}
 
 	if (nvt_mode == Touch_Doubletap_Mode && ts && nvt_value >= 0) {
@@ -2366,6 +2369,42 @@ static int nvt_power_supply_event(struct notifier_block *nb,
 	return 0;
 }
 
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+static ssize_t nvt_double_tap_show(struct kobject *kobj,
+				   struct kobj_attribute *attr, char *buf)
+{
+	int enable = 0;
+
+	if (ts)
+		enable = ts->db_wakeup ? 1 : 0;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", enable);
+}
+
+static ssize_t nvt_double_tap_store(struct kobject *kobj,
+				    struct kobj_attribute *attr,
+				    const char *buf, size_t count)
+{
+	int rc, val;
+
+	rc = kstrtoint(buf, 10, &val);
+	if (rc)
+		return -EINVAL;
+
+	if (ts) {
+		ts->db_wakeup = !!val;
+		schedule_work(&ts->switch_mode_work);
+	}
+
+	return count;
+}
+
+static struct tp_common_ops nvt_double_tap_ops = {
+	.show = nvt_double_tap_show,
+	.store = nvt_double_tap_store,
+};
+#endif
+
 static void nvt_power_supply_work(struct work_struct *work)
 {
 	struct nvt_ts_data *ts =
@@ -2788,6 +2827,9 @@ static int32_t nvt_ts_probe(struct platform_device *pdev)
 
 			nvt_init_touchmode_data();
 			xiaomitouch_register_modedata(&xiaomi_touch_interfaces);
+#endif
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+			tp_common_set_double_tap_ops(&nvt_double_tap_ops);
 #endif
 
 	bTouchIsAwake = 1;

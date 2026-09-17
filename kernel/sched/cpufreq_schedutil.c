@@ -601,8 +601,13 @@ static unsigned long sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
 	/*
 	 * @util is already in capacity scale; convert iowait_boost
 	 * into the same scale so we can compare.
+	 * Cap iowait_boost on Little cores (CPUs 0-3) to 70% to prevent
+	 * unnecessary max-frequency spikes on background I/O.
 	 */
 	boost = (sg_cpu->iowait_boost * max) >> SCHED_CAPACITY_SHIFT;
+	if (sg_cpu->cpu < 4)
+		boost = min(boost, (max * 7) / 10);
+
 	return max(boost, util);
 }
 
@@ -1280,12 +1285,18 @@ static int sugov_init(struct cpufreq_policy *policy)
 	switch (policy->cpu) {
 	default:
 	case 0:
+		tunables->up_rate_limit_us = 1000;
+		tunables->down_rate_limit_us = 500;
 		tunables->rtg_boost_freq = DEFAULT_CPU0_RTG_BOOST_FREQ;
 		break;
 	case 4:
+		tunables->up_rate_limit_us = 2000;
+		tunables->down_rate_limit_us = 500;
 		tunables->rtg_boost_freq = DEFAULT_CPU4_RTG_BOOST_FREQ;
 		break;
 	case 7:
+		tunables->up_rate_limit_us = 4000;
+		tunables->down_rate_limit_us = 500;
 		tunables->rtg_boost_freq = DEFAULT_CPU7_RTG_BOOST_FREQ;
 		break;
 	}
@@ -1456,6 +1467,30 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 	return &schedutil_gov;
 }
 #endif
+
+int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned int down_us)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->up_rate_limit_us = up_us;
+	tunables->down_rate_limit_us = down_us;
+	sg_policy->up_rate_delay_ns = (u64)up_us * NSEC_PER_USEC;
+	sg_policy->down_rate_delay_ns = (u64)down_us * NSEC_PER_USEC;
+	update_min_rate_limit_ns(sg_policy);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_rate_limits);
 
 static int __init sugov_register(void)
 {

@@ -572,6 +572,10 @@ void susfs_try_umount(uid_t target_uid) {
 	}
 }
 
+void susfs_try_umount_all(uid_t target_uid) {
+	susfs_try_umount(target_uid);
+}
+
 #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 	struct st_susfs_try_umount_list *cursor = NULL, *temp = NULL;
@@ -843,7 +847,7 @@ struct filename* susfs_get_redirected_path(unsigned long ino) {
 
 /* sus_su */
 #ifdef CONFIG_KSU_SUSFS_SUS_SU
-extern int susfs_sus_su_working_mode;
+int susfs_sus_su_working_mode = SUS_SU_DISABLED;
 extern void ksu_susfs_enable_sus_su(void);
 extern void ksu_susfs_disable_sus_su(void);
 
@@ -870,9 +874,12 @@ int susfs_sus_su(struct st_sus_su* __user user_info) {
 			return 2;
 		}
 		ksu_susfs_enable_sus_su();
+		susfs_sus_su_working_mode = SUS_SU_WITH_HOOKS;
 		SUSFS_LOGI("core kprobe hooks for ksu are disabled!\n");
 		SUSFS_LOGI("non-kprobe hook sus_su is enabled!\n");
 		SUSFS_LOGI("sus_su mode: %d\n", SUS_SU_WITH_HOOKS);
+		if (copy_to_user(user_info, &info, sizeof(info)))
+			SUSFS_LOGE("copy_to_user() failed\n");
 		return 0;
 	} else if (info.mode == SUS_SU_DISABLED) {
 		if (last_working_mode == SUS_SU_DISABLED) {
@@ -880,11 +887,10 @@ int susfs_sus_su(struct st_sus_su* __user user_info) {
 			return 1;
 		}
 		ksu_susfs_disable_sus_su();
+		susfs_sus_su_working_mode = SUS_SU_DISABLED;
 		if (last_working_mode == SUS_SU_WITH_HOOKS) {
 			SUSFS_LOGI("core kprobe hooks for ksu are enabled!\n");
-			goto out;
 		}
-out:
 		if (copy_to_user(user_info, &info, sizeof(info)))
 			SUSFS_LOGE("copy_to_user() failed\n");
 		return 0;

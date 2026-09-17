@@ -8,6 +8,12 @@ set -e
 TOOLCHAIN_PATH=$HOME/proton-clang/proton-clang-20210522/bin
 GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD)
 TARGET_DEVICE=$1
+KERNEL_NAME="Ki-kernel"
+KERNEL_VERSION="v1.0"
+BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
+export KBUILD_BUILD_USER="build-user"
+export KBUILD_BUILD_HOST="build-host 4.19.404R"
+LOCAL_VERSION_NAME="-${BUILD_DATETIME}-${KERNEL_NAME}-${KERNEL_VERSION}"
 
 if [ -z "$1" ]; then
     echo "Error: No argument provided, please specific a target device." 
@@ -55,7 +61,7 @@ export PATH="/usr/lib/ccache:$PATH"
 echo "CCACHE_DIR: [$CCACHE_DIR]"
 
 
-MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
 
 
 if [ "$1" == "j1" ]; then
@@ -82,22 +88,41 @@ clang --version
 
 
 
-KSU_ZIP_STR=NoKernelSU
-if [ "$2" == "ksu" ]; then
-    KSU_ENABLE=1
-    KSU_ZIP_STR=SukiSU-SUSFS
-else
-    KSU_ENABLE=0
-fi
+KSU_ENABLE=0
+SUSFS_ENABLE=0
+VARIANT_TAG="[NoKSU]"
 
+case "$2" in
+    ksu|ksu-susfs|susfs)
+        KSU_ENABLE=1
+        SUSFS_ENABLE=1
+        VARIANT_TAG="[KSUN+SUSFS]"
+        ;;
+    ksu-nosusfs|nosusfs|plain)
+        KSU_ENABLE=1
+        SUSFS_ENABLE=0
+        VARIANT_TAG="[KSUN]"
+        ;;
+    noksu|vanilla|none|"")
+        KSU_ENABLE=0
+        SUSFS_ENABLE=0
+        VARIANT_TAG="[NoKSU]"
+        ;;
+    *)
+        echo "Unknown variant: $2. Falling back to KernelSU-Next-SUSFS."
+        KSU_ENABLE=1
+        SUSFS_ENABLE=1
+        VARIANT_TAG="[KSUN+SUSFS]"
+        ;;
+esac
 
 echo "TARGET_DEVICE: $TARGET_DEVICE"
-
-if [ $KSU_ENABLE -eq 1 ]; then
-    echo "KSU is enabled"
-    curl -LSs "https://github.com/liyafe1997/SukiSU-Ultra/raw/4ff14cf0051d04209c4abd5027d99d8e7780ef5b/kernel/setup.sh" | bash -s f4863b20cc8dc0f8cc67418980f022e43014b598
+if [ $KSU_ENABLE -eq 1 ] && [ $SUSFS_ENABLE -eq 1 ]; then
+    echo "Variant: KernelSU-Next (v3.3.0) + SuSFS v1.5.7 is enabled"
+elif [ $KSU_ENABLE -eq 1 ]; then
+    echo "Variant: KernelSU-Next (v3.3.0) Standard (Non-SUSFS) is enabled"
 else
-    echo "KSU is disabled"
+    echo "Variant: Vanilla (No KernelSU, No SuSFS) is enabled"
 fi
 
 
@@ -108,41 +133,86 @@ rm -rf anykernel/
 
 echo "Clone AnyKernel3 for packing kernel (repo: https://github.com/liyafe1997/AnyKernel3)"
 git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --depth=1 anykernel
+cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
-# Add date to local version
-local_version_str="-perf"
-local_version_date_str="-$(date +%Y%m%d)-${GIT_COMMIT_ID}-perf"
-
-sed -i "s/${local_version_str}/${local_version_date_str}/g" arch/arm64/configs/${TARGET_DEVICE}_defconfig
-
+if [ "$3" != "miui" ]; then
 # ------------- Building for AOSP -------------
 
 echo "Building for AOSP......"
 make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+scripts/config --file out/.config --set-str LOCALVERSION "$LOCAL_VERSION_NAME"
 
 if [ $KSU_ENABLE -eq 1 ]; then
     scripts/config --file out/.config \
-    -e KSU \
-    -e KSU_MANUAL_HOOK \
-    -e KSU_SUSFS_HAS_MAGIC_MOUNT \
-    -d KSU_SUSFS_SUS_PATH \
-    -e KSU_SUSFS_SUS_MOUNT \
-    -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-    -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-    -e KSU_SUSFS_SUS_KSTAT \
-    -d KSU_SUSFS_SUS_OVERLAYFS \
-    -e KSU_SUSFS_TRY_UMOUNT \
-    -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-    -e KSU_SUSFS_SPOOF_UNAME \
-    -e KSU_SUSFS_ENABLE_LOG \
-    -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-    -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-    -d KSU_SUSFS_OPEN_REDIRECT \
-    -d KSU_SUSFS_SUS_SU \
-    -e KPM
+        -e KSU \
+        -d KSU_KPROBES_HOOK \
+        -d KSU_DEBUG \
+        -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
+        -d KSU_ALLOWLIST_WORKAROUND \
+        -e KSU_LSM_SECURITY_HOOKS
+
+    if [ $SUSFS_ENABLE -eq 1 ]; then
+        scripts/config --file out/.config \
+            -e KSU_SUSFS \
+            -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MAP \
+            -e KSU_SUSFS_SUS_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_TRY_UMOUNT \
+            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            -e KSU_SUSFS_SPOOF_UNAME \
+            -e KSU_SUSFS_ENABLE_LOG \
+            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -e KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SUS_SU \
+            -e KSU_SUSFS_HAS_MAGIC_MOUNT \
+            -e KSU_SUSFS_SUS_OVERLAYFS
+    else
+        scripts/config --file out/.config \
+            -d KSU_SUSFS \
+            -d KSU_SUSFS_SUS_PATH \
+            -d KSU_SUSFS_SUS_MAP \
+            -d KSU_SUSFS_SUS_MOUNT \
+            -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -d KSU_SUSFS_SUS_KSTAT \
+            -d KSU_SUSFS_TRY_UMOUNT \
+            -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            -d KSU_SUSFS_SPOOF_UNAME \
+            -d KSU_SUSFS_ENABLE_LOG \
+            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -d KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SUS_SU \
+            -d KSU_SUSFS_HAS_MAGIC_MOUNT \
+            -d KSU_SUSFS_SUS_OVERLAYFS
+    fi
 else
-    scripts/config --file out/.config -d KSU
+    scripts/config --file out/.config \
+        -d KSU \
+        -d KSU_SUSFS \
+        -d KSU_SUSFS_SUS_PATH \
+        -d KSU_SUSFS_SUS_MAP \
+        -d KSU_SUSFS_SUS_MOUNT \
+        -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+        -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+        -d KSU_SUSFS_SUS_KSTAT \
+        -d KSU_SUSFS_TRY_UMOUNT \
+        -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+        -d KSU_SUSFS_SPOOF_UNAME \
+        -d KSU_SUSFS_ENABLE_LOG \
+        -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+        -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+        -d KSU_SUSFS_OPEN_REDIRECT \
+        -d KSU_SUSFS_SUS_SU \
+        -d KSU_SUSFS_HAS_MAGIC_MOUNT \
+        -d KSU_SUSFS_SUS_OVERLAYFS
 fi
+
+make $MAKE_ARGS olddefconfig
 
 make $MAKE_ARGS -j$(nproc)
 
@@ -161,23 +231,13 @@ rm -rf anykernel/kernels/
 
 mkdir -p anykernel/kernels/
 
-# Patch for SukiSU KPM support. 
-if [ $KSU_ENABLE -eq 1 ]; then
-    cd out/arch/arm64/boot/
-    wget https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/download/0.12.0/patch_linux
-    chmod +x patch_linux
-    ./patch_linux
-    rm Image
-    mv oImage Image
-    cd -
-fi
-
 cp out/arch/arm64/boot/Image anykernel/kernels/
 cp out/arch/arm64/boot/dtb anykernel/kernels/
+cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
 cd anykernel 
 
-ZIP_FILENAME=Kernel_AOSP_${TARGET_DEVICE}_${KSU_ZIP_STR}_$(date +'%Y%m%d_%H%M%S')_anykernel3_${GIT_COMMIT_ID}.zip
+ZIP_FILENAME="${VARIANT_TAG}${KERNEL_NAME}-AOSP-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
 
 zip -r9 $ZIP_FILENAME ./* -x .git .gitignore out/ ./*.zip
 
@@ -188,8 +248,14 @@ cd ..
 
 echo "Build for AOSP finished."
 
+if [ "$3" == "aosp" ]; then
+    echo "Done AOSP build. The flashable zip is: [./$ZIP_FILENAME]"
+    exit 0
+fi
+
 # ------------- End of Building for AOSP -------------
 #  If you don't need AOSP you can comment out the above block [Building for AOSP]
+fi
 
 
 # ------------- Building for MIUI -------------
@@ -258,29 +324,76 @@ sed -i 's/\/\/39 01 00 00 11 00 03 51 03 FF/39 01 00 00 11 00 03 51 03 FF/g' ${d
 
 
 make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+scripts/config --file out/.config --set-str LOCALVERSION "$LOCAL_VERSION_NAME"
 
 if [ $KSU_ENABLE -eq 1 ]; then
     scripts/config --file out/.config \
-    -e KSU \
-    -e KSU_MANUAL_HOOK \
-    -e KSU_SUSFS_HAS_MAGIC_MOUNT \
-    -d KSU_SUSFS_SUS_PATH \
-    -e KSU_SUSFS_SUS_MOUNT \
-    -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-    -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-    -e KSU_SUSFS_SUS_KSTAT \
-    -d KSU_SUSFS_SUS_OVERLAYFS \
-    -e KSU_SUSFS_TRY_UMOUNT \
-    -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-    -e KSU_SUSFS_SPOOF_UNAME \
-    -e KSU_SUSFS_ENABLE_LOG \
-    -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-    -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-    -d KSU_SUSFS_OPEN_REDIRECT \
-    -d KSU_SUSFS_SUS_SU \
-    -e KPM
+        -e KSU \
+        -d KSU_KPROBES_HOOK \
+        -d KSU_DEBUG \
+        -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
+        -d KSU_ALLOWLIST_WORKAROUND \
+        -e KSU_LSM_SECURITY_HOOKS
+
+    if [ $SUSFS_ENABLE -eq 1 ]; then
+        scripts/config --file out/.config \
+            -e KSU_SUSFS \
+            -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MAP \
+            -e KSU_SUSFS_SUS_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_TRY_UMOUNT \
+            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            -e KSU_SUSFS_SPOOF_UNAME \
+            -e KSU_SUSFS_ENABLE_LOG \
+            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -e KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SUS_SU \
+            -e KSU_SUSFS_HAS_MAGIC_MOUNT \
+            -e KSU_SUSFS_SUS_OVERLAYFS
+    else
+        scripts/config --file out/.config \
+            -d KSU_SUSFS \
+            -d KSU_SUSFS_SUS_PATH \
+            -d KSU_SUSFS_SUS_MAP \
+            -d KSU_SUSFS_SUS_MOUNT \
+            -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -d KSU_SUSFS_SUS_KSTAT \
+            -d KSU_SUSFS_TRY_UMOUNT \
+            -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            -d KSU_SUSFS_SPOOF_UNAME \
+            -d KSU_SUSFS_ENABLE_LOG \
+            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -d KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SUS_SU \
+            -d KSU_SUSFS_HAS_MAGIC_MOUNT \
+            -d KSU_SUSFS_SUS_OVERLAYFS
+    fi
 else
-    scripts/config --file out/.config -d KSU
+    scripts/config --file out/.config \
+        -d KSU \
+        -d KSU_SUSFS \
+        -d KSU_SUSFS_SUS_PATH \
+        -d KSU_SUSFS_SUS_MAP \
+        -d KSU_SUSFS_SUS_MOUNT \
+        -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+        -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+        -d KSU_SUSFS_SUS_KSTAT \
+        -d KSU_SUSFS_TRY_UMOUNT \
+        -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+        -d KSU_SUSFS_SPOOF_UNAME \
+        -d KSU_SUSFS_ENABLE_LOG \
+        -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+        -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+        -d KSU_SUSFS_OPEN_REDIRECT \
+        -d KSU_SUSFS_SUS_SU \
+        -d KSU_SUSFS_HAS_MAGIC_MOUNT \
+        -d KSU_SUSFS_SUS_OVERLAYFS
 fi
 
 
@@ -311,7 +424,9 @@ scripts/config --file out/.config \
     -e PERF_HELPER \
     -e BOOTUP_RECLAIM \
     -e MI_RECLAIM \
-    -e RTMM \
+    -e RTMM
+
+make $MAKE_ARGS olddefconfig
 
 make $MAKE_ARGS -j$(nproc)
 
@@ -335,24 +450,11 @@ mv .dts.bak ${dts_source}
 rm -rf anykernel/kernels/
 mkdir -p anykernel/kernels/
 
-# Patch for SukiSU KPM support. 
-if [ $KSU_ENABLE -eq 1 ]; then
-    cd out/arch/arm64/boot/
-    wget https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/download/0.12.0/patch_linux
-    chmod +x patch_linux
-    ./patch_linux
-    rm Image
-    mv oImage Image
-    cd -
-fi
-
 cp out/arch/arm64/boot/Image anykernel/kernels/
 cp out/arch/arm64/boot/dtb anykernel/kernels/
+cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
 echo "Build for MIUI finished."
-
-# Restore local version string
-sed -i "s/${local_version_date_str}/${local_version_str}/g" arch/arm64/configs/${TARGET_DEVICE}_defconfig
 
 # ------------- End of Building for MIUI -------------
 #  If you don't need MIUI you can comment out the above block [Building for MIUI]
@@ -360,7 +462,7 @@ sed -i "s/${local_version_date_str}/${local_version_str}/g" arch/arm64/configs/$
 
 cd anykernel 
 
-ZIP_FILENAME=Kernel_MIUI_${TARGET_DEVICE}_${KSU_ZIP_STR}_$(date +'%Y%m%d_%H%M%S')_anykernel3_${GIT_COMMIT_ID}.zip
+ZIP_FILENAME="${VARIANT_TAG}${KERNEL_NAME}-MIUI-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
 
 zip -r9 $ZIP_FILENAME ./* -x .git .gitignore out/ ./*.zip
 

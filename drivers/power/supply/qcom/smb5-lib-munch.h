@@ -20,6 +20,7 @@
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of_gpio.h>
+#include <linux/notifier.h>
 #include "battery.h"
 
 enum print_reason {
@@ -67,6 +68,7 @@ enum print_reason {
 #define DC_PLUGOUT_WIRELESS_VOTER	"DC_PLUGOUT_WIRELESS_VOTER"
 #define PL_SMB_EN_VOTER			"PL_SMB_EN_VOTER"
 #define FORCE_RECHARGE_VOTER		"FORCE_RECHARGE_VOTER"
+#define USER_BYPASS_VOTER		"USER_BYPASS_VOTER"
 #define LPD_VOTER			"LPD_VOTER"
 #define FCC_STEPPER_VOTER		"FCC_STEPPER_VOTER"
 #define SW_THERM_REGULATION_VOTER	"SW_THERM_REGULATION_VOTER"
@@ -842,6 +844,15 @@ struct smb_charger {
 	bool			vbus_rising;
 	bool			fake_plug_out;
 	bool			cp_to_sw_status;
+	bool			bypass_active;
+
+	/* Screen-On Fast Charge & USB Force Fast Charge */
+	struct notifier_block	screen_nb;
+	bool			screen_is_on;
+	int			screen_on_fast_charge;
+	int			raw_system_temp_level;
+	int			force_fast_charge;
+	int			force_fast_charge_ua;
 
 	/* extcon for VBUS / ID notification to USB for uUSB */
 	struct extcon_dev	*extcon;
@@ -1269,4 +1280,10 @@ int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
 int smblib_get_prop_wireless_fw_version(struct smb_charger *chg,
 				     union power_supply_propval *val);
+int smblib_set_screen_on_fast_charge(struct smb_charger *chg, int val);
+int smblib_get_screen_on_fast_charge(struct smb_charger *chg);
+int smblib_set_force_fast_charge(struct smb_charger *chg, int val);
+int smblib_get_force_fast_charge(struct smb_charger *chg);
+int smblib_screen_notifier_cb(struct notifier_block *nb,
+				unsigned long val, void *data);
 #endif /* __SMB5_CHARGER_H */

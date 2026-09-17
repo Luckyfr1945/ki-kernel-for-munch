@@ -6,7 +6,10 @@
 #include <linux/utsname.h>
 #include <linux/hashtable.h>
 #include <linux/path.h>
+#include <linux/stat.h>
 #include <linux/susfs_def.h>
+
+struct kstat;
 
 #define SUSFS_VERSION "v1.5.7"
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)

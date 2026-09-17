@@ -749,7 +749,17 @@ static int cpu_power_select(struct cpuidle_device *dev,
 	struct power_params *pwr_params;
 
 #ifdef CONFIG_XIAOMI_MIUI
-	if (lpm_disallowed(sleep_us, dev->cpu, cpu) || sleep_disabled_dev)
+	/*
+	 * Smarter idle handling for better battery life:
+	 * Stock Xiaomi code disables all low power states (LPM) on all 8 cores
+	 * whenever sleep_disabled_dev is set by touchscreen input.
+	 * Allow Little cores (CPUs 0-3) to enter LPM freely, and only keep
+	 * Big/Prime cores (CPUs 4-7) in shallow idle if the expected sleep duration
+	 * is very short (< 500us). This avoids excessive power drain during daily
+	 * screen-on browsing/scrolling (Grab, TikTok, Maps) while maintaining instant 120Hz response.
+	 */
+	if (lpm_disallowed(sleep_us, dev->cpu, cpu) ||
+	    (sleep_disabled_dev && dev->cpu >= 4 && sleep_us < 500))
 #else
 	if (lpm_disallowed(sleep_us, dev->cpu, cpu))
 #endif
@@ -789,7 +799,12 @@ static int cpu_power_select(struct cpuidle_device *dev,
 				invalidate_predict_history(dev);
 		}
 
-		if (i >= idx_restrict)
+		/*
+		 * Allow deeper low power mode (rail-pc, level 1) if sleep_us
+		 * is comfortably larger than min_residency, overriding overly
+		 * conservative prediction restrictions.
+		 */
+		if (i >= idx_restrict && !(i == 1 && sleep_us >= (s64)(pwr_params->min_residency * 3 / 2)))
 			break;
 
 		best_level = i;

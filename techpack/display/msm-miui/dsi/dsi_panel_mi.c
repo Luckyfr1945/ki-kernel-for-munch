@@ -340,7 +340,7 @@ static int dsi_panel_parse_smart_fps_config(struct dsi_panel *panel,
 	} else
 		pr_info("idle fps is %d\n", mi_cfg->idle_fps);
 
-	return rc;
+	return 0;
 }
 
 static int dsi_panel_parse_elvss_dimming_config(struct dsi_panel *panel,

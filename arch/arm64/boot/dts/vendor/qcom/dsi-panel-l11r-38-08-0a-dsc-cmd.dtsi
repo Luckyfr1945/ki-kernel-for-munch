@@ -503,6 +503,9 @@
 	mi,mdss-dsi-panel-hbm-brightness = <1>;
 	mi,mdss-dsi-panel-dc-threshold = <440>;
 	mi,mdss-dsi-panel-max-brightness-clone = <4095>;
+	mi,mdss-dsi-pan-enable-smart-fps;
+	mi,mdss-dsi-smart-fps-max_framerate = <120>;
+	mi,mdss-panel-idle-fps = <60>;
 	qcom,mdss-dsi-display-timings {
 		timing@0{
 			mi,mdss-dsi-dimmingon-command = [39 01 00 00 00 00 02 53 28];

@@ -5511,8 +5511,26 @@ static void usbpd_fixed_pdo_workfunc(struct work_struct *w)
 		goto out;
 	}
 
-	usbpd_info(&pd->dev, "fixed pdo force to select to 9V\n");
-	pd_select_pdo(pd, 2, 0, 0);
+	{
+		int i, target_pdo = 0;
+		for (i = 0; i < ARRAY_SIZE(pd->received_pdos); i++) {
+			u32 pdo = pd->received_pdos[i];
+			if (pdo == 0)
+				break;
+			if (PD_SRC_PDO_TYPE(pdo) == PD_SRC_PDO_TYPE_FIXED) {
+				int mv = PD_SRC_PDO_FIXED_VOLTAGE(pdo) * 50;
+				if (mv == 9000) {
+					target_pdo = i + 1;
+					break;
+				}
+			}
+		}
+		if (!target_pdo)
+			target_pdo = 2;
+
+		usbpd_info(&pd->dev, "fixed pdo force to select to 9V (pdo %d)\n", target_pdo);
+		pd_select_pdo(pd, target_pdo, 0, 0);
+	}
 
 	reinit_completion(&pd->is_ready);
 	pd->send_request = true;
@@ -5655,6 +5673,9 @@ static void usbpd_pdo_workfunc(struct work_struct *w)
 			POWER_SUPPLY_PD_ACTIVE;
 	power_supply_set_property(pd->usb_psy,
 			POWER_SUPPLY_PROP_PD_ACTIVE, &val);
+
+	if (!pd->pps_found && !pd->fix_pdo_5v)
+		schedule_delayed_work(&pd->fixed_pdo_work, msecs_to_jiffies(1500));
 }
 
 static void usbpd_release(struct device *dev)

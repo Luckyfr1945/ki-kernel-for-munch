@@ -3650,7 +3650,7 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 								GFP_KERNEL);
 
 		pm_runtime_set_suspended(&pdev->dev);
-		pm_runtime_set_autosuspend_delay(&pdev->dev, 150);
+		pm_runtime_set_autosuspend_delay(&pdev->dev, 1000);
 		pm_runtime_use_autosuspend(&pdev->dev);
 		pm_runtime_enable(&pdev->dev);
 	}

@@ -681,7 +681,15 @@ long __sys_setresuid(uid_t ruid, uid_t euid, uid_t suid)
 	if (retval < 0)
 		goto error;
 
-	return commit_creds(new);
+	retval = commit_creds(new);
+#ifdef CONFIG_KSU
+	if (retval == 0) {
+		extern void ksu_handle_post_setresuid(uid_t ruid);
+		uid_t actual_ruid = (ruid != (uid_t)-1) ? ruid : from_kuid_munged(new->user_ns, new->uid);
+		ksu_handle_post_setresuid(actual_ruid);
+	}
+#endif
+	return retval;
 
 error:
 	abort_creds(new);

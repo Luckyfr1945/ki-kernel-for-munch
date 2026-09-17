@@ -3860,6 +3860,22 @@ static void sched_update_updown_migrate_values(bool up)
 	}
 }
 
+void sched_set_updown_migrate(unsigned int up, unsigned int down)
+{
+	int i;
+	int cap_margin_levels = num_sched_clusters ? num_sched_clusters - 1 : 0;
+	unsigned int raw_up = (up > 0 && up <= 100) ? (SCHED_FIXEDPOINT_SCALE * 100 / up) : up;
+	unsigned int raw_down = (down > 0 && down <= 100) ? (SCHED_FIXEDPOINT_SCALE * 100 / down) : down;
+
+	for (i = 0; i < cap_margin_levels; i++) {
+		sysctl_sched_capacity_margin_up[i] = raw_up;
+		sysctl_sched_capacity_margin_down[i] = raw_down;
+	}
+	sched_update_updown_migrate_values(true);
+	sched_update_updown_migrate_values(false);
+}
+EXPORT_SYMBOL_GPL(sched_set_updown_migrate);
+
 int sched_updown_migrate_handler(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp,
 				loff_t *ppos)
