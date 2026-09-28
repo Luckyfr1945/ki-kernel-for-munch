@@ -682,6 +682,18 @@ source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/fpr_FingerprintCard/Kconfig"
 source "drivers/misc/qrc/Kconfig"
+
+config NTSYNC
+	tristate "NT synchronization primitive driver"
+	default y
+	help
+	  This module provides support for the NT synchronization primitive
+	  emulation driver. It is used to emulate Windows synchronization
+	  primitives in user space, such as in Wine or Proton, with lower
+	  overhead than standard futex-based or server-based synchronization.
+
+	  If unsure, say Y.
+
 endmenu
 
 config OKL4_USER_VIPC

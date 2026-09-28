@@ -9,6 +9,7 @@
 
 ## v1.3
 • Added Dynamic Fsync
+• Backported NTSYNC driver (/dev/ntsync) for Winlator/Wine gaming
 • Upstream SUSFS v2.3.0
 • Improved CPU idle frequency handling
 • Added I/O wait boost limits
