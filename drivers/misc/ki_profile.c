@@ -54,15 +54,15 @@ static void apply_ki_profile(int mode)
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Battery Saver:
-		 * High swappiness: offload anon pages fast, reduce wakeup pressure.
-		 * High watermark: early reclaim so kswapd isn't startled late.
-		 * High cache_pressure: reclaim dentries/inodes aggressively.
+		 * Low swappiness: avoid zRAM compression which burns CPU cycles.
+		 * kswapd prefers reclaiming file cache over swapping anon pages,
+		 * meaning fewer CPU wakeups and less decompression overhead.
 		 */
-		vm_swappiness = 100;
+		vm_swappiness = 60;
 		watermark_scale_factor = 15;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 100;
-		pr_info("ki_profile: Battery profile active (CPU lazy + aggressive RAM reclaim)\n");
+		pr_info("ki_profile: Battery profile active (CPU lazy + minimal zRAM churn)\n");
 		break;
 
 	case KI_PROFILE_BALANCED:
@@ -84,10 +84,9 @@ static void apply_ki_profile(int mode)
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Balanced Daily:
-		 * Moderate swappiness: not too greedy, not too lazy.
-		 * Standard watermark: reclaim starts before pressure peaks.
+		 * Low swappiness: minimal zRAM churn, smooth for daily tasks.
 		 */
-		vm_swappiness = 80;
+		vm_swappiness = 60;
 		watermark_scale_factor = 12;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 80;
@@ -110,9 +109,9 @@ static void apply_ki_profile(int mode)
 		sched_set_boost(1);
 		/*
 		 * RAM Tuning — Gaming/Performance:
-		 * Low swappiness: keep game assets in RAM, silence kswapd mid-game.
-		 * Tight watermark: less reclaim churn while GPU is saturated.
-		 * Low cache_pressure: keep file cache warm for fast asset loads.
+		 * Low swappiness: keep game assets in RAM, no zRAM stutter
+		 * mid-frame. Less kswapd interference during GPU-saturated loads.
+		 * Low cache_pressure: keep game asset file cache warm.
 		 */
 		vm_swappiness = 60;
 		watermark_scale_factor = 10;
