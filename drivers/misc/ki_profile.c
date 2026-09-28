@@ -33,58 +33,92 @@ extern int sysctl_vfs_cache_pressure;
 
 static void apply_ki_profile(int mode)
 {
+	int ret;
+
 	switch (mode) {
 	case KI_PROFILE_BATTERY:
-		/* Silver (cpu0): 2500us up, 500us down */
-		sugov_set_cluster_rate_limits(0, 2500, 500);
-		/* Gold (cpu4): 5000us up, 500us down */
-		sugov_set_cluster_rate_limits(4, 5000, 500);
-		/* Prime (cpu7): 20000us up, 500us down */
-		sugov_set_cluster_rate_limits(7, 20000, 500);
-		/* Higher margin before migrating to big cores -> saves battery */
+		/* Silver (cpu0): lazy ramp-up, fast idle drop */
+		ret = sugov_set_cluster_rate_limits(0, 2500, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Gold (cpu4): slow to boost, quick to drop */
+		ret = sugov_set_cluster_rate_limits(4, 5000, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Prime (cpu7): fires only under hard sustained load */
+		ret = sugov_set_cluster_rate_limits(7, 20000, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* High migration margin → stay on Silver as long as possible */
 		sched_set_updown_migrate(98, 90);
 		sched_set_boost(0);
-		/* In-Kernel RAM Tuning: Gentle swapping, zero compaction burn */
-		vm_swappiness = 80;
-		watermark_scale_factor = 12;
+		/*
+		 * RAM Tuning — Battery Saver:
+		 * High swappiness: offload anon pages fast, reduce wakeup pressure.
+		 * High watermark: early reclaim so kswapd isn't startled late.
+		 * High cache_pressure: reclaim dentries/inodes aggressively.
+		 */
+		vm_swappiness = 100;
+		watermark_scale_factor = 15;
 		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Switched to Battery profile (CPU & RAM Optimized)\n");
+		sysctl_vfs_cache_pressure = 100;
+		pr_info("ki_profile: Battery profile active (CPU lazy + aggressive RAM reclaim)\n");
 		break;
 
 	case KI_PROFILE_BALANCED:
 	default:
-		/* Silver (cpu0): 1000us up, 500us down -> snappy 120Hz UI, instant idle drop */
-		sugov_set_cluster_rate_limits(0, 1000, 500);
-		/* Gold (cpu4): 2000us up, 500us down -> fast app switches (Grab, Maps, WA) */
-		sugov_set_cluster_rate_limits(4, 2000, 500);
-		/* Prime (cpu7): 4000us up, 500us down -> cool under sun, fires on heavy sustained load */
-		sugov_set_cluster_rate_limits(7, 4000, 500);
-		/* Responsive smooth margins */
+		/* Silver (cpu0): snappy 120Hz UI, instant idle drop */
+		ret = sugov_set_cluster_rate_limits(0, 1000, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Gold (cpu4): fast app launches (Grab, Maps, WhatsApp) */
+		ret = sugov_set_cluster_rate_limits(4, 2000, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Prime (cpu7): fires on sustained load only */
+		ret = sugov_set_cluster_rate_limits(7, 4000, 500);
+		if (ret)
+			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Smooth migration margins */
 		sched_set_updown_migrate(95, 85);
 		sched_set_boost(0);
-		/* In-Kernel RAM Tuning: Anti-swap churn, fast UI asset caching */
+		/*
+		 * RAM Tuning — Balanced Daily:
+		 * Moderate swappiness: not too greedy, not too lazy.
+		 * Standard watermark: reclaim starts before pressure peaks.
+		 */
 		vm_swappiness = 80;
 		watermark_scale_factor = 12;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Switched to Balanced profile (Ngojek & Daily Optimized)\n");
+		pr_info("ki_profile: Balanced profile active (Ngojek + Daily Optimized)\n");
 		break;
 
 	case KI_PROFILE_PERFORMANCE:
-		/* Silver, Gold, Prime: instantaneous ramp-up 500us, hold high freq 2000us */
-		sugov_set_cluster_rate_limits(0, 500, 2000);
-		sugov_set_cluster_rate_limits(4, 500, 2000);
-		sugov_set_cluster_rate_limits(7, 500, 2000);
-		/* Aggressive upmigration to Gold/Prime cores for high FPS gaming */
+		/* Silver, Gold, Prime: instant ramp-up, hold high freq */
+		ret = sugov_set_cluster_rate_limits(0, 500, 2000);
+		if (ret)
+			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		ret = sugov_set_cluster_rate_limits(4, 500, 2000);
+		if (ret)
+			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		ret = sugov_set_cluster_rate_limits(7, 500, 2000);
+		if (ret)
+			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+		/* Aggressive upmigration to Gold/Prime for high FPS gaming */
 		sched_set_updown_migrate(65, 50);
 		sched_set_boost(1);
-		/* In-Kernel RAM Tuning: Dedicated gaming RAM, silence kswapd */
+		/*
+		 * RAM Tuning — Gaming/Performance:
+		 * Low swappiness: keep game assets in RAM, silence kswapd mid-game.
+		 * Tight watermark: less reclaim churn while GPU is saturated.
+		 * Low cache_pressure: keep file cache warm for fast asset loads.
+		 */
 		vm_swappiness = 60;
 		watermark_scale_factor = 10;
 		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Switched to Performance / Turbo Gaming profile (Gacor!)\n");
+		sysctl_vfs_cache_pressure = 60;
+		pr_info("ki_profile: Performance profile active (Gaming Turbo — Gacor!)\n");
 		break;
 	}
 }
