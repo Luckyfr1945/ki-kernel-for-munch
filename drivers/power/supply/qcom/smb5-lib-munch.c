@@ -2607,7 +2607,11 @@ int smblib_get_prop_batt_status(struct smb_charger *chg,
 		}
 	}
 	if (chg->bypass_active) {
+#ifdef CONFIG_XIAOMI_MIUI
 		val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+#else
+		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+#endif
 		return 0;
 	}
 	if (chg->report_input_absent) {
@@ -3201,7 +3205,7 @@ int smblib_set_prop_input_suspend(struct smb_charger *chg,
 			vote(chg->usb_icl_votable, USER_VOTER, false, 0);
 			vote_override(chg->usb_icl_votable, USER_BYPASS_VOTER, true, 3000000);
 		}
-		pr_info("SMB5: true bypass enabled (3A ICL, 0mA to battery, no-petir UI)\n");
+		pr_info("SMB5: true bypass enabled (3A ICL, 0mA to battery)\n");
 	} else {
 		/* Normal charging */
 		vote(chg->chg_disable_votable, USER_BYPASS_VOTER, false, 0);
@@ -5801,8 +5805,13 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 	}
 
 	if (chg->bypass_active) {
+#ifdef CONFIG_XIAOMI_MIUI
 		rc = smblib_get_prop_usb_present(chg, val);
 		return rc;
+#else
+		val->intval = false;
+		return 0;
+#endif
 	}
 
 	if (get_client_vote_locked(chg->usb_icl_votable, USER_VOTER) == 0) {
