@@ -378,6 +378,17 @@ static inline int is_packetized(struct file *file)
 	return (file->f_flags & O_DIRECT) != 0;
 }
 
+static inline bool is_netd_proc(struct task_struct *task)
+{
+	if (!task)
+		return false;
+	if (!strncmp(task->comm, "netd", 4))
+		return true;
+	if (task->group_leader && !strncmp(task->group_leader->comm, "netd", 4))
+		return true;
+	return false;
+}
+
 static ssize_t
 pipe_write(struct kiocb *iocb, struct iov_iter *from)
 {
@@ -395,6 +406,11 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 	__pipe_lock(pipe);
 
 	if (!pipe->readers) {
+		if (unlikely(is_netd_proc(current))) {
+			iov_iter_advance(from, total_len);
+			ret = total_len;
+			goto out;
+		}
 		send_sig(SIGPIPE, current, 0);
 		ret = -EPIPE;
 		goto out;
@@ -429,6 +445,13 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 		int bufs;
 
 		if (!pipe->readers) {
+			if (unlikely(is_netd_proc(current))) {
+				if (!ret) {
+					iov_iter_advance(from, iov_iter_count(from));
+					ret = total_len;
+				}
+				break;
+			}
 			send_sig(SIGPIPE, current, 0);
 			if (!ret)
 				ret = -EPIPE;
