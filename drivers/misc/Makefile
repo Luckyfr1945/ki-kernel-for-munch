@@ -86,3 +86,5 @@ obj-$(CONFIG_MMHARDWARE_OTHER_DETECTION) += mmhardware_others.o
 obj-$(CONFIG_PERF_HELPER)	+= perf_helper.o
 obj-y				+= ki_profile.o
 obj-y				+= sound_control.o
+obj-y				+= n0kz_attributes.o
+obj-$(CONFIG_DYNAMIC_FSYNC)	+= dyn_fsync.o
