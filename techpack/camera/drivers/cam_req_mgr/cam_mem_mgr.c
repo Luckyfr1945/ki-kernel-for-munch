@@ -995,7 +995,7 @@ static void cam_mem_util_unmap_dummy(struct kref *kref)
 	CAM_DBG(CAM_MEM, "Cam mem util unmap dummy");
 }
 
-static void cam_mem_util_unmap(int32_t idx)
+static int cam_mem_util_unmap(int32_t idx)
 {
 	int rc = 0;
 	enum cam_smmu_region_id region = CAM_SMMU_REGION_SHARED;

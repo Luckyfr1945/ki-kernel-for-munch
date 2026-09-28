@@ -321,4 +321,12 @@ source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
 source "fs/unicode/Kconfig"
 
+config DYNAMIC_FSYNC
+	bool "Dynamic Fsync"
+	default y
+	help
+	  Dynamic Fsync allows disabling fsync while the screen is on
+	  for superior storage I/O performance and low latency.
+	  When screen goes off, a full sync is automatically performed.
+
 endmenu

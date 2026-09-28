@@ -2892,7 +2892,7 @@ static int binder_fixup_parent(struct binder_transaction *t,
 	return 0;
 }
 
-#ifdef CONFIG_BINDER_OPT
+#if defined(CONFIG_BINDER_OPT) && defined(CONFIG_XIAOMI_MIUI)
 static inline void binder_thread_set_inherit_top_app(
 		struct binder_thread *thread, struct binder_thread *from)
 {
@@ -2904,6 +2904,15 @@ static inline void binder_thread_restore_inherit_top_app(struct binder_thread *t
 {
 	if (thread)
 		restore_inherit_top_app(thread->task);
+}
+#else
+static inline void binder_thread_set_inherit_top_app(
+		struct binder_thread *thread, struct binder_thread *from)
+{
+}
+
+static inline void binder_thread_restore_inherit_top_app(struct binder_thread *thread)
+{
 }
 #endif
 
