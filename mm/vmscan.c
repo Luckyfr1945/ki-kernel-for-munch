@@ -184,7 +184,7 @@ int kswapd_threads_current = DEF_KSWAPD_THREADS_PER_NODE;
 /*
  * From 0 .. 100.  Higher means more swappy.
  */
-int vm_swappiness = 100;
+int vm_swappiness = 80;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
@@ -4159,6 +4159,23 @@ unsigned long reclaim_global(unsigned long nr_to_reclaim)
 }
 #endif
 
+/*
+ * Ki-kernel: Keep kswapd exclusively on LITTLE cores (CPUs 0-3 on SM8250)
+ * to prevent kswapd from stealing CPU cycles and causing frame drops on
+ * Big (Gold 4-6) and Prime (7) cores during gaming or heavy UI rendering.
+ */
+static inline void get_kswapd_allowed_mask(struct cpumask *mask)
+{
+	cpumask_clear(mask);
+	cpumask_set_cpu(0, mask);
+	cpumask_set_cpu(1, mask);
+	cpumask_set_cpu(2, mask);
+	cpumask_set_cpu(3, mask);
+	cpumask_and(mask, mask, cpu_online_mask);
+	if (unlikely(cpumask_empty(mask)))
+		cpumask_copy(mask, cpu_online_mask);
+}
+
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
    not required for correctness.  So if the last cpu in a node goes
    away, we get changed to run anywhere: as the first one comes back,
@@ -4167,17 +4184,16 @@ static int kswapd_cpu_online(unsigned int cpu)
 {
 	int nid, hid;
 	int nr_threads = kswapd_threads_current;
+	struct cpumask mask;
+
+	get_kswapd_allowed_mask(&mask);
 
 	for_each_node_state(nid, N_MEMORY) {
 		pg_data_t *pgdat = NODE_DATA(nid);
-		const struct cpumask *mask;
 
-		mask = cpumask_of_node(pgdat->node_id);
-		if (cpumask_any_and(cpu_online_mask, mask) < nr_cpu_ids) {
-			for (hid = 0; hid < nr_threads; hid++) {
-				/* One of our CPUs online: restore mask */
-				set_cpus_allowed_ptr(pgdat->kswapd[hid], mask);
-			}
+		for (hid = 0; hid < nr_threads; hid++) {
+			if (pgdat->kswapd[hid])
+				set_cpus_allowed_ptr(pgdat->kswapd[hid], &mask);
 		}
 	}
 	return 0;
@@ -4215,6 +4231,10 @@ static void update_kswapd_threads_node(int nid)
 				 * more threads.
 				 */
 				break;
+			} else {
+				struct cpumask mask;
+				get_kswapd_allowed_mask(&mask);
+				set_cpus_allowed_ptr(pgdat->kswapd[hid], &mask);
 			}
 		}
 	}
@@ -4266,6 +4286,10 @@ int kswapd_run(int nid)
 				hid, nid);
 			ret = PTR_ERR(pgdat->kswapd[hid]);
 			pgdat->kswapd[hid] = NULL;
+		} else {
+			struct cpumask mask;
+			get_kswapd_allowed_mask(&mask);
+			set_cpus_allowed_ptr(pgdat->kswapd[hid], &mask);
 		}
 	}
 	kswapd_threads_current = nr_threads;
