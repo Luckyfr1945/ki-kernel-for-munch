@@ -26,6 +26,11 @@ static const char * const profile_names[] = {
 	[KI_PROFILE_PERFORMANCE] = "performance",
 };
 
+extern int vm_swappiness;
+extern int watermark_scale_factor;
+extern int sysctl_compact_unevictable_allowed;
+extern int sysctl_vfs_cache_pressure;
+
 static void apply_ki_profile(int mode)
 {
 	switch (mode) {
@@ -39,7 +44,12 @@ static void apply_ki_profile(int mode)
 		/* Higher margin before migrating to big cores -> saves battery */
 		sched_set_updown_migrate(98, 90);
 		sched_set_boost(0);
-		pr_info("ki_profile: Switched to Battery profile\n");
+		/* In-Kernel RAM Tuning: Gentle swapping, zero compaction burn */
+		vm_swappiness = 80;
+		watermark_scale_factor = 12;
+		sysctl_compact_unevictable_allowed = 0;
+		sysctl_vfs_cache_pressure = 80;
+		pr_info("ki_profile: Switched to Battery profile (CPU & RAM Optimized)\n");
 		break;
 
 	case KI_PROFILE_BALANCED:
@@ -53,6 +63,11 @@ static void apply_ki_profile(int mode)
 		/* Responsive smooth margins */
 		sched_set_updown_migrate(95, 85);
 		sched_set_boost(0);
+		/* In-Kernel RAM Tuning: Anti-swap churn, fast UI asset caching */
+		vm_swappiness = 80;
+		watermark_scale_factor = 12;
+		sysctl_compact_unevictable_allowed = 0;
+		sysctl_vfs_cache_pressure = 80;
 		pr_info("ki_profile: Switched to Balanced profile (Ngojek & Daily Optimized)\n");
 		break;
 
@@ -64,6 +79,11 @@ static void apply_ki_profile(int mode)
 		/* Aggressive upmigration to Gold/Prime cores for high FPS gaming */
 		sched_set_updown_migrate(65, 50);
 		sched_set_boost(1);
+		/* In-Kernel RAM Tuning: Dedicated gaming RAM, silence kswapd */
+		vm_swappiness = 60;
+		watermark_scale_factor = 10;
+		sysctl_compact_unevictable_allowed = 0;
+		sysctl_vfs_cache_pressure = 80;
 		pr_info("ki_profile: Switched to Performance / Turbo Gaming profile (Gacor!)\n");
 		break;
 	}
@@ -169,6 +189,7 @@ static int __init ki_profile_init(void)
 		return rc;
 	}
 
+	apply_ki_profile(current_profile_mode);
 	pr_info("ki_profile: Ki-kernel Profile driver initialized (default: Balanced)\n");
 	return 0;
 }
