@@ -738,7 +738,49 @@ static ssize_t store_##file_name					\
 	return ret ? ret : count;					\
 }
 
-store_one(scaling_min_freq, min);
+static ssize_t store_scaling_min_freq
+(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+	int ret, temp;
+	struct cpufreq_policy new_policy;
+	unsigned int val;
+
+	memcpy(&new_policy, policy, sizeof(*policy));
+	new_policy.min = policy->user_policy.min;
+	new_policy.max = policy->user_policy.max;
+
+	ret = sscanf(buf, "%u", &val);
+	if (ret != 1)
+		return -EINVAL;
+
+	/*
+	 * Kernel-level Idle Floor Clamp:
+	 * Prevent userspace performance daemons (vendor.miperf / perfservice)
+	 * from locking CPU minimum frequencies to unsustainable max-boost levels.
+	 * Little (CPU 0-3): Max min_freq 1.34 GHz (1344000 kHz)
+	 * Gold   (CPU 4-6): Max min_freq 1.05 GHz (1056000 kHz)
+	 * Prime  (CPU 7):   Max min_freq 844.8 MHz (844800 kHz)
+	 */
+	if (policy->cpu < 4) {
+		if (val > 1344000)
+			val = 1344000;
+	} else if (policy->cpu < 7) {
+		if (val > 1056000)
+			val = 1056000;
+	} else {
+		if (val > 844800)
+			val = 844800;
+	}
+
+	new_policy.min = val;
+	temp = new_policy.min;
+	ret = cpufreq_set_policy(policy, &new_policy);
+	if (!ret)
+		policy->user_policy.min = temp;
+
+	return ret ? ret : count;
+}
+
 store_one(scaling_max_freq, max);
 
 /**

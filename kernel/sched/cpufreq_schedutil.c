@@ -601,12 +601,20 @@ static unsigned long sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
 	/*
 	 * @util is already in capacity scale; convert iowait_boost
 	 * into the same scale so we can compare.
-	 * Cap iowait_boost on Little cores (CPUs 0-3) to 70% to prevent
-	 * unnecessary max-frequency spikes on background I/O.
+	 * Tiered I/O Wait Boost Limiter:
+	 * Cap iowait_boost across clusters to prevent max-frequency
+	 * spikes during video streaming/buffering (TikTok, IG, YouTube):
+	 * Little cores (CPU 0-3): Cap 70%
+	 * Gold cores   (CPU 4-6): Cap 55%
+	 * Prime core   (CPU 7):   Cap 35%
 	 */
 	boost = (sg_cpu->iowait_boost * max) >> SCHED_CAPACITY_SHIFT;
 	if (sg_cpu->cpu < 4)
-		boost = min(boost, (max * 7) / 10);
+		boost = min(boost, (max * 70) / 100);
+	else if (sg_cpu->cpu < 7)
+		boost = min(boost, (max * 55) / 100);
+	else
+		boost = min(boost, (max * 35) / 100);
 
 	return max(boost, util);
 }
@@ -939,6 +947,10 @@ static ssize_t up_rate_limit_us_store(struct gov_attr_set *attr_set,
 
 	if (kstrtouint(buf, 10, &rate_limit_us))
 		return -EINVAL;
+
+	/* Clamp floor to 500us to filter touch micro-jitter */
+	if (rate_limit_us < 500)
+		rate_limit_us = 500;
 
 	tunables->up_rate_limit_us = rate_limit_us;
 

@@ -183,8 +183,8 @@ static void thermal_zone_trip_update(struct thermal_zone_device *tz, int trip)
 		else
 			throttle = false;
 
-		/* Ki-Thermal: Gaming Unlocked bypass */
-		if (unlikely(!ki_thermal_throttle_enabled))
+		/* Ki-Thermal: Gaming Unlocked bypass (never bypass critical trips) */
+		if (unlikely(!ki_thermal_throttle_enabled && trip_type != THERMAL_TRIP_CRITICAL))
 			throttle = false;
 
 		instance->target = get_target_state(instance, trend, throttle);
