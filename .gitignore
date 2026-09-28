@@ -143,3 +143,13 @@ anykernel/
 release/
 debug/
 rilis
+stock_infinityx/
+build_artifacts/
+DataBackup/
+release_packages/
+build_aosp.sh
+build_miui.sh
+build_release_all.sh
+build_release_miui.sh
+build_universal.sh
+anykernel_template/
