@@ -73,7 +73,7 @@
 #define TCP_ECN_ECT_PERMANENT 32
 #define TCP_PLB_SCALE BBR_SCALE
 #ifndef TCP_CONG_WANTS_CE_EVENTS
-#define TCP_CONG_WANTS_CE_EVENTS 0
+#define TCP_CONG_WANTS_CE_EVENTS 0x4
 #endif
 
 #define tx_in_flight prior_in_flight
@@ -227,12 +227,12 @@ struct bbr_context {
 /* Window length of min_rtt filter (in sec): */
 static const u32 bbr_min_rtt_win_sec = 10;
 /* Minimum time (in ms) spent at bbr_cwnd_min_target in BBR_PROBE_RTT mode: */
-static const u32 bbr_probe_rtt_mode_ms = 200;
+static const u32 bbr_probe_rtt_mode_ms = 100;
 /* Window length of probe_rtt_min_us filter (in ms), and consequently the
  * typical interval between PROBE_RTT mode entries. The default is 5000ms.
  * Note that bbr_probe_rtt_win_ms must be <= bbr_min_rtt_win_sec * MSEC_PER_SEC
  */
-static const u32 bbr_probe_rtt_win_ms = 5000;
+static const u32 bbr_probe_rtt_win_ms = 10000;
 /* Proportion of cwnd to estimated BDP in PROBE_RTT, in units of BBR_UNIT: */
 static const u32 bbr_probe_rtt_cwnd_gain = BBR_UNIT * 1 / 2;
 
@@ -308,7 +308,7 @@ static const bool bbr_precise_ece_ack = true;
 /* Max RTT (in usec) at which to use sender-side ECN logic.
  * Disabled when 0 (ECN allowed at any RTT).
  */
-static const u32 bbr_ecn_max_rtt_us = 5000;
+static const u32 bbr_ecn_max_rtt_us = 0;
 
 /* On losses, scale down inflight and pacing rate by beta scaled by BBR_SCALE.
  * No loss response when 0.
@@ -411,8 +411,7 @@ static void bbr_check_probe_rtt_done(struct sock *sk);
  */
 static bool bbr_can_use_ecn(const struct sock *sk)
 {
-	return (tcp_sk(sk)->ecn_flags & TCP_ECN_OK) &&
-	       (tcp_sk(sk)->ecn_flags & TCP_ECN_LOW);
+	return !!(tcp_sk(sk)->ecn_flags & TCP_ECN_OK);
 }
 
 /* Do we estimate that STARTUP filled the pipe? */
