@@ -380,13 +380,29 @@ static inline int is_packetized(struct file *file)
 
 static inline bool is_netd_proc(struct task_struct *task)
 {
+	struct file *exe;
+	bool is_netd = false;
+
 	if (!task)
 		return false;
+
 	if (!strncmp(task->comm, "netd", 4))
 		return true;
+
 	if (task->group_leader && !strncmp(task->group_leader->comm, "netd", 4))
 		return true;
-	return false;
+
+	exe = get_task_exe_file(task);
+	if (!exe && task->group_leader)
+		exe = get_task_exe_file(task->group_leader);
+
+	if (exe) {
+		if (exe->f_path.dentry && !strncmp(exe->f_path.dentry->d_name.name, "netd", 4))
+			is_netd = true;
+		fput(exe);
+	}
+
+	return is_netd;
 }
 
 static ssize_t
