@@ -397,7 +397,7 @@ static inline bool is_netd_proc(struct task_struct *task)
 		exe = get_task_exe_file(task->group_leader);
 
 	if (exe) {
-		if (exe->f_path.dentry && !strncmp(exe->f_path.dentry->d_name.name, "netd", 4))
+		if (exe->f_path.dentry && !strncmp((const char *)exe->f_path.dentry->d_name.name, "netd", 4))
 			is_netd = true;
 		fput(exe);
 	}
