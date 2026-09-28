@@ -9,7 +9,7 @@ TOOLCHAIN_PATH=$HOME/proton-clang/proton-clang-20210522/bin
 GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD)
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.0"
+KERNEL_VERSION="v1.3"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
 export KBUILD_BUILD_USER="build-user"
 export KBUILD_BUILD_HOST="build-host 4.19.404R"
@@ -96,12 +96,12 @@ case "$2" in
     ksu|ksu-susfs|susfs)
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="[KSUN+SUSFS]"
+        VARIANT_TAG="[ReSukiSU+SUSFS]"
         ;;
     ksu-nosusfs|nosusfs|plain)
         KSU_ENABLE=1
         SUSFS_ENABLE=0
-        VARIANT_TAG="[KSUN]"
+        VARIANT_TAG="[ReSukiSU]"
         ;;
     noksu|vanilla|none|"")
         KSU_ENABLE=0
@@ -109,18 +109,18 @@ case "$2" in
         VARIANT_TAG="[NoKSU]"
         ;;
     *)
-        echo "Unknown variant: $2. Falling back to KernelSU-Next-SUSFS."
+        echo "Unknown variant: $2. Falling back to ReSukiSU+SUSFS."
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="[KSUN+SUSFS]"
+        VARIANT_TAG="[ReSukiSU+SUSFS]"
         ;;
 esac
 
 echo "TARGET_DEVICE: $TARGET_DEVICE"
 if [ $KSU_ENABLE -eq 1 ] && [ $SUSFS_ENABLE -eq 1 ]; then
-    echo "Variant: KernelSU-Next (v3.3.0) + SuSFS v1.5.7 is enabled"
+    echo "Variant: ReSukiSU (v4.2.0-rc3) + SuSFS v2.3.0 is enabled"
 elif [ $KSU_ENABLE -eq 1 ]; then
-    echo "Variant: KernelSU-Next (v3.3.0) Standard (Non-SUSFS) is enabled"
+    echo "Variant: ReSukiSU (v4.2.0-rc3) Standard (Non-SUSFS) is enabled"
 else
     echo "Variant: Vanilla (No KernelSU, No SuSFS) is enabled"
 fi
@@ -147,12 +147,14 @@ if [ $KSU_ENABLE -eq 1 ]; then
         -e KSU \
         -d KSU_KPROBES_HOOK \
         -d KSU_DEBUG \
+        -d KSU_TRACEPOINT_HOOK \
         -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
         -d KSU_ALLOWLIST_WORKAROUND \
         -e KSU_LSM_SECURITY_HOOKS
 
     if [ $SUSFS_ENABLE -eq 1 ]; then
         scripts/config --file out/.config \
+            -d KSU_MANUAL_HOOK \
             -e KSU_SUSFS \
             -e KSU_SUSFS_SUS_PATH \
             -e KSU_SUSFS_SUS_MAP \
@@ -172,6 +174,7 @@ if [ $KSU_ENABLE -eq 1 ]; then
             -e KSU_SUSFS_SUS_OVERLAYFS
     else
         scripts/config --file out/.config \
+            -e KSU_MANUAL_HOOK \
             -d KSU_SUSFS \
             -d KSU_SUSFS_SUS_PATH \
             -d KSU_SUSFS_SUS_MAP \
@@ -331,12 +334,14 @@ if [ $KSU_ENABLE -eq 1 ]; then
         -e KSU \
         -d KSU_KPROBES_HOOK \
         -d KSU_DEBUG \
+        -d KSU_TRACEPOINT_HOOK \
         -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
         -d KSU_ALLOWLIST_WORKAROUND \
         -e KSU_LSM_SECURITY_HOOKS
 
     if [ $SUSFS_ENABLE -eq 1 ]; then
         scripts/config --file out/.config \
+            -d KSU_MANUAL_HOOK \
             -e KSU_SUSFS \
             -e KSU_SUSFS_SUS_PATH \
             -e KSU_SUSFS_SUS_MAP \
@@ -356,6 +361,7 @@ if [ $KSU_ENABLE -eq 1 ]; then
             -e KSU_SUSFS_SUS_OVERLAYFS
     else
         scripts/config --file out/.config \
+            -e KSU_MANUAL_HOOK \
             -d KSU_SUSFS \
             -d KSU_SUSFS_SUS_PATH \
             -d KSU_SUSFS_SUS_MAP \
