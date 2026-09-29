@@ -15,9 +15,6 @@
 • Nuked debugging wakelocks from qcacld-3.0 Wi-Fi driver (Deep sleep battery savings)
 • Created experimental AOSP-only branch with EEVDF + CASS scheduler
 
-
-
-
 ---
 
 ## v1.3
