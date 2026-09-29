@@ -15,6 +15,7 @@
 #include <linux/string.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
+#include <linux/mm.h>
 #include <linux/ki_profile.h>
 
 static int current_profile_mode = KI_PROFILE_BALANCED;
@@ -120,6 +121,8 @@ static void apply_ki_profile(int mode)
 		pr_info("ki_profile: Performance profile active (Gaming Turbo — Gacor!)\n");
 		break;
 	}
+
+	setup_per_zone_wmarks();
 }
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
