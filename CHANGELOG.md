@@ -2,7 +2,7 @@
 
 **Build Date:** 2026-09-29  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI / HyperOS & AOSP (Android 11 - 17)  
+**Variant:** MIUI / HyperOS & AOSP
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
@@ -16,9 +16,8 @@
 • Hardened netd broken pipe handling
 • Removed Adreno 650 POPP throttling
 • Removed Wi-Fi debug wakelocks
-• Added Boeffla Wakelock Blocker (NKM & FKM compatible)
-• Optimized deep sleep & suspend (CONFIG_SUSPEND_SKIP_SYNC)
-• Guaranteed real-time alarms, WhatsApp & call notifications
+• Added Boeffla Wakelock Blocker
+• Optimized deep sleep & suspend
 • Fixed MIUI and AnyKernel3 flashing issues
 • Added experimental EEVDF + CASS AOSP
 
