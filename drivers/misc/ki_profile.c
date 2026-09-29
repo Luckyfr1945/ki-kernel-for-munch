@@ -38,20 +38,20 @@ static void apply_ki_profile(int mode)
 
 	switch (mode) {
 	case KI_PROFILE_BATTERY:
-		/* Silver (cpu0): lazy ramp-up, fast idle drop */
-		ret = sugov_set_cluster_rate_limits(0, 2500, 500);
+		/* Silver (cpu0): conservative ramp-up, 4ms hold to avoid clock thrashing */
+		ret = sugov_set_cluster_rate_limits(0, 1500, 4000);
 		if (ret)
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* Gold (cpu4): slow to boost, quick to drop */
-		ret = sugov_set_cluster_rate_limits(4, 5000, 500);
+		/* Gold (cpu4): slow to boost */
+		ret = sugov_set_cluster_rate_limits(4, 3000, 4000);
 		if (ret)
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 		/* Prime (cpu7): fires only under hard sustained load */
-		ret = sugov_set_cluster_rate_limits(7, 20000, 500);
+		ret = sugov_set_cluster_rate_limits(7, 10000, 4000);
 		if (ret)
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* High migration margin → stay on Silver as long as possible */
-		sched_set_updown_migrate(98, 90);
+		/* High migration margin → stay on Silver for light tasks */
+		sched_set_updown_migrate(92, 85);
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Battery Saver:
@@ -68,20 +68,20 @@ static void apply_ki_profile(int mode)
 
 	case KI_PROFILE_BALANCED:
 	default:
-		/* Silver (cpu0): snappy 120Hz UI, instant idle drop */
-		ret = sugov_set_cluster_rate_limits(0, 1000, 500);
+		/* Silver (cpu0): snappy 500us ramp-up, 8ms hold for butter-smooth 120Hz */
+		ret = sugov_set_cluster_rate_limits(0, 500, 8000);
 		if (ret)
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* Gold (cpu4): fast app launches (Grab, Maps, WhatsApp) */
-		ret = sugov_set_cluster_rate_limits(4, 2000, 500);
+		/* Gold (cpu4): fast assist for app launches & smooth scrolling */
+		ret = sugov_set_cluster_rate_limits(4, 1000, 8000);
 		if (ret)
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* Prime (cpu7): fires on sustained load only */
-		ret = sugov_set_cluster_rate_limits(7, 4000, 500);
+		/* Prime (cpu7): fires on sustained heavy load only */
+		ret = sugov_set_cluster_rate_limits(7, 2000, 8000);
 		if (ret)
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* Smooth migration margins */
-		sched_set_updown_migrate(95, 85);
+		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
+		sched_set_updown_migrate(85, 75);
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Balanced Daily:
@@ -91,18 +91,18 @@ static void apply_ki_profile(int mode)
 		watermark_scale_factor = 12;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Balanced profile active (Ngojek + Daily Optimized)\n");
+		pr_info("ki_profile: Balanced profile active (Butter-smooth 120Hz + Efficient)\n");
 		break;
 
 	case KI_PROFILE_PERFORMANCE:
-		/* Silver, Gold, Prime: instant ramp-up, hold high freq */
-		ret = sugov_set_cluster_rate_limits(0, 500, 2000);
+		/* Silver, Gold, Prime: instant ramp-up, 20ms hold for sustained high FPS */
+		ret = sugov_set_cluster_rate_limits(0, 500, 20000);
 		if (ret)
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		ret = sugov_set_cluster_rate_limits(4, 500, 2000);
+		ret = sugov_set_cluster_rate_limits(4, 500, 20000);
 		if (ret)
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		ret = sugov_set_cluster_rate_limits(7, 500, 2000);
+		ret = sugov_set_cluster_rate_limits(7, 500, 20000);
 		if (ret)
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 		/* Aggressive upmigration to Gold/Prime for high FPS gaming */
