@@ -81,20 +81,20 @@ static int apply_ki_profile(int mode)
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
-		/* Gold (cpu4): fast assist for app launches & smooth scrolling */
-		ret = sugov_set_cluster_rate_limits(4, 1000, 8000);
+		/* Gold (cpu4): fast assist for app launches, smooth scrolling & gaming */
+		ret = sugov_set_cluster_rate_limits(4, 500, 8000);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
-		/* Prime (cpu7): 10ms threshold before ramp-up; prevents overheating on UI bursts */
-		ret = sugov_set_cluster_rate_limits(7, 10000, 8000);
+		/* Prime (cpu7): 5ms threshold before ramp-up; balanced response without runaway heat */
+		ret = sugov_set_cluster_rate_limits(7, 5000, 8000);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
 		}
-		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
-		sched_set_updown_migrate(85, 75);
+		/* Multitasking & Gaming sweet spot: smooth migration to Gold/Prime */
+		sched_set_updown_migrate(65, 55);
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Balanced Daily:
