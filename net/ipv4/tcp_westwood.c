@@ -143,9 +143,13 @@ static void tcp_westwood_cong_control(struct sock *sk, const struct rate_sample 
 		w->rtt_cnt++;
 	}
 
-	bw = (u64)rs->delivered * BW_UNIT;
-	do_div(bw, rs->interval_us);
-	minmax_running_max(&w->bw, 10, w->rtt_cnt, bw);
+	if (rs->interval_us > 0 && rs->delivered >= 0) {
+		bw = (u64)rs->delivered * BW_UNIT;
+		do_div(bw, rs->interval_us);
+		minmax_running_max(&w->bw, 10, w->rtt_cnt, bw);
+	} else {
+		bw = minmax_get(&w->bw);
+	}
 
 	if (rs->rtt_us > 0 && rs->rtt_us <= w->min_rtt_us)
 		w->min_rtt_us = rs->rtt_us;
