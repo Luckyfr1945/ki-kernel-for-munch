@@ -8,9 +8,11 @@
 ---
 
 ## v1.4 (Upcoming / In-Development)
+• Backported syscall epoll_pwait2 from Linux 5.11 (Nanosecond precision I/O event polling)
 • Backported TCP Westwood-sub congestion control (Modernized sampling rate & loss recovery for Wi-Fi)
 • Optimized CFS scheduler newly-idle balance latency (Reduce long-tail load balance cost)
 • Created experimental AOSP-only branch with EEVDF + CASS scheduler
+
 
 ---
 
