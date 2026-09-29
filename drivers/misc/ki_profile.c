@@ -16,6 +16,7 @@
 #include <linux/sched.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
+#include <linux/workqueue.h>
 #include <linux/ki_profile.h>
 
 static int current_profile_mode = KI_PROFILE_BALANCED;
@@ -32,24 +33,30 @@ extern int watermark_scale_factor;
 extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
-static void apply_ki_profile(int mode)
+static int apply_ki_profile(int mode)
 {
-	int ret;
+	int ret, err = 0;
 
 	switch (mode) {
 	case KI_PROFILE_BATTERY:
 		/* Silver (cpu0): conservative ramp-up, 4ms hold to avoid clock thrashing */
 		ret = sugov_set_cluster_rate_limits(0, 1500, 4000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 1;
+		}
 		/* Gold (cpu4): slow to boost */
 		ret = sugov_set_cluster_rate_limits(4, 3000, 4000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 2;
+		}
 		/* Prime (cpu7): fires only under hard sustained load */
 		ret = sugov_set_cluster_rate_limits(7, 10000, 4000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 4;
+		}
 		/* High migration margin → stay on Silver for light tasks */
 		sched_set_updown_migrate(92, 85);
 		sched_set_boost(0);
@@ -70,16 +77,22 @@ static void apply_ki_profile(int mode)
 	default:
 		/* Silver (cpu0): snappy 500us ramp-up, 8ms hold for butter-smooth 120Hz */
 		ret = sugov_set_cluster_rate_limits(0, 500, 8000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 1;
+		}
 		/* Gold (cpu4): fast assist for app launches & smooth scrolling */
 		ret = sugov_set_cluster_rate_limits(4, 1000, 8000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-		/* Prime (cpu7): fires on sustained heavy load only */
-		ret = sugov_set_cluster_rate_limits(7, 2000, 8000);
-		if (ret)
+			err |= 2;
+		}
+		/* Prime (cpu7): 10ms threshold before ramp-up; prevents overheating on UI bursts */
+		ret = sugov_set_cluster_rate_limits(7, 10000, 8000);
+		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 4;
+		}
 		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
 		sched_set_updown_migrate(85, 75);
 		sched_set_boost(0);
@@ -97,14 +110,20 @@ static void apply_ki_profile(int mode)
 	case KI_PROFILE_PERFORMANCE:
 		/* Silver, Gold, Prime: instant ramp-up, 20ms hold for sustained high FPS */
 		ret = sugov_set_cluster_rate_limits(0, 500, 20000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 1;
+		}
 		ret = sugov_set_cluster_rate_limits(4, 500, 20000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 2;
+		}
 		ret = sugov_set_cluster_rate_limits(7, 500, 20000);
-		if (ret)
+		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
+			err |= 4;
+		}
 		/* Aggressive upmigration to Gold/Prime for high FPS gaming */
 		sched_set_updown_migrate(65, 50);
 		sched_set_boost(1);
@@ -123,6 +142,7 @@ static void apply_ki_profile(int mode)
 	}
 
 	setup_per_zone_wmarks();
+	return err;
 }
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -142,10 +162,8 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 		return -EINVAL;
 
 	mutex_lock(&ki_profile_mutex);
-	if (current_profile_mode != val) {
-		current_profile_mode = val;
-		apply_ki_profile(val);
-	}
+	current_profile_mode = val;
+	apply_ki_profile(val);
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
@@ -207,6 +225,28 @@ static const struct attribute_group ki_profile_attr_group = {
 };
 
 static struct kobject *ki_profile_kobj;
+static struct delayed_work ki_profile_delayed_work;
+static int boot_settle_retries;
+
+static void ki_profile_delayed_work_fn(struct work_struct *work)
+{
+	int err;
+
+	mutex_lock(&ki_profile_mutex);
+	err = apply_ki_profile(current_profile_mode);
+	mutex_unlock(&ki_profile_mutex);
+
+	if (err && boot_settle_retries < 6) {
+		boot_settle_retries++;
+		pr_info("ki_profile: sugov limits pending (err=%d), retrying in 5s (%d/6)\n",
+			err, boot_settle_retries);
+		schedule_delayed_work(&ki_profile_delayed_work, msecs_to_jiffies(5000));
+		return;
+	}
+
+	pr_info("ki_profile: Boot settlement complete, profile %d (%s) active and locked\n",
+		current_profile_mode, profile_names[current_profile_mode]);
+}
 
 static int __init ki_profile_init(void)
 {
@@ -226,6 +266,15 @@ static int __init ki_profile_init(void)
 	}
 
 	apply_ki_profile(current_profile_mode);
+
+	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
+	/*
+	 * Schedule delayed enforcement after 25 seconds so userspace post_boot
+	 * scripts (which overwrite schedutil and migration margins) are overridden
+	 * by Ki-Profile.
+	 */
+	schedule_delayed_work(&ki_profile_delayed_work, msecs_to_jiffies(25000));
+
 	pr_info("ki_profile: Ki-kernel Profile driver initialized (default: Balanced)\n");
 	return 0;
 }
