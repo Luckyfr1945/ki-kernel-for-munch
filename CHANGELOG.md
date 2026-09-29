@@ -1,17 +1,18 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-09-28  
+**Build Date:** 2026-09-29  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI / HyperOS & AOSP (Android 11 - 17)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## v1.4 (Upcoming / In-Development)
+## v1.4
 • Backported syscall epoll_pwait2 from Linux 5.11 (Nanosecond precision I/O event polling)
 • Backported TCP Westwood-sub congestion control (Modernized sampling rate & loss recovery for Wi-Fi)
 • Optimized CFS scheduler newly-idle balance latency (Reduce long-tail load balance cost)
 • Created experimental AOSP-only branch with EEVDF + CASS scheduler
+
 
 
 ---
