@@ -11,8 +11,10 @@
 • Backported epoll_pwait2 
 • Added TCP Westwood-sub improvements for Wi-Fi
 • Optimized CFS load balancing
-• Pinned kswapd to Little cores
-• Synced RAM watermarks with Ki-Profile
+• Unpinned kswapd across all online CPUs to prevent direct reclaim stalls during gaming
+• Synced RAM watermarks with Ki-Profile (`watermark_scale_factor = 30`) to eliminate multitasking frame drops
+• Zero schedutil up-rate-limit delay (0µs) for instant 120Hz gaming responsiveness
+• Optimized aw86927 haptic driver: reduced standby delay from 2.5ms to 250µs and silenced printk spam to prevent touchscreen freeze during notifications
 • Hardened netd broken pipe handling
 • Removed Adreno 650 POPP throttling
 • Removed Wi-Fi debug wakelocks
@@ -21,7 +23,7 @@
 • Fixed MIUI and AnyKernel3 flashing issues
 • Added experimental EEVDF + CASS AOSP
 • Fine-tuned schedutil & CPU migration for butter-smooth 120Hz scrolling while keeping low idle drain
-• Added post-boot delayed settlement & Prime core thermal guard in Ki-Profile
+• Added post-boot delayed settlement in Ki-Profile
 • Enabled CONFIG_DM_BOW for Virtual A/B checkpoint compatibility (Android 15+ / HyperOS)
 
 ---
