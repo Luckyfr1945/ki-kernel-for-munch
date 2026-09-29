@@ -8,11 +8,16 @@
 ---
 
 ## v1.4
-• Backported syscall epoll_pwait2 from Linux 5.11 (Nanosecond precision I/O event polling)
+• Backported syscall epoll_pwait2 from Linux 5.11 with standard syscall 441 wiring (Android 12–17 Bionic ABI compatible)
 • Backported TCP Westwood-sub congestion control (Modernized sampling rate & loss recovery for Wi-Fi)
+• Guarded TCP Westwood-sub rate sampling against division by zero on invalid samples
 • Optimized CFS scheduler newly-idle balance latency (Reduce long-tail load balance cost)
+• Bound kswapd thread permanently to LITTLE cluster (CPUs 0-3) to eliminate UI frame drops
+• Synchronized dynamic RAM watermarks with setup_per_zone_wmarks() on ki_profile switches
+• Hardened netd process detection in broken pipe handling with exact binary match
 • Removed Qualcomm POPP throttling from Adreno 650 KGSL driver (Unthrottled GPU sustain)
 • Nuked debugging wakelocks from qcacld-3.0 Wi-Fi driver (Deep sleep battery savings)
+• Fixed MIUI build script module signature flags and AnyKernel3 vendor_boot DTB handling
 • Created experimental AOSP-only branch with EEVDF + CASS scheduler
 
 ---
