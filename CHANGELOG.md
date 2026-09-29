@@ -24,6 +24,10 @@
 • Added experimental EEVDF + CASS AOSP
 • Fine-tuned schedutil & CPU migration for butter-smooth 120Hz scrolling while keeping low idle drain
 • Added post-boot delayed settlement in Ki-Profile
+• Ported e404r gaming performance optimizations:
+  - Display: eliminated DSI error workqueues, avoided FPS event broadcasting to display listeners, and switched to no-log register access
+  - Latency: stripped heavy debugging and verbose overhead from fast-paths (tsens, synx, npu, lmh_dcvs, iommu, cnss2, xhci)
+  - Preserved Ki-Profile dynamic governor switching (daily battery efficiency + full gaming turbo)
 • Enabled CONFIG_DM_BOW for Virtual A/B checkpoint compatibility (Android 15+ / HyperOS)
 
 ---
