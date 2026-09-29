@@ -386,10 +386,10 @@ static inline bool is_netd_proc(struct task_struct *task)
 	if (!task)
 		return false;
 
-	if (!strncmp(task->comm, "netd", 4))
+	if (!strcmp(task->comm, "netd"))
 		return true;
 
-	if (task->group_leader && !strncmp(task->group_leader->comm, "netd", 4))
+	if (task->group_leader && !strcmp(task->group_leader->comm, "netd"))
 		return true;
 
 	exe = get_task_exe_file(task);
@@ -397,7 +397,7 @@ static inline bool is_netd_proc(struct task_struct *task)
 		exe = get_task_exe_file(task->group_leader);
 
 	if (exe) {
-		if (exe->f_path.dentry && !strncmp((const char *)exe->f_path.dentry->d_name.name, "netd", 4))
+		if (exe->f_path.dentry && !strcmp((const char *)exe->f_path.dentry->d_name.name, "netd"))
 			is_netd = true;
 		fput(exe);
 	}
