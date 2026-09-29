@@ -75,51 +75,53 @@ static int apply_ki_profile(int mode)
 
 	case KI_PROFILE_BALANCED:
 	default:
-		/* Silver (cpu0): snappy 500us ramp-up, 8ms hold for butter-smooth 120Hz */
-		ret = sugov_set_cluster_rate_limits(0, 500, 8000);
+		/* Silver (cpu0): zero ramp-up delay, 500us down hold for snappy 120Hz */
+		ret = sugov_set_cluster_rate_limits(0, 0, 500);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
-		/* Gold (cpu4): fast assist for app launches, smooth scrolling & gaming */
-		ret = sugov_set_cluster_rate_limits(4, 500, 8000);
+		/* Gold (cpu4): zero ramp-up delay for instant game thread responsiveness */
+		ret = sugov_set_cluster_rate_limits(4, 0, 500);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
-		/* Prime (cpu7): 5ms threshold before ramp-up; balanced response without runaway heat */
-		ret = sugov_set_cluster_rate_limits(7, 5000, 8000);
+		/* Prime (cpu7): zero ramp-up delay for heavy load spikes and 120Hz frame deadlines */
+		ret = sugov_set_cluster_rate_limits(7, 0, 500);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
 		}
-		/* Multitasking & Gaming sweet spot: smooth migration to Gold/Prime */
-		sched_set_updown_migrate(65, 55);
+		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
+		sched_set_updown_migrate(85, 75);
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Balanced Daily:
-		 * Low swappiness: minimal zRAM churn, smooth for daily tasks.
+		 * watermark_scale_factor 30: provides generous free page headroom,
+		 * completely preventing direct reclaim (allocstall) pauses during
+		 * heavy multi-tasking, notification pop-ups, and 120Hz gaming.
 		 */
 		vm_swappiness = 60;
-		watermark_scale_factor = 12;
+		watermark_scale_factor = 30;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Balanced profile active (Butter-smooth 120Hz + Efficient)\n");
+		pr_info("ki_profile: Balanced profile active (Butter-smooth 120Hz + Fast Response)\n");
 		break;
 
 	case KI_PROFILE_PERFORMANCE:
-		/* Silver, Gold, Prime: instant ramp-up, 20ms hold for sustained high FPS */
-		ret = sugov_set_cluster_rate_limits(0, 500, 20000);
+		/* Silver, Gold, Prime: zero ramp-up delay, 5ms hold for sustained high FPS */
+		ret = sugov_set_cluster_rate_limits(0, 0, 5000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
-		ret = sugov_set_cluster_rate_limits(4, 500, 20000);
+		ret = sugov_set_cluster_rate_limits(4, 0, 5000);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
-		ret = sugov_set_cluster_rate_limits(7, 500, 20000);
+		ret = sugov_set_cluster_rate_limits(7, 0, 5000);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
@@ -129,12 +131,11 @@ static int apply_ki_profile(int mode)
 		sched_set_boost(1);
 		/*
 		 * RAM Tuning — Gaming/Performance:
-		 * Low swappiness: keep game assets in RAM, no zRAM stutter
-		 * mid-frame. Less kswapd interference during GPU-saturated loads.
-		 * Low cache_pressure: keep game asset file cache warm.
+		 * Generous watermark headroom keeps game assets in RAM and avoids
+		 * any mid-frame direct reclaim stutter.
 		 */
 		vm_swappiness = 60;
-		watermark_scale_factor = 10;
+		watermark_scale_factor = 30;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 60;
 		pr_info("ki_profile: Performance profile active (Gaming Turbo — Gacor!)\n");

@@ -3953,15 +3953,9 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int alloc_order, int reclaim_o
  */
 static inline void get_kswapd_allowed_mask(struct cpumask *mask)
 {
-	cpumask_clear(mask);
-	cpumask_set_cpu(0, mask);
-	cpumask_set_cpu(1, mask);
-	cpumask_set_cpu(2, mask);
-	cpumask_set_cpu(3, mask);
-	cpumask_and(mask, mask, cpu_online_mask);
-	if (unlikely(cpumask_empty(mask)))
-		cpumask_copy(mask, cpu_online_mask);
+	cpumask_copy(mask, cpu_online_mask);
 }
+
 
 static int kswapd(void *p)
 {
