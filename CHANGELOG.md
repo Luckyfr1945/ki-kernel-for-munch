@@ -11,7 +11,10 @@
 • Backported syscall epoll_pwait2 from Linux 5.11 (Nanosecond precision I/O event polling)
 • Backported TCP Westwood-sub congestion control (Modernized sampling rate & loss recovery for Wi-Fi)
 • Optimized CFS scheduler newly-idle balance latency (Reduce long-tail load balance cost)
+• Removed Qualcomm POPP throttling from Adreno 650 KGSL driver (Unthrottled GPU sustain)
+• Nuked debugging wakelocks from qcacld-3.0 Wi-Fi driver (Deep sleep battery savings)
 • Created experimental AOSP-only branch with EEVDF + CASS scheduler
+
 
 
 
