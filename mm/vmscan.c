@@ -3946,6 +3946,23 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int alloc_order, int reclaim_o
  * If there are applications that are active memory-allocators
  * (most normal use), this basically shouldn't matter.
  */
+/*
+ * Ki-kernel: Keep kswapd exclusively on LITTLE cores (CPUs 0-3 on SM8250)
+ * to prevent kswapd from stealing CPU cycles and causing frame drops on
+ * Big (Gold 4-6) and Prime (7) cores during gaming or heavy UI rendering.
+ */
+static inline void get_kswapd_allowed_mask(struct cpumask *mask)
+{
+	cpumask_clear(mask);
+	cpumask_set_cpu(0, mask);
+	cpumask_set_cpu(1, mask);
+	cpumask_set_cpu(2, mask);
+	cpumask_set_cpu(3, mask);
+	cpumask_and(mask, mask, cpu_online_mask);
+	if (unlikely(cpumask_empty(mask)))
+		cpumask_copy(mask, cpu_online_mask);
+}
+
 static int kswapd(void *p)
 {
 	unsigned int alloc_order, reclaim_order;
@@ -3956,10 +3973,10 @@ static int kswapd(void *p)
 	struct reclaim_state reclaim_state = {
 		.reclaimed_slab = 0,
 	};
-	const struct cpumask *cpumask = cpumask_of_node(pgdat->node_id);
+	struct cpumask mask;
 
-	if (!cpumask_empty(cpumask))
-		set_cpus_allowed_ptr(tsk, cpumask);
+	get_kswapd_allowed_mask(&mask);
+	set_cpus_allowed_ptr(tsk, &mask);
 	current->reclaim_state = &reclaim_state;
 
 	/*
@@ -4159,22 +4176,6 @@ unsigned long reclaim_global(unsigned long nr_to_reclaim)
 }
 #endif
 
-/*
- * Ki-kernel: Keep kswapd exclusively on LITTLE cores (CPUs 0-3 on SM8250)
- * to prevent kswapd from stealing CPU cycles and causing frame drops on
- * Big (Gold 4-6) and Prime (7) cores during gaming or heavy UI rendering.
- */
-static inline void get_kswapd_allowed_mask(struct cpumask *mask)
-{
-	cpumask_clear(mask);
-	cpumask_set_cpu(0, mask);
-	cpumask_set_cpu(1, mask);
-	cpumask_set_cpu(2, mask);
-	cpumask_set_cpu(3, mask);
-	cpumask_and(mask, mask, cpu_online_mask);
-	if (unlikely(cpumask_empty(mask)))
-		cpumask_copy(mask, cpu_online_mask);
-}
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
    not required for correctness.  So if the last cpu in a node goes
