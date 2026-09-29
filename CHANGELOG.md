@@ -22,6 +22,7 @@
 • Added experimental EEVDF + CASS AOSP
 • Fine-tuned schedutil & CPU migration for butter-smooth 120Hz scrolling while keeping low idle drain
 • Added post-boot delayed settlement & Prime core thermal guard in Ki-Profile
+• Enabled CONFIG_DM_BOW for Virtual A/B checkpoint compatibility (Android 15+ / HyperOS)
 
 ---
 
