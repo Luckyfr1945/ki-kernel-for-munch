@@ -29,8 +29,6 @@
   - Latency: stripped heavy debugging and verbose overhead from fast-paths (tsens, synx, npu, lmh_dcvs, iommu, cnss2, xhci)
   - Preserved Ki-Profile dynamic governor switching (daily battery efficiency + full gaming turbo)
 • Enabled CONFIG_DM_BOW for Virtual A/B checkpoint compatibility (Android 15+ / HyperOS)
-• Added Early ADB & USB debugging support (kernel cmdline + ramdisk auto-inject ro.adb.secure=0 for instant adb shell during bootloops on Android 11–17)
-• Enabled CONFIG_TCP_CONG_CUBIC alongside BBR for broader ROM network stack compatibility
 
 ---
 
