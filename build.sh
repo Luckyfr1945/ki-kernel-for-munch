@@ -1,479 +1,334 @@
 #!/bin/bash
+# Universal Ki-Kernel Build Script for SM8250 (munch / alioth / etc.)
+# Supports: AOSP / Custom ROM & MIUI / HyperOS
+# Usage: bash build.sh <target_device> [variant] [target_os]
+#   variant   : ksu (default) | nosusfs | noksu
+#   target_os : aosp (default) | miui | both
 
-# Some logics of this script are copied from [scripts/build_kernel]. Thanks to UtsavBalar1231.
-
-# Ensure the script exits on error
 set -e
 
-TOOLCHAIN_PATH=$HOME/proton-clang/proton-clang-20210522/bin
-GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD)
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.3"
+KERNEL_VERSION="v1.4"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
-export KBUILD_BUILD_USER="build-user"
-export KBUILD_BUILD_HOST="build-host 4.19.404R"
-LOCAL_VERSION_NAME="-${BUILD_DATETIME}-${KERNEL_NAME}-${KERNEL_VERSION}"
 
 if [ -z "$1" ]; then
-    echo "Error: No argument provided, please specific a target device." 
-    echo "If you need KernelSU, please add [ksu] as the second arg."
+    echo "=========================================================="
+    echo "  Ki-Kernel Build Script ($KERNEL_VERSION)"
+    echo "=========================================================="
+    echo "Usage: bash build.sh <target_device> [variant] [target_os]"
+    echo ""
+    echo "Arguments:"
+    echo "  target_device : munch, alioth, apollo, lmi, umi, etc."
+    echo "  variant       : ksu (default) | nosusfs | noksu"
+    echo "  target_os     : aosp (default) | miui | both"
+    echo ""
     echo "Examples:"
-    echo "Build for lmi(K30 Pro/POCO F2 Pro) without KernelSU:"
-    echo "    bash build.sh lmi"
-    echo "Build for umi(Mi10) with KernelSU:"
-    echo "    bash build.sh umi ksu"
+    echo "  bash build.sh munch ksu aosp   # Build AOSP with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu miui   # Build MIUI/HyperOS with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu both   # Build Universal Dual-OS zip"
+    echo "=========================================================="
     exit 1
 fi
 
+# Detect Toolchain (ZyCromerZ Clang 16 > Neutron > Proton)
+ZYC_PATH=$HOME/zyc-clang/bin
+NEUTRON_PATH=$HOME/neutron-clang/bin
+PROTON_PATH=$HOME/proton-clang/proton-clang-20210522/bin
 
-
-if [ ! -d $TOOLCHAIN_PATH ]; then
-    echo "TOOLCHAIN_PATH [$TOOLCHAIN_PATH] does not exist."
-    echo "Please ensure the toolchain is there, or change TOOLCHAIN_PATH in the script to your toolchain path."
+if [ -d "$ZYC_PATH" ]; then
+    export PATH="$ZYC_PATH:$PATH"
+    echo "Using Toolchain: ZyCromerZ Clang 16 ($ZYC_PATH)"
+elif [ -d "$NEUTRON_PATH" ]; then
+    export PATH="$NEUTRON_PATH:$PATH"
+    echo "Using Toolchain: Neutron Clang ($NEUTRON_PATH)"
+elif [ -d "$PROTON_PATH" ]; then
+    export PATH="$PROTON_PATH:$PATH"
+    echo "Using Toolchain: Proton Clang ($PROTON_PATH)"
+else
+    echo "Error: No suitable Clang toolchain found."
     exit 1
 fi
-
-echo "TOOLCHAIN_PATH: [$TOOLCHAIN_PATH]"
-export PATH="$TOOLCHAIN_PATH:$PATH"
 
 if ! command -v aarch64-linux-gnu-ld >/dev/null 2>&1; then
-    echo "[aarch64-linux-gnu-ld] does not exist, please check your environment."
-    exit 1
-fi
-
-if ! command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
-    echo "[arm-linux-gnueabi-ld] does not exist, please check your environment."
+    echo "[aarch64-linux-gnu-ld] not found in environment."
     exit 1
 fi
 
 if ! command -v clang >/dev/null 2>&1; then
-    echo "[clang] does not exist, please check your environment."
+    echo "[clang] not found in environment."
     exit 1
 fi
 
-
-# Enable ccache for speed up compiling 
-export CCACHE_DIR="$HOME/.cache/ccache_mikernel" 
+# Enable ccache for fast compiling
+export CCACHE_DIR="$HOME/.cache/ccache_mikernel"
 export CC="ccache gcc"
 export CXX="ccache g++"
-export PATH="/usr/lib/ccache:$PATH"
+export PATH="/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
 echo "CCACHE_DIR: [$CCACHE_DIR]"
 
+export KBUILD_BUILD_USER="build-user"
+export KBUILD_BUILD_HOST="build-host 4.19.404R"
 
 MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
 
-
-if [ "$1" == "j1" ]; then
-    make $MAKE_ARGS -j1
-    exit
-fi
-
-if [ "$1" == "continue" ]; then
-    make $MAKE_ARGS -j$(nproc)
-    exit
-fi
-
 if [ ! -f "arch/arm64/configs/${TARGET_DEVICE}_defconfig" ]; then
-    echo "No target device [${TARGET_DEVICE}] found."
-    echo "Avaliable defconfigs, please choose one target from below down:"
-    ls arch/arm64/configs/*_defconfig
+    echo "Error: arch/arm64/configs/${TARGET_DEVICE}_defconfig not found."
     exit 1
 fi
 
-
-# Check clang is existing.
 echo "[clang --version]:"
 clang --version
 
-
-
-KSU_ENABLE=0
-SUSFS_ENABLE=0
-VARIANT_TAG="[NoKSU]"
+# Parse Variant (Root / SuSFS)
+KSU_ENABLE=1
+SUSFS_ENABLE=1
+VARIANT_TAG="ReSukiSU+SUSFS"
 
 case "$2" in
-    ksu|ksu-susfs|susfs)
+    ksu|ksu-susfs|susfs|"")
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="[ReSukiSU+SUSFS]"
+        VARIANT_TAG="ReSukiSU+SUSFS"
         ;;
     ksu-nosusfs|nosusfs|plain)
         KSU_ENABLE=1
         SUSFS_ENABLE=0
-        VARIANT_TAG="[ReSukiSU]"
+        VARIANT_TAG="ReSukiSU"
         ;;
-    noksu|vanilla|none|"")
+    noksu|vanilla|none)
         KSU_ENABLE=0
         SUSFS_ENABLE=0
-        VARIANT_TAG="[NoKSU]"
+        VARIANT_TAG="NoKSU"
         ;;
     *)
-        echo "Unknown variant: $2. Falling back to ReSukiSU+SUSFS."
+        echo "Unknown variant: $2. Defaulting to ReSukiSU+SUSFS."
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="[ReSukiSU+SUSFS]"
+        VARIANT_TAG="ReSukiSU+SUSFS"
         ;;
 esac
 
-echo "TARGET_DEVICE: $TARGET_DEVICE"
-if [ $KSU_ENABLE -eq 1 ] && [ $SUSFS_ENABLE -eq 1 ]; then
-    echo "Variant: ReSukiSU (v4.2.0-rc3) + SuSFS v2.3.0 is enabled"
-elif [ $KSU_ENABLE -eq 1 ]; then
-    echo "Variant: ReSukiSU (v4.2.0-rc3) Standard (Non-SUSFS) is enabled"
-else
-    echo "Variant: Vanilla (No KernelSU, No SuSFS) is enabled"
-fi
+# Parse Target OS (aosp, miui, both)
+TARGET_OS="${3:-aosp}"
+case "$TARGET_OS" in
+    aosp|miui|both|all) ;;
+    *) TARGET_OS="aosp" ;;
+esac
 
+echo "=========================================================="
+echo "Target Device : $TARGET_DEVICE"
+echo "Kernel        : $KERNEL_NAME $KERNEL_VERSION"
+echo "Variant       : $VARIANT_TAG"
+echo "Target OS     : $TARGET_OS"
+echo "=========================================================="
 
-echo "Cleaning..."
-
-rm -rf out/
-rm -rf anykernel/
-
-echo "Clone AnyKernel3 for packing kernel (repo: https://github.com/liyafe1997/AnyKernel3)"
-git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --depth=1 anykernel
-cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
-
-if [ "$3" != "miui" ]; then
-# ------------- Building for AOSP -------------
-
-echo "Building for AOSP......"
-make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
-scripts/config --file out/.config --set-str LOCALVERSION "$LOCAL_VERSION_NAME"
-
-if [ $KSU_ENABLE -eq 1 ]; then
-    scripts/config --file out/.config \
-        -e KSU \
-        -d KSU_KPROBES_HOOK \
-        -d KSU_DEBUG \
-        -d KSU_TRACEPOINT_HOOK \
-        -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
-        -d KSU_ALLOWLIST_WORKAROUND \
-        -e KSU_LSM_SECURITY_HOOKS
-
-    if [ $SUSFS_ENABLE -eq 1 ]; then
+apply_ksu_config() {
+    if [ $KSU_ENABLE -eq 1 ]; then
         scripts/config --file out/.config \
+            -e KSU \
+            -e THREAD_INFO_IN_TASK \
+            -d KSU_KPROBES_HOOK \
+            -d KSU_DEBUG \
+            -d KSU_TRACEPOINT_HOOK \
+            -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
+            -d KSU_ALLOWLIST_WORKAROUND \
+            -e KSU_LSM_SECURITY_HOOKS \
             -d KSU_MANUAL_HOOK \
-            -e KSU_SUSFS \
-            -e KSU_SUSFS_SUS_PATH \
-            -e KSU_SUSFS_SUS_MAP \
-            -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT \
-            -e KSU_SUSFS_TRY_UMOUNT \
-            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-            -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG \
-            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -e KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_SU \
-            -e KSU_SUSFS_HAS_MAGIC_MOUNT \
-            -e KSU_SUSFS_SUS_OVERLAYFS
+            -e KSU_SUSFS
+
+        if [ $SUSFS_ENABLE -eq 1 ]; then
+            scripts/config --file out/.config \
+                -e KSU_SUSFS_SUS_PATH \
+                -e KSU_SUSFS_SUS_MAP \
+                -e KSU_SUSFS_SUS_NETLINK \
+                -e KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
+                -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                -e KSU_SUSFS_SUS_SU \
+                -e KSU_SUSFS_SUS_MOUNT \
+                -e KSU_SUSFS_SUS_KSTAT \
+                -e KSU_SUSFS_SPOOF_UNAME \
+                -e KSU_SUSFS_ENABLE_LOG \
+                -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                -e KSU_SUSFS_OPEN_REDIRECT \
+                -e KSU_SUSFS_SUS_OVERLAYFS
+        else
+            scripts/config --file out/.config \
+                -d KSU_SUSFS_SUS_PATH \
+                -d KSU_SUSFS_SUS_MAP \
+                -d KSU_SUSFS_SUS_NETLINK \
+                -d KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
+                -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                -d KSU_SUSFS_SUS_SU \
+                -d KSU_SUSFS_SUS_MOUNT \
+                -d KSU_SUSFS_SUS_KSTAT \
+                -d KSU_SUSFS_SPOOF_UNAME \
+                -d KSU_SUSFS_ENABLE_LOG \
+                -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                -d KSU_SUSFS_OPEN_REDIRECT \
+                -d KSU_SUSFS_SUS_OVERLAYFS
+        fi
     else
         scripts/config --file out/.config \
-            -e KSU_MANUAL_HOOK \
-            -d KSU_SUSFS \
-            -d KSU_SUSFS_SUS_PATH \
-            -d KSU_SUSFS_SUS_MAP \
-            -d KSU_SUSFS_SUS_MOUNT \
-            -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -d KSU_SUSFS_SUS_KSTAT \
-            -d KSU_SUSFS_TRY_UMOUNT \
-            -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-            -d KSU_SUSFS_SPOOF_UNAME \
-            -d KSU_SUSFS_ENABLE_LOG \
-            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -d KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_SU \
-            -d KSU_SUSFS_HAS_MAGIC_MOUNT \
-            -d KSU_SUSFS_SUS_OVERLAYFS
-    fi
-else
-    scripts/config --file out/.config \
-        -d KSU \
-        -d KSU_SUSFS \
-        -d KSU_SUSFS_SUS_PATH \
-        -d KSU_SUSFS_SUS_MAP \
-        -d KSU_SUSFS_SUS_MOUNT \
-        -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-        -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-        -d KSU_SUSFS_SUS_KSTAT \
-        -d KSU_SUSFS_TRY_UMOUNT \
-        -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-        -d KSU_SUSFS_SPOOF_UNAME \
-        -d KSU_SUSFS_ENABLE_LOG \
-        -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-        -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-        -d KSU_SUSFS_OPEN_REDIRECT \
-        -d KSU_SUSFS_SUS_SU \
-        -d KSU_SUSFS_HAS_MAGIC_MOUNT \
-        -d KSU_SUSFS_SUS_OVERLAYFS
-fi
-
-make $MAKE_ARGS olddefconfig
-
-make $MAKE_ARGS -j$(nproc)
-
-
-if [ -f "out/arch/arm64/boot/Image" ]; then
-    echo "The file [out/arch/arm64/boot/Image] exists. AOSP Build successfully."
-else
-    echo "The file [out/arch/arm64/boot/Image] does not exist. Seems AOSP build failed."
-    exit 1
-fi
-
-echo "Generating [out/arch/arm64/boot/dtb]......"
-find out/arch/arm64/boot/dts -name '*.dtb' -exec cat {} + >out/arch/arm64/boot/dtb
-
-rm -rf anykernel/kernels/
-
-mkdir -p anykernel/kernels/
-
-cp out/arch/arm64/boot/Image anykernel/kernels/
-cp out/arch/arm64/boot/dtb anykernel/kernels/
-cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
-
-cd anykernel 
-
-ZIP_FILENAME="${VARIANT_TAG}${KERNEL_NAME}-AOSP-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
-
-zip -r9 $ZIP_FILENAME ./* -x .git .gitignore out/ ./*.zip
-
-mv $ZIP_FILENAME ../
-
-cd ..
-
-
-echo "Build for AOSP finished."
-
-if [ "$3" == "aosp" ]; then
-    echo "Done AOSP build. The flashable zip is: [./$ZIP_FILENAME]"
-    exit 0
-fi
-
-# ------------- End of Building for AOSP -------------
-#  If you don't need AOSP you can comment out the above block [Building for AOSP]
-fi
-
-
-# ------------- Building for MIUI -------------
-
-
-echo "Clearning [out/] and build for MIUI....."
-rm -rf out/
-
-dts_source=arch/arm64/boot/dts/vendor/qcom
-
-# Backup dts
-cp -a ${dts_source} .dts.bak
-
-# Correct panel dimensions on MIUI builds
-sed -i 's/<154>/<1537>/g' ${dts_source}/dsi-panel-j1s*
-sed -i 's/<154>/<1537>/g' ${dts_source}/dsi-panel-j2*
-sed -i 's/<155>/<1544>/g' ${dts_source}/dsi-panel-j3s-37-02-0a-dsc-video.dtsi
-sed -i 's/<155>/<1545>/g' ${dts_source}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi
-sed -i 's/<155>/<1546>/g' ${dts_source}/dsi-panel-k11a-38-08-0a-dsc-cmd.dtsi
-sed -i 's/<155>/<1546>/g' ${dts_source}/dsi-panel-l11r-38-08-0a-dsc-cmd.dtsi
-sed -i 's/<70>/<695>/g' ${dts_source}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi
-sed -i 's/<70>/<695>/g' ${dts_source}/dsi-panel-j3s-37-02-0a-dsc-video.dtsi
-sed -i 's/<70>/<695>/g' ${dts_source}/dsi-panel-k11a-38-08-0a-dsc-cmd.dtsi
-sed -i 's/<70>/<695>/g' ${dts_source}/dsi-panel-l11r-38-08-0a-dsc-cmd.dtsi
-sed -i 's/<71>/<710>/g' ${dts_source}/dsi-panel-j1s*
-sed -i 's/<71>/<710>/g' ${dts_source}/dsi-panel-j2*
-
-# Enable back mi smartfps while disabling qsync min refresh-rate
-sed -i 's/\/\/ mi,mdss-dsi-pan-enable-smart-fps/mi,mdss-dsi-pan-enable-smart-fps/g' ${dts_source}/dsi-panel*
-sed -i 's/\/\/ mi,mdss-dsi-smart-fps-max_framerate/mi,mdss-dsi-smart-fps-max_framerate/g' ${dts_source}/dsi-panel*
-sed -i 's/\/\/ qcom,mdss-dsi-pan-enable-smart-fps/qcom,mdss-dsi-pan-enable-smart-fps/g' ${dts_source}/dsi-panel*
-sed -i 's/qcom,mdss-dsi-qsync-min-refresh-rate/\/\/qcom,mdss-dsi-qsync-min-refresh-rate/g' ${dts_source}/dsi-panel*
-
-# Enable back refresh rates supported on MIUI
-sed -i 's/120 90 60/120 90 60 50 30/g' ${dts_source}/dsi-panel-g7a-36-02-0c-dsc-video.dtsi
-sed -i 's/120 90 60/120 90 60 50 30/g' ${dts_source}/dsi-panel-g7a-37-02-0a-dsc-video.dtsi
-sed -i 's/120 90 60/120 90 60 50 30/g' ${dts_source}/dsi-panel-g7a-37-02-0b-dsc-video.dtsi
-sed -i 's/144 120 90 60/144 120 90 60 50 48 30/g' ${dts_source}/dsi-panel-j3s-37-02-0a-dsc-video.dtsi
-
-
-# Enable back brightness control from dtsi
-sed -i 's/\/\/39 00 00 00 00 00 03 51 03 FF/39 00 00 00 00 00 03 51 03 FF/g' ${dts_source}/dsi-panel-j9-38-0a-0a-fhd-video.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 03 51 0D FF/39 00 00 00 00 00 03 51 0D FF/g' ${dts_source}/dsi-panel-j2-p2-1-38-0c-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${dts_source}/dsi-panel-j1s-42-02-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${dts_source}/dsi-panel-j1s-42-02-0a-mp-dsc-cmd.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${dts_source}/dsi-panel-j2-mp-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${dts_source}/dsi-panel-j2-p2-1-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${dts_source}/dsi-panel-j2s-mp-42-02-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 00 00/39 01 00 00 00 00 03 51 00 00/g' ${dts_source}/dsi-panel-j2-38-0c-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 00 00/39 01 00 00 00 00 03 51 00 00/g' ${dts_source}/dsi-panel-j2-38-0c-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${dts_source}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${dts_source}/dsi-panel-j9-38-0a-0a-fhd-video.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${dts_source}/dsi-panel-j1u-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${dts_source}/dsi-panel-j2-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${dts_source}/dsi-panel-j2-p1-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 0F FF/39 01 00 00 00 00 03 51 0F FF/g' ${dts_source}/dsi-panel-j1u-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 0F FF/39 01 00 00 00 00 03 51 0F FF/g' ${dts_source}/dsi-panel-j2-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 03 51 0F FF/39 01 00 00 00 00 03 51 0F FF/g' ${dts_source}/dsi-panel-j2-p1-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 05 51 07 FF 00 00/39 01 00 00 00 00 05 51 07 FF 00 00/g' ${dts_source}/dsi-panel-j1s-42-02-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 05 51 07 FF 00 00/39 01 00 00 00 00 05 51 07 FF 00 00/g' ${dts_source}/dsi-panel-j1s-42-02-0a-mp-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 05 51 07 FF 00 00/39 01 00 00 00 00 05 51 07 FF 00 00/g' ${dts_source}/dsi-panel-j2-mp-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 05 51 07 FF 00 00/39 01 00 00 00 00 05 51 07 FF 00 00/g' ${dts_source}/dsi-panel-j2-p2-1-42-02-0b-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 00 00 05 51 07 FF 00 00/39 01 00 00 00 00 05 51 07 FF 00 00/g' ${dts_source}/dsi-panel-j2s-mp-42-02-0a-dsc-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 01 00 03 51 03 FF/39 01 00 00 01 00 03 51 03 FF/g' ${dts_source}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi
-sed -i 's/\/\/39 01 00 00 11 00 03 51 03 FF/39 01 00 00 11 00 03 51 03 FF/g' ${dts_source}/dsi-panel-j2-p2-1-38-0c-0a-dsc-cmd.dtsi
-
-
-make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
-scripts/config --file out/.config --set-str LOCALVERSION "$LOCAL_VERSION_NAME"
-
-if [ $KSU_ENABLE -eq 1 ]; then
-    scripts/config --file out/.config \
-        -e KSU \
-        -d KSU_KPROBES_HOOK \
-        -d KSU_DEBUG \
-        -d KSU_TRACEPOINT_HOOK \
-        -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
-        -d KSU_ALLOWLIST_WORKAROUND \
-        -e KSU_LSM_SECURITY_HOOKS
-
-    if [ $SUSFS_ENABLE -eq 1 ]; then
-        scripts/config --file out/.config \
+            -d KSU \
             -d KSU_MANUAL_HOOK \
-            -e KSU_SUSFS \
-            -e KSU_SUSFS_SUS_PATH \
-            -e KSU_SUSFS_SUS_MAP \
-            -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT \
-            -e KSU_SUSFS_TRY_UMOUNT \
-            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-            -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG \
-            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -e KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_SU \
-            -e KSU_SUSFS_HAS_MAGIC_MOUNT \
-            -e KSU_SUSFS_SUS_OVERLAYFS
-    else
-        scripts/config --file out/.config \
-            -e KSU_MANUAL_HOOK \
-            -d KSU_SUSFS \
-            -d KSU_SUSFS_SUS_PATH \
-            -d KSU_SUSFS_SUS_MAP \
-            -d KSU_SUSFS_SUS_MOUNT \
-            -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -d KSU_SUSFS_SUS_KSTAT \
-            -d KSU_SUSFS_TRY_UMOUNT \
-            -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-            -d KSU_SUSFS_SPOOF_UNAME \
-            -d KSU_SUSFS_ENABLE_LOG \
-            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -d KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_SU \
-            -d KSU_SUSFS_HAS_MAGIC_MOUNT \
-            -d KSU_SUSFS_SUS_OVERLAYFS
+            -d KSU_TRACEPOINT_HOOK \
+            -d KSU_SUSFS
     fi
-else
+}
+
+echo "Cleaning build directories..."
+rm -rf out/ anykernel/
+rm -rf build_artifacts 2>/dev/null || true
+mkdir -p build_artifacts/aosp build_artifacts/miui
+
+echo "Cloning AnyKernel3..."
+git clone https://github.com/AstideLabs/AnyKernel3 -b kona --single-branch --depth=1 anykernel
+
+local_version_date_str="-${BUILD_DATETIME}-${KERNEL_NAME}-${KERNEL_VERSION}"
+sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
+
+# ------------------------------------------------------------
+# BUILD AOSP
+# ------------------------------------------------------------
+if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" == "all" ]; then
+    echo ""
+    echo ">>> Compiling Kernel for AOSP / Custom ROM <<<"
+    rm -rf out/
+    make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+    apply_ksu_config
+    make $MAKE_ARGS olddefconfig
+    make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
+
+    if [ ! -f "out/arch/arm64/boot/Image" ]; then
+        echo "Error: AOSP Image compilation failed."
+        exit 1
+    fi
+
+    echo "Compiling DTBs (Extreme + Stock)..."
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_extreme
+    cp -f out/arch/arm64/boot/dtb_extreme out/arch/arm64/boot/dtb
+
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_stock
+
+    cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
+    cp out/arch/arm64/boot/dtb build_artifacts/aosp/dtb
+    cp out/arch/arm64/boot/dtb_extreme build_artifacts/aosp/dtb_extreme
+    cp out/arch/arm64/boot/dtb_stock build_artifacts/aosp/dtb_stock
+    echo ">>> AOSP Build Done! <<<"
+fi
+
+# ------------------------------------------------------------
+# BUILD MIUI / HyperOS
+# ------------------------------------------------------------
+if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" == "all" ]; then
+    echo ""
+    echo ">>> Compiling Kernel for MIUI / HyperOS <<<"
+    rm -rf out/
+    make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+    apply_ksu_config
+
+    # Enable MIUI hardware drivers, disable obsolete/hanging daemons
     scripts/config --file out/.config \
-        -d KSU \
-        -d KSU_SUSFS \
-        -d KSU_SUSFS_SUS_PATH \
-        -d KSU_SUSFS_SUS_MAP \
-        -d KSU_SUSFS_SUS_MOUNT \
-        -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-        -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-        -d KSU_SUSFS_SUS_KSTAT \
-        -d KSU_SUSFS_TRY_UMOUNT \
-        -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-        -d KSU_SUSFS_SPOOF_UNAME \
-        -d KSU_SUSFS_ENABLE_LOG \
-        -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-        -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-        -d KSU_SUSFS_OPEN_REDIRECT \
-        -d KSU_SUSFS_SUS_SU \
-        -d KSU_SUSFS_HAS_MAGIC_MOUNT \
-        -d KSU_SUSFS_SUS_OVERLAYFS
+        --set-str STATIC_USERMODEHELPER_PATH "" \
+        -d SF_BINDER \
+        -d MILLET \
+        -d MIGT \
+        -d MIGT_ENERGY_MODEL \
+        -d BOOTUP_RECLAIM \
+        -d MI_RECLAIM \
+        -d RTMM \
+        -e XIAOMI_MIUI \
+        -e TECHPACK_CAMERA_XIAOMI \
+        -e OVERLAY_FS \
+        -d DEBUG_FS \
+        -e LTO_NONE \
+        -d LTO_CLANG \
+        -d LOCALVERSION_AUTO \
+        -d MODULE_SIG_SHA512 \
+        -d MODULE_SIG_HASH \
+        -d CORESIGHT \
+        -d IPC_LOGGING \
+        -d SCHEDSTATS \
+        -d DEBUG_INFO
+
+    make $MAKE_ARGS olddefconfig
+    make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
+
+    if [ ! -f "out/arch/arm64/boot/Image" ]; then
+        echo "Error: MIUI Image compilation failed."
+        exit 1
+    fi
+
+    echo "Compiling DTBs (Extreme + Stock)..."
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_extreme
+    cp -f out/arch/arm64/boot/dtb_extreme out/arch/arm64/boot/dtb
+
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_stock
+
+    cp out/arch/arm64/boot/Image build_artifacts/miui/Image
+    cp out/arch/arm64/boot/dtb build_artifacts/miui/dtb
+    cp out/arch/arm64/boot/dtb_extreme build_artifacts/miui/dtb_extreme
+    cp out/arch/arm64/boot/dtb_stock build_artifacts/miui/dtb_stock
+    echo ">>> MIUI / HyperOS Build Done! <<<"
 fi
 
+# ------------------------------------------------------------
+# PACKAGING ANYKERNEL3
+# ------------------------------------------------------------
+echo ""
+echo ">>> Packaging AnyKernel3 Flashable Zip <<<"
+rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/dtb anykernel/dtbo.img 2>/dev/null
 
-scripts/config --file out/.config \
-    --set-str STATIC_USERMODEHELPER_PATH /system/bin/micd \
-    -e PERF_CRITICAL_RT_TASK	\
-    -e SF_BINDER		\
-    -e OVERLAY_FS		\
-    -d DEBUG_FS \
-    -e MIGT \
-    -e MIGT_ENERGY_MODEL \
-    -e MIHW \
-    -e PACKAGE_RUNTIME_INFO \
-    -e BINDER_OPT \
-    -e KPERFEVENTS \
-    -e MILLET \
-    -e PERF_HUMANTASK \
-    -d LTO_CLANG \
-    -d LOCALVERSION_AUTO \
-    -e SF_BINDER \
-    -e XIAOMI_MIUI \
-    -d MI_MEMORY_SYSFS \
-    -e TASK_DELAY_ACCT \
-    -e MIUI_ZRAM_MEMORY_TRACKING \
-    -d CONFIG_MODULE_SIG_SHA512 \
-    -d CONFIG_MODULE_SIG_HASH \
-    -e MI_FRAGMENTION \
-    -e PERF_HELPER \
-    -e BOOTUP_RECLAIM \
-    -e MI_RECLAIM \
-    -e RTMM
-
-make $MAKE_ARGS olddefconfig
-
-make $MAKE_ARGS -j$(nproc)
-
-
-
-if [ -f "out/arch/arm64/boot/Image" ]; then
-    echo "The file [out/arch/arm64/boot/Image] exists. MIUI Build successfully."
+if [ "$TARGET_OS" == "aosp" ]; then
+    mkdir -p anykernel/kernels/aosp/
+    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
+    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
+elif [ "$TARGET_OS" == "miui" ]; then
+    mkdir -p anykernel/kernels/miui/
+    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
+    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
 else
-    echo "The file [out/arch/arm64/boot/Image] does not exist. Seems MIUI build failed."
-    exit 1
+    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
+    cp -r build_artifacts/aosp/* anykernel/kernels/aosp/
+    cp -r build_artifacts/miui/* anykernel/kernels/miui/
 fi
 
-echo "Generating [out/arch/arm64/boot/dtb]......"
-find out/arch/arm64/boot/dts -name '*.dtb' -exec cat {} + >out/arch/arm64/boot/dtb
-
-
-# Restore modified dts
-rm -rf ${dts_source}
-mv .dts.bak ${dts_source}
-
-rm -rf anykernel/kernels/
-mkdir -p anykernel/kernels/
-
-cp out/arch/arm64/boot/Image anykernel/kernels/
-cp out/arch/arm64/boot/dtb anykernel/kernels/
+# DO NOT include dtbo (preserve panel/touch drivers from ROM)
+rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/aosp/dtbo.img anykernel/kernels/miui/dtbo.img 2>/dev/null
 cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
-echo "Build for MIUI finished."
+cd anykernel
 
-# ------------- End of Building for MIUI -------------
-#  If you don't need MIUI you can comment out the above block [Building for MIUI]
+if [ "$TARGET_OS" == "aosp" ]; then
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+elif [ "$TARGET_OS" == "miui" ]; then
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+else
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+fi
 
-
-cd anykernel 
-
-ZIP_FILENAME="${VARIANT_TAG}${KERNEL_NAME}-MIUI-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
-
-zip -r9 $ZIP_FILENAME ./* -x .git .gitignore out/ ./*.zip
-
-mv $ZIP_FILENAME ../
-
+zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
+mv "$ZIP_FILENAME" ../
 cd ..
 
-echo "Done. The flashable zip is: [./$ZIP_FILENAME]"
+rm -rf build_artifacts 2>/dev/null || true
+
+echo "=========================================================="
+echo "Build Finished Successfully!"
+echo "Flashable Zip: [./$ZIP_FILENAME]"
+echo "=========================================================="
