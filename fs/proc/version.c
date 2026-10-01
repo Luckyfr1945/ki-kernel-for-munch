@@ -5,9 +5,25 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/utsname.h>
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern struct static_key_false susfs_is_uname_spoof_buffer_set;
+extern void susfs_spoof_uname(struct new_utsname* tmp);
+#endif
 
 static int version_proc_show(struct seq_file *m, void *v)
 {
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	if (static_branch_likely(&susfs_is_uname_spoof_buffer_set)) {
+		struct new_utsname tmp;
+		memcpy(&tmp, utsname(), sizeof(tmp));
+		susfs_spoof_uname(&tmp);
+		seq_printf(m, linux_proc_banner,
+			tmp.sysname,
+			tmp.release,
+			tmp.version);
+		return 0;
+	}
+#endif
 	seq_printf(m, linux_proc_banner,
 		utsname()->sysname,
 		utsname()->release,

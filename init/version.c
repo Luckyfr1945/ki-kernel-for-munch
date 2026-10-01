@@ -23,12 +23,22 @@ extern int version_string(LINUX_VERSION_CODE);
 int version_string(LINUX_VERSION_CODE);
 #endif
 
+#ifdef CONFIG_SPOOF_KERNEL_VERSION
+#ifdef CONFIG_SPOOF_KERNEL_VERSION_STRING
+#define UTS_RELEASE_SPOOFED CONFIG_SPOOF_KERNEL_VERSION_STRING
+#else
+#define UTS_RELEASE_SPOOFED "5.15.148-android14-11-Ki-kernel-v1.5"
+#endif
+#else
+#define UTS_RELEASE_SPOOFED UTS_RELEASE
+#endif
+
 struct uts_namespace init_uts_ns = {
 	.kref = KREF_INIT(2),
 	.name = {
 		.sysname	= UTS_SYSNAME,
 		.nodename	= UTS_NODENAME,
-		.release	= UTS_RELEASE,
+		.release	= UTS_RELEASE_SPOOFED,
 		.version	= UTS_VERSION,
 		.machine	= UTS_MACHINE,
 		.domainname	= UTS_DOMAINNAME,
@@ -43,7 +53,7 @@ EXPORT_SYMBOL_GPL(init_uts_ns);
 
 /* FIXED STRINGS! Don't touch! */
 const char linux_banner[] =
-	"Linux version " UTS_RELEASE " (" LINUX_COMPILE_BY "@"
+	"Linux version " UTS_RELEASE_SPOOFED " (" LINUX_COMPILE_BY "@"
 	LINUX_COMPILE_HOST ") (" LINUX_COMPILER ") " UTS_VERSION "\n";
 
 const char *linux_banner_ptr = linux_banner;

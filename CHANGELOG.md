@@ -16,6 +16,7 @@
 • Eliminated Direct Reclaim Stall Storms: Disabled `watermark_boost_factor = 0` (upstream Android GKI / Sultan standard) and tuned `watermark_scale_factor = 16` to prevent massive kswapd memory reclaim freezes when waking from deep sleep and scrolling
 • Bound `kswapd` to LITTLE cluster (CPUs 0-3): Prevents background memory reclaim threads from stealing cycles from Big (Gold) and Prime cores during UI rendering
 • Watchdog Bark/Pet Tuning: Safely increased watchdog bark-time to 30s and pet-time to 18s in device tree to prevent false-positive kernel panic reboots during heavy I/O or memory burst allocation
+• Built-in Kernel Version Spoofing to Linux 5.15 (Android GKI): Integrated `CONFIG_SPOOF_KERNEL_VERSION` reporting `5.15.148-android14-11-Ki-kernel-v1.5` across `uname()`, `/proc/version`, and `/proc/sys/kernel/osrelease` while maintaining 100% stable 4.19 driver compatibility. Seamlessly tricks modern Android 14/15/16, Play Integrity, root detectors, and benchmark apps to recognize the kernel as Linux 5.xx, with optional dynamic override support via SuSFS
 
 ---
 
