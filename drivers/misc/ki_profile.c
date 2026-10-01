@@ -57,6 +57,10 @@ static int apply_ki_profile(int mode)
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
 		}
+		/* Clear RTG boost: prevent WALT rtgb_active from holding CPUs high during idle */
+		sugov_set_cluster_rtg_boost(0, 0);
+		sugov_set_cluster_rtg_boost(4, 0);
+		sugov_set_cluster_rtg_boost(7, 0);
 		/* High migration margin → stay on Silver for light tasks */
 		sched_set_updown_migrate(92, 85);
 		sched_set_boost(0);
@@ -76,23 +80,27 @@ static int apply_ki_profile(int mode)
 	case KI_PROFILE_BALANCED:
 	default:
 		/* Silver (cpu0): zero ramp-up delay, 500us down hold for snappy 120Hz */
-		ret = sugov_set_cluster_rate_limits(0, 0, 500);
+		ret = sugov_set_cluster_rate_limits(0, 0, 2000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
 		/* Gold (cpu4): zero ramp-up delay for instant game thread responsiveness */
-		ret = sugov_set_cluster_rate_limits(4, 0, 500);
+		ret = sugov_set_cluster_rate_limits(4, 0, 2000);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
 		/* Prime (cpu7): zero ramp-up delay for heavy load spikes and 120Hz frame deadlines */
-		ret = sugov_set_cluster_rate_limits(7, 0, 500);
+		ret = sugov_set_cluster_rate_limits(7, 0, 2000);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
 		}
+		/* Clear RTG boost: prevent stale WALT rtgb_active from previous Performance mode */
+		sugov_set_cluster_rtg_boost(0, 0);
+		sugov_set_cluster_rtg_boost(4, 0);
+		sugov_set_cluster_rtg_boost(7, 0);
 		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
 		sched_set_updown_migrate(85, 75);
 		sched_set_boost(0);
@@ -111,17 +119,17 @@ static int apply_ki_profile(int mode)
 
 	case KI_PROFILE_PERFORMANCE:
 		/* Silver, Gold, Prime: zero ramp-up delay, 5ms hold for sustained high FPS */
-		ret = sugov_set_cluster_rate_limits(0, 0, 5000);
+		ret = sugov_set_cluster_rate_limits(0, 0, 1000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
-		ret = sugov_set_cluster_rate_limits(4, 0, 5000);
+		ret = sugov_set_cluster_rate_limits(4, 0, 1000);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
-		ret = sugov_set_cluster_rate_limits(7, 0, 5000);
+		ret = sugov_set_cluster_rate_limits(7, 0, 1000);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;

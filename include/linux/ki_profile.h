@@ -10,6 +10,7 @@ enum ki_profile_mode {
 };
 
 int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned int down_us);
+int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz);
 void sched_set_updown_migrate(unsigned int up, unsigned int down);
 int sched_set_boost(int type);
 

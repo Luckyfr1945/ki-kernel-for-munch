@@ -1494,6 +1494,7 @@ int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned
 	if (!tunables)
 		return -ENODEV;
 
+	/* Sync both tunables and sg_policy to keep sysfs reads consistent */
 	tunables->up_rate_limit_us = up_us;
 	tunables->down_rate_limit_us = down_us;
 	sg_policy->up_rate_delay_ns = (u64)up_us * NSEC_PER_USEC;
@@ -1503,6 +1504,39 @@ int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_rate_limits);
+
+/**
+ * sugov_set_cluster_rtg_boost - set RTG boost freq for a CPU's cluster
+ * @cpu:     representative CPU of the cluster
+ * @freq_hz: RTG boost frequency in Hz (0 to disable)
+ *
+ * Allows Ki-Profile to clear RTG boost when switching away from Performance
+ * mode, preventing WALT rtgb_active from holding CPUs at high frequencies
+ * during idle.
+ */
+int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+	unsigned long util;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->rtg_boost_freq = freq_hz;
+	util = target_util(sg_policy, freq_hz);
+	sg_policy->rtg_boost_util = util;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_rtg_boost);
+
 
 static int __init sugov_register(void)
 {
