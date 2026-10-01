@@ -11,6 +11,11 @@
 • Backported Binder IPC `TF_CLEAR_BUF` flag from upstream Android (AOSP): zero-clears IPC transaction buffer on `BC_FREE_BUFFER` to prevent sensitive data leakage across Binder shared memory — improves app-switch responsiveness and eliminates stale payload exposure
 • Enabled USB UAS (`CONFIG_USB_UAS=y`): OTG SSD/flash drives now use USB Attached SCSI protocol for faster, lower-latency bulk transfers vs. USB Mass Storage
 • Enabled NTFS filesystem (`CONFIG_NTFS_FS=y`): NTFS-formatted OTG drives mount and read out-of-the-box without third-party apps
+• Fixed CPU Idle Clock Stuck: Fixed WALT `rtgb_active` flag pinning Prime (cpu7 @ 3189MHz) and Little (cpu0 @ 1800MHz) during idle by explicitly zero-resetting RTG boost (`sugov_set_cluster_rtg_boost`), syncing schedutil tunables, and tuning Balanced `down_rate_limit` to 2000µs
+• Fixed Wake-from-Idle Freeze: Restored display DSI error recovery workqueue (`dsi_err_workq`) to recover from transient FIFO underflow/overflow on panel unblanking/scrolling, preventing permanent display panel lockups
+• Eliminated Direct Reclaim Stall Storms: Disabled `watermark_boost_factor = 0` (upstream Android GKI / Sultan standard) and tuned `watermark_scale_factor = 16` to prevent massive kswapd memory reclaim freezes when waking from deep sleep and scrolling
+• Bound `kswapd` to LITTLE cluster (CPUs 0-3): Prevents background memory reclaim threads from stealing cycles from Big (Gold) and Prime cores during UI rendering
+• Watchdog Bark/Pet Tuning: Safely increased watchdog bark-time to 30s and pet-time to 18s in device tree to prevent false-positive kernel panic reboots during heavy I/O or memory burst allocation
 
 ---
 

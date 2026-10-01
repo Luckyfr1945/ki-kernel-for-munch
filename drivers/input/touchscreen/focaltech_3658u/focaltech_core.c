@@ -754,19 +754,9 @@ static void fts_irq_read_report(void)
 
 static irqreturn_t fts_irq_handler(int irq, void *data)
 {
-	static bool prio_boosted = false;
 #if defined(CONFIG_PM) && FTS_PATCH_COMERR_PM
 	int ret = 0;
 	struct fts_ts_data *ts_data = fts_data;
-#endif
-
-	if (unlikely(!prio_boosted)) {
-		struct sched_param param = { .sched_priority = 90 };
-		sched_setscheduler_nocheck(current, SCHED_RR, &param);
-		set_user_nice(current, -20);
-		prio_boosted = true;
-	}
-#if defined(CONFIG_PM) && FTS_PATCH_COMERR_PM
 
 	touch_irq_boost();
 	if ((ts_data->suspended) && (ts_data->pm_suspend)) {

@@ -820,8 +820,15 @@
 };
 
 &wdog {
-	qcom,bark-time = <20000>;
-	qcom,pet-time = <15000>;
+	/*
+	 * Extended bark/pet times to prevent false-positive WDOG_BITE on
+	 * resume from deep idle. During screen-on after prolonged idle,
+	 * kcompactd + kswapd storms can stall all tasks for 15-25s.
+	 * bark-time 30s + pet-time 18s: survives memory pressure resume
+	 * while still reliably catching true system hangs.
+	 */
+	qcom,bark-time = <30000>;
+	qcom,pet-time = <18000>;
 };
 
 &xbl_aop_mem {

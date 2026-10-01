@@ -71,7 +71,8 @@ static int apply_ki_profile(int mode)
 		 * meaning fewer CPU wakeups and less decompression overhead.
 		 */
 		vm_swappiness = 60;
-		watermark_scale_factor = 15;
+		watermark_scale_factor = 12;
+		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 100;
 		pr_info("ki_profile: Battery profile active (CPU lazy + minimal zRAM churn)\n");
@@ -79,7 +80,7 @@ static int apply_ki_profile(int mode)
 
 	case KI_PROFILE_BALANCED:
 	default:
-		/* Silver (cpu0): zero ramp-up delay, 500us down hold for snappy 120Hz */
+		/* Silver (cpu0): zero ramp-up delay, 2000us down hold for snappy 120Hz */
 		ret = sugov_set_cluster_rate_limits(0, 0, 2000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
@@ -106,19 +107,20 @@ static int apply_ki_profile(int mode)
 		sched_set_boost(0);
 		/*
 		 * RAM Tuning — Balanced Daily:
-		 * watermark_scale_factor 30: provides generous free page headroom,
-		 * completely preventing direct reclaim (allocstall) pauses during
-		 * heavy multi-tasking, notification pop-ups, and 120Hz gaming.
+		 * watermark_scale_factor 16 + watermark_boost_factor 0:
+		 * Provides healthy free page headroom while preventing catastrophic
+		 * kswapd storms and direct reclaim freezes upon waking from deep idle.
 		 */
 		vm_swappiness = 60;
-		watermark_scale_factor = 30;
+		watermark_scale_factor = 16;
+		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 80;
 		pr_info("ki_profile: Balanced profile active (Butter-smooth 120Hz + Fast Response)\n");
 		break;
 
 	case KI_PROFILE_PERFORMANCE:
-		/* Silver, Gold, Prime: zero ramp-up delay, 5ms hold for sustained high FPS */
+		/* Silver, Gold, Prime: zero ramp-up delay, 1ms hold for sustained high FPS */
 		ret = sugov_set_cluster_rate_limits(0, 0, 1000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
@@ -139,11 +141,12 @@ static int apply_ki_profile(int mode)
 		sched_set_boost(1);
 		/*
 		 * RAM Tuning — Gaming/Performance:
-		 * Generous watermark headroom keeps game assets in RAM and avoids
+		 * Moderate headroom keeps game assets in RAM and avoids
 		 * any mid-frame direct reclaim stutter.
 		 */
 		vm_swappiness = 60;
-		watermark_scale_factor = 30;
+		watermark_scale_factor = 16;
+		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
 		sysctl_vfs_cache_pressure = 60;
 		pr_info("ki_profile: Performance profile active (Gaming Turbo — Gacor!)\n");
