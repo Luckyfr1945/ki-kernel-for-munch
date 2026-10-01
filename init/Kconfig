@@ -149,7 +149,7 @@ config SPOOF_KERNEL_VERSION
 config SPOOF_KERNEL_VERSION_STRING
 	string "Spoofed kernel release string"
 	depends on SPOOF_KERNEL_VERSION
-	default "5.15.148-android14-11-Ki-kernel-v1.5"
+	default "5.15.148-ki-kernel-v1.4"
 	help
 	  The spoofed kernel release string to report.
 
