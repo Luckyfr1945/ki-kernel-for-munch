@@ -232,8 +232,16 @@ static struct attribute *ki_profile_attrs[] = {
 	NULL,
 };
 
+static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
+{
+	if (attr == &mode_attr.attr || attr == &thermal_throttle_attr.attr)
+		return 0666;
+	return attr->mode;
+}
+
 static const struct attribute_group ki_profile_attr_group = {
 	.attrs = ki_profile_attrs,
+	.is_visible = ki_profile_is_visible,
 };
 
 static struct kobject *ki_profile_kobj;

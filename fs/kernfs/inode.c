@@ -225,6 +225,12 @@ static void kernfs_init_inode(struct kernfs_node *kn, struct inode *inode)
 	set_default_inode_attr(inode, kn->mode);
 	kernfs_refresh_inode(kn, inode);
 
+	/* Exempt ki_profile nodes from SELinux MAC to allow unprivileged / non-root control */
+	if (unlikely((kn->name && !strcmp(kn->name, "ki_profile")) ||
+		     (kn->parent && kn->parent->name && !strcmp(kn->parent->name, "ki_profile")))) {
+		inode->i_flags |= S_PRIVATE;
+	}
+
 	/* initialize inode according to type */
 	switch (kernfs_type(kn)) {
 	case KERNFS_DIR:
