@@ -24,9 +24,18 @@ static int version_proc_show(struct seq_file *m, void *v)
 		return 0;
 	}
 #endif
+#ifdef CONFIG_SPOOF_KERNEL_VERSION
+#ifdef CONFIG_SPOOF_KERNEL_VERSION_STRING
+#define UTS_RELEASE_SPOOFED CONFIG_SPOOF_KERNEL_VERSION_STRING
+#else
+#define UTS_RELEASE_SPOOFED "5.15.148-ki-kernel-v1.4"
+#endif
+#else
+#define UTS_RELEASE_SPOOFED utsname()->release
+#endif
 	seq_printf(m, linux_proc_banner,
 		utsname()->sysname,
-		utsname()->release,
+		UTS_RELEASE_SPOOFED,
 		utsname()->version);
 	return 0;
 }

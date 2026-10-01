@@ -1265,12 +1265,6 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		susfs_spoof_uname(&tmp);
 #endif
 	up_read(&uts_sem);
-#ifdef CONFIG_SPOOF_KERNEL_VERSION
-	if (unlikely(!strcmp(current->comm, "bpfloader") ||
-		     !strcmp(current->comm, "netd"))) {
-		strlcpy(tmp.release, UTS_RELEASE, sizeof(tmp.release));
-	}
-#endif
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
