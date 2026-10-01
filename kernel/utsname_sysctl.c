@@ -52,6 +52,17 @@ static int proc_do_uts_string(struct ctl_table *table, int write,
 	down_read(&uts_sem);
 	memcpy(tmp_data, get_uts(table), sizeof(tmp_data));
 	up_read(&uts_sem);
+#ifdef CONFIG_SPOOF_KERNEL_VERSION
+#ifdef CONFIG_SPOOF_KERNEL_VERSION_STRING
+#define UTS_RELEASE_SPOOFED CONFIG_SPOOF_KERNEL_VERSION_STRING
+#else
+#define UTS_RELEASE_SPOOFED "5.15.148-ki-kernel-v1.4"
+#endif
+	if (table->data == init_uts_ns.name.release &&
+	    likely(current->pid != 1 && strcmp(current->comm, "init"))) {
+		strlcpy(tmp_data, UTS_RELEASE_SPOOFED, sizeof(tmp_data));
+	}
+#endif
 	r = proc_dostring(&uts_table, write, buffer, lenp, ppos);
 
 	if (write) {

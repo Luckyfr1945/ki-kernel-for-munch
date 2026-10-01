@@ -1265,6 +1265,17 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		susfs_spoof_uname(&tmp);
 #endif
 	up_read(&uts_sem);
+#ifdef CONFIG_SPOOF_KERNEL_VERSION
+#ifdef CONFIG_SPOOF_KERNEL_VERSION_STRING
+#define UTS_RELEASE_SPOOFED CONFIG_SPOOF_KERNEL_VERSION_STRING
+#else
+#define UTS_RELEASE_SPOOFED "5.15.148-ki-kernel-v1.4"
+#endif
+	/* Let Android /init read native 4.19 for safe boot, spoof for all userspace apps */
+	if (likely(current->pid != 1 && strcmp(current->comm, "init"))) {
+		strlcpy(tmp.release, UTS_RELEASE_SPOOFED, sizeof(tmp.release));
+	}
+#endif
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 

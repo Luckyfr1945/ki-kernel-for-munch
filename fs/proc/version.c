@@ -30,12 +30,17 @@ static int version_proc_show(struct seq_file *m, void *v)
 #else
 #define UTS_RELEASE_SPOOFED "5.15.148-ki-kernel-v1.4"
 #endif
-#else
-#define UTS_RELEASE_SPOOFED utsname()->release
+	if (likely(current->pid != 1 && strcmp(current->comm, "init"))) {
+		seq_printf(m, linux_proc_banner,
+			utsname()->sysname,
+			UTS_RELEASE_SPOOFED,
+			utsname()->version);
+		return 0;
+	}
 #endif
 	seq_printf(m, linux_proc_banner,
 		utsname()->sysname,
-		UTS_RELEASE_SPOOFED,
+		utsname()->release,
 		utsname()->version);
 	return 0;
 }
