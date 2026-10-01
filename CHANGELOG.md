@@ -8,6 +8,11 @@
 ---
 
 ## v1.4
+• Android 15/16/17 bpfloader Compatibility Fixes:
+  - Enabled `CONFIG_NET_ACT_BPF=y` for modern Android network traffic policing and tethering
+  - Added smart release handling in `sys_newuname()` ensuring `bpfloader` and `netd` receive native 4.19 release info while user apps and Play Integrity observe the spoofed Linux 5.15 string
+  - Relaxed eBPF `RLIMIT_MEMLOCK` constraints for privileged system processes (`CAP_SYS_ADMIN`), preventing permission-denied / memlock failure during heavy eBPF map loading
+  - Permitted kprobe BPF verification to accept both native 4.19 and 5.15 kernel version targets
 • Built-in Kernel Version Spoofing to Linux 5.15 (Android GKI): Integrated `CONFIG_SPOOF_KERNEL_VERSION` reporting `5.15.148-ki-kernel-v1.4` across `uname()`, `/proc/version`, and `/proc/sys/kernel/osrelease` while maintaining 100% stable 4.19 driver compatibility. Seamlessly tricks modern Android 14/15/16, Play Integrity, root detectors, and benchmark apps to recognize the kernel as Linux 5.xx, with optional dynamic override support via SuSFS
 • Backported Binder IPC `TF_CLEAR_BUF` flag from upstream Android (AOSP): zero-clears IPC transaction buffer on `BC_FREE_BUFFER` to prevent sensitive data leakage across Binder shared memory — improves app-switch responsiveness and eliminates stale payload exposure
 • Enabled USB UAS (`CONFIG_USB_UAS=y`): OTG SSD/flash drives now use USB Attached SCSI protocol for faster, lower-latency bulk transfers vs. USB Mass Storage

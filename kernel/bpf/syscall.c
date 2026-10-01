@@ -175,6 +175,11 @@ int bpf_map_precharge_memlock(u32 pages)
 	struct user_struct *user = get_current_user();
 	unsigned long memlock_limit, cur;
 
+	if (capable(CAP_SYS_ADMIN)) {
+		free_uid(user);
+		return 0;
+	}
+
 	memlock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 	cur = atomic_long_read(&user->locked_vm);
 	free_uid(user);
@@ -186,6 +191,11 @@ int bpf_map_precharge_memlock(u32 pages)
 static int bpf_charge_memlock(struct user_struct *user, u32 pages)
 {
 	unsigned long memlock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+
+	if (capable(CAP_SYS_ADMIN)) {
+		atomic_long_add(pages, &user->locked_vm);
+		return 0;
+	}
 
 	if (atomic_long_add_return(pages, &user->locked_vm) > memlock_limit) {
 		atomic_long_sub(pages, &user->locked_vm);
@@ -1030,6 +1040,12 @@ int __bpf_prog_charge(struct user_struct *user, u32 pages)
 	unsigned long memlock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 	unsigned long user_bufs;
 
+	if (capable(CAP_SYS_ADMIN)) {
+		if (user)
+			atomic_long_add(pages, &user->locked_vm);
+		return 0;
+	}
+
 	if (user) {
 		user_bufs = atomic_long_add_return(pages, &user->locked_vm);
 		if (user_bufs > memlock_limit) {
@@ -1389,7 +1405,8 @@ static int bpf_prog_load(union bpf_attr *attr)
 		return -E2BIG;
 
 	if (type == BPF_PROG_TYPE_KPROBE &&
-	    attr->kern_version != LINUX_VERSION_CODE)
+	    attr->kern_version != LINUX_VERSION_CODE &&
+	    attr->kern_version != KERNEL_VERSION(5, 15, 0))
 		return -EINVAL;
 
 	if (type != BPF_PROG_TYPE_SOCKET_FILTER &&
