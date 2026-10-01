@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Persistent Storage - ramfs parts.
  *
  * Copyright (C) 2010 Intel Corporation <tony.luck@intel.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  published by the Free Software Foundation.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <linux/module.h>
@@ -36,9 +24,6 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
-#ifdef CONFIG_PSTORE_LAST_KMSG
-#include <linux/proc_fs.h>
-#endif
 
 #include "internal.h"
 
@@ -121,7 +106,7 @@ static int pstore_ftrace_seq_show(struct seq_file *s, void *v)
 
 	rec = (struct pstore_ftrace_record *)(ps->record->buf + data->off);
 
-	seq_printf(s, "CPU:%d ts:%llu %08lx  %08lx  %pf <- %pF\n",
+	seq_printf(s, "CPU:%d ts:%llu %08lx  %08lx  %ps <- %pS\n",
 		   pstore_ftrace_decode_cpu(rec),
 		   pstore_ftrace_read_timestamp(rec),
 		   rec->ip, rec->parent_ip, (void *)rec->ip,
@@ -300,25 +285,6 @@ bool pstore_is_mounted(void)
 	return pstore_sb != NULL;
 }
 
-#ifdef CONFIG_PSTORE_LAST_KMSG
-
-static char *console_buffer;
-static ssize_t console_bufsize;
-
-static ssize_t last_kmsg_read(struct file *file, char __user *buf,
-		size_t len, loff_t *offset)
-{
-	return simple_read_from_buffer(buf, len, offset,
-			console_buffer, console_bufsize);
-}
-
-static const struct file_operations last_kmsg_fops = {
-	.owner          = THIS_MODULE,
-	.read           = last_kmsg_read,
-	.llseek         = default_llseek,
-};
-#endif
-
 /*
  * Make a regular file in the root directory of our file system.
  * Load it up with "size" bytes of data from "buf".
@@ -355,54 +321,10 @@ int pstore_mkfile(struct dentry *root, struct pstore_record *record)
 		goto fail;
 	inode->i_mode = S_IFREG | 0444;
 	inode->i_fop = &pstore_file_operations;
-
-	switch (record->type) {
-	case PSTORE_TYPE_DMESG:
-		scnprintf(name, sizeof(name), "dmesg-%s-%llu%s",
-			  record->psi->name, record->id,
-			  record->compressed ? ".enc.z" : "");
-		break;
-	case PSTORE_TYPE_CONSOLE:
-		scnprintf(name, sizeof(name), "console-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_FTRACE:
-		scnprintf(name, sizeof(name), "ftrace-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_MCE:
-		scnprintf(name, sizeof(name), "mce-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_PPC_RTAS:
-		scnprintf(name, sizeof(name), "rtas-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_PPC_OF:
-		scnprintf(name, sizeof(name), "powerpc-ofw-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_PPC_COMMON:
-		scnprintf(name, sizeof(name), "powerpc-common-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_PMSG:
-		scnprintf(name, sizeof(name), "pmsg-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_PPC_OPAL:
-		scnprintf(name, sizeof(name), "powerpc-opal-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	case PSTORE_TYPE_UNKNOWN:
-		scnprintf(name, sizeof(name), "unknown-%s-%llu",
-			  record->psi->name, record->id);
-		break;
-	default:
-		scnprintf(name, sizeof(name), "type%d-%s-%llu",
-			  record->type, record->psi->name, record->id);
-		break;
-	}
+	scnprintf(name, sizeof(name), "%s-%s-%llu%s",
+			pstore_type_to_name(record->type),
+			record->psi->name, record->id,
+			record->compressed ? ".enc.z" : "");
 
 	private = kzalloc(sizeof(*private), GFP_KERNEL);
 	if (!private)
@@ -424,13 +346,6 @@ int pstore_mkfile(struct dentry *root, struct pstore_record *record)
 	spin_lock_irqsave(&allpstore_lock, flags);
 	list_add(&private->list, &allpstore);
 	spin_unlock_irqrestore(&allpstore_lock, flags);
-
-#ifdef CONFIG_PSTORE_LAST_KMSG
-	if (record->type == PSTORE_TYPE_CONSOLE) {
-		console_buffer = private->record->buf;
-		console_bufsize = size;
-	}
-#endif
 
 	return 0;
 
@@ -517,9 +432,6 @@ static struct file_system_type pstore_fs_type = {
 int __init pstore_init_fs(void)
 {
 	int err;
-#ifdef CONFIG_PSTORE_LAST_KMSG
-	struct proc_dir_entry *last_kmsg_entry = NULL;
-#endif
 
 	/* Create a convenient mount point for people to access pstore */
 	err = sysfs_create_mount_point(fs_kobj, "pstore");
@@ -530,14 +442,6 @@ int __init pstore_init_fs(void)
 	if (err < 0)
 		sysfs_remove_mount_point(fs_kobj, "pstore");
 
-#ifdef CONFIG_PSTORE_LAST_KMSG
-	last_kmsg_entry = proc_create_data("last_kmsg", S_IFREG | S_IRUGO,
-			NULL, &last_kmsg_fops, NULL);
-	if (!last_kmsg_entry) {
-		pr_err("Failed to create last_kmsg\n");
-		goto out;
-	}
-#endif
 out:
 	return err;
 }

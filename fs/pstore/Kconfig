@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 config PSTORE
 	tristate "Persistent store support"
 	select CRYPTO if PSTORE_COMPRESS
@@ -142,7 +143,6 @@ config PSTORE_RAM
 	tristate "Log panic/oops to a RAM buffer"
 	depends on PSTORE
 	depends on HAS_IOMEM
-	depends on HAVE_MEMBLOCK
 	select REED_SOLOMON
 	select REED_SOLOMON_ENC8
 	select REED_SOLOMON_DEC8
@@ -154,11 +154,3 @@ config PSTORE_RAM
 	  "ramoops.ko".
 
 	  For more information, see Documentation/admin-guide/ramoops.rst.
-
-config PSTORE_LAST_KMSG
-	bool "export /proc/last_kmsg"
-	default y if BOARD_XIAOMI
-	depends on PSTORE
-	help
-	  When the option is enabled, pstore will export a proc filesystem
-	  interface /proc/last_kmsg.
