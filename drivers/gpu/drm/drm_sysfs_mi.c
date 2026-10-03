@@ -250,11 +250,19 @@ static ssize_t disp_param_store(struct device *device,
 	input_dup = input_copy;
 	/* removes leading and trailing whitespace from input_copy */
 	input_copy = strim(input_copy);
-	ret = kstrtouint(input_copy, 16, &param);
-	if (ret) {
-		DRM_ERROR("input buffer conversion failed\n");
-		ret = -EAGAIN;
-		goto exit_free;
+
+	/* Support simple 1 / 0 / on / off for DC dimming */
+	if (!strcmp(input_copy, "1") || !strcasecmp(input_copy, "on")) {
+		param = DISPPARAM_DIMMING;
+	} else if (!strcmp(input_copy, "0") || !strcasecmp(input_copy, "off")) {
+		param = DISPPARAM_DIMMING_OFF;
+	} else {
+		ret = kstrtouint(input_copy, 16, &param);
+		if (ret) {
+			DRM_ERROR("input buffer conversion failed\n");
+			ret = -EAGAIN;
+			goto exit_free;
+		}
 	}
 
 	ret = dsi_display_set_disp_param(connector, param);
@@ -275,6 +283,36 @@ static ssize_t disp_param_show(struct device *device,
 	dsi_display_get_disp_param(connector, &param);
 
 	return snprintf(buf, PAGE_SIZE, "0x%08X\n", param);
+}
+
+static ssize_t dimming_store(struct device *device,
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	bool enable;
+	int ret;
+
+	if (strtobool(buf, &enable) < 0) {
+		int val;
+		if (kstrtoint(buf, 0, &val))
+			return -EINVAL;
+		enable = (val != 0);
+	}
+
+	ret = dsi_display_set_dimming(connector, enable);
+	return ret ? ret : count;
+}
+
+static ssize_t dimming_show(struct device *device,
+			   struct device_attribute *attr,
+			   char *buf)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	bool enabled = false;
+
+	dsi_display_get_dimming(connector, &enabled);
+	return snprintf(buf, PAGE_SIZE, "%d\n", enabled ? 1 : 0);
 }
 
 static ssize_t mipi_reg_store(struct device *device,
@@ -538,6 +576,8 @@ static DEVICE_ATTR_RO(enabled);
 static DEVICE_ATTR_RO(dpms);
 static DEVICE_ATTR_RO(modes);
 static DEVICE_ATTR_RW(disp_param);
+static DEVICE_ATTR_RW(dimming);
+static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0644, dimming_show, dimming_store);
 static DEVICE_ATTR_RW(mipi_reg);
 static DEVICE_ATTR_RO(oled_pmic_id);
 static DEVICE_ATTR_RO(panel_info);
@@ -558,6 +598,8 @@ static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_dpms.attr,
 	&dev_attr_modes.attr,
 	&dev_attr_disp_param.attr,
+	&dev_attr_dimming.attr,
+	&dev_attr_dc_dimming.attr,
 	&dev_attr_mipi_reg.attr,
 	&dev_attr_oled_pmic_id.attr,
 	&dev_attr_panel_info.attr,

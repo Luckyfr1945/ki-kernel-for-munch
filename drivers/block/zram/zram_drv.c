@@ -1313,6 +1313,10 @@ static ssize_t comp_algorithm_store(struct device *dev,
 	if (sz > 0 && compressor[sz - 1] == '\n')
 		compressor[sz - 1] = 0x00;
 
+	/* Override zstd to lz4 if requested by ROM / init */
+	if (!strcmp(compressor, "zstd"))
+		strlcpy(compressor, "lz4", sizeof(compressor));
+
 	if (!zcomp_available_algorithm(compressor))
 		return -EINVAL;
 

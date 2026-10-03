@@ -43,9 +43,9 @@ static void panelon_dimming_enable_delayed_work(struct work_struct *work)
 				struct dsi_panel_mi_cfg, dimming_enable_delayed_work.work);
 	struct dsi_panel *dsi_panel = mi_cfg->dsi_panel;
 
-	if (dsi_panel && !mi_cfg->hbm_enabled)
+	if (dsi_panel && mi_cfg->dc_enable && !mi_cfg->hbm_enabled)
 		dsi_panel_set_disp_param(dsi_panel, DISPPARAM_DIMMING);
-        else {
+	else if (dsi_panel && mi_cfg->dc_enable) {
 		DSI_INFO("hbm_enabled(%d), delay of dimming on\n", mi_cfg->hbm_enabled);
 		schedule_delayed_work(&mi_cfg->dimming_enable_delayed_work,
 			msecs_to_jiffies(mi_cfg->panel_on_dimming_delay));
@@ -3545,19 +3545,21 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		} else {
 			pr_info("skip dimming off due to hbm on\n");
 		}
+		mi_cfg->dc_enable = false;
 		break;
 	case DISPPARAM_DIMMING:
 		if (mi_cfg->dimming_state != STATE_DIM_BLOCK) {
 			if (ktime_after(ktime_get(), mi_cfg->fod_hbm_off_time)
 				&& ktime_after(ktime_get(), mi_cfg->fod_backlight_off_time)) {
 				pr_info("dimming on\n");
-				dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGON);
+				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGON);
 			} else {
 				pr_info("skip dimming on due to hbm off\n");
 			}
 		} else {
 			pr_info("skip dimming on due to hbm on\n");
 		}
+		mi_cfg->dc_enable = true;
 		break;
 	default:
 		break;
@@ -3977,14 +3979,11 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		break;
 	case DISPPARAM_DC_ON:
 		pr_info("DC on\n");
-		if (mi_cfg->dc_type == 0) {
-			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_ON);
-			if (rc)
-				pr_err("[%s] failed to send DSI_CMD_SET_MI_DC_ON cmd, rc=%d\n",
-						panel->name, rc);
-			else
-				rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
-		}
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_ON);
+		if (rc)
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGON);
+		if (!rc)
+			rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
 		if (panel->mi_cfg.panel_id == 0x4C334100420200) {
 			mi_dsi_update_lhbm_cmd_b2reg(panel, true);
 			mi_dsi_update_nolp_b2reg(panel, true);
@@ -3993,14 +3992,11 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		break;
 	case DISPPARAM_DC_OFF:
 		pr_info("DC off\n");
-		if (mi_cfg->dc_type == 0) {
-			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_OFF);
-			if (rc)
-				pr_err("[%s] failed to send DSI_CMD_SET_MI_DC_OFF cmd, rc=%d\n",
-						panel->name, rc);
-			else
-				rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
-		}
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_OFF);
+		if (rc)
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
+		if (!rc)
+			rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
 		if (panel->mi_cfg.panel_id == 0x4C334100420200) {
 			mi_dsi_update_lhbm_cmd_b2reg(panel, false);
 			mi_dsi_update_nolp_b2reg(panel, false);

@@ -191,7 +191,7 @@ int fts_write(u8 *writebuf, u32 writelen)
 			udelay(CS_HIGH_DELAY);
 		}
 	}
-	if (ret < 0) {
+	if (ret < 0 && (!ts_data || !ts_data->suspended)) {
 		FTS_ERROR("data write(addr:%x) fail,status:%x,ret:%d",
 				  writebuf[0], rxbuf[3], ret);
 	}
@@ -234,6 +234,7 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 	u32 txlen_need = datalen + SPI_HEADER_LENGTH + ts_data->dummy_byte;
 	u8 ctrl = READ_CMD;
 	u32 dp = 0;
+	bool crc_err = false;
 
 	if (!cmd || !cmdlen || !data || !datalen) {
 		FTS_ERROR("cmd/cmdlen/data/datalen is invalid");
@@ -280,6 +281,7 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 			if (ctrl & DATA_CRC_EN) {
 				ret = rdata_check(&rxbuf[dp], txlen - dp);
 				if (ret < 0) {
+					crc_err = true;
 					FTS_DEBUG("data read(addr:%x) crc abnormal,retry:%d",
 							  cmd[0], i);
 					udelay(CS_HIGH_DELAY);
@@ -288,6 +290,7 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 			}
 			break;
 		} else {
+			crc_err = false;
 			FTS_DEBUG("data read(addr:%x) status:%x,retry:%d,ret:%d",
 					  cmd[0], rxbuf[3], i, ret);
 			ret = -EIO;
@@ -295,9 +298,9 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 		}
 	}
 
-	if (ret < 0) {
+	if (ret < 0 && (!ts_data || !ts_data->suspended)) {
 		FTS_ERROR("data read(addr:%x) %s,status:%x,ret:%d", cmd[0],
-				  (i >= SPI_RETRY_NUMBER) ? "crc abnormal" : "fail",
+				  crc_err ? "crc abnormal" : "fail",
 				  rxbuf[3], ret);
 	}
 

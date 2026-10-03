@@ -115,3 +115,32 @@ int dsi_display_esd_irq_ctrl(struct dsi_display *display,
 
 	return rc;
 }
+
+int dsi_display_set_dimming(struct drm_connector *connector,
+		bool enable)
+{
+	return dsi_display_set_disp_param(connector,
+			enable ? DISPPARAM_DIMMING : DISPPARAM_DIMMING_OFF);
+}
+
+int dsi_display_get_dimming(struct drm_connector *connector,
+		bool *enabled)
+{
+	struct dsi_display *display = NULL;
+	struct dsi_bridge *c_bridge = NULL;
+
+	if (!connector || !connector->encoder || !connector->encoder->bridge) {
+		pr_err("Invalid connector/encoder/bridge ptr\n");
+		return -EINVAL;
+	}
+
+	c_bridge = to_dsi_bridge(connector->encoder->bridge);
+	display = c_bridge->display;
+	if (!display || !display->panel) {
+		pr_err("Invalid display/panel ptr\n");
+		return -EINVAL;
+	}
+
+	*enabled = display->panel->mi_cfg.dc_enable;
+	return 0;
+}

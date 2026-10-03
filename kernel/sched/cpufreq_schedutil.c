@@ -1537,6 +1537,39 @@ int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz)
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_rtg_boost);
 
+/**
+ * sugov_set_cluster_hispeed - set hispeed freq and load threshold for a CPU's cluster
+ * @cpu:     representative CPU of the cluster
+ * @freq_hz: hispeed target frequency in Hz (0 to disable)
+ * @load:    load threshold percentage (0-100) to trigger jump to hispeed
+ *
+ * Allows Ki-Profile Gaming Turbo to instantly snap CPU frequencies to peak
+ * performance under moderate load without waiting for WALT RTG classification.
+ */
+int sugov_set_cluster_hispeed(unsigned int cpu, unsigned int freq_hz, unsigned int load)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+	unsigned long util;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->hispeed_freq = freq_hz;
+	tunables->hispeed_load = min(100U, load);
+	util = target_util(sg_policy, freq_hz);
+	sg_policy->hispeed_util = util;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_hispeed);
+
 
 static int __init sugov_register(void)
 {

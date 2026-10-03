@@ -984,8 +984,7 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_CRC_OFF);
 	}
 	if (bl_lvl == 0 && mi_cfg->dc_type) {
-		DSI_INFO("DC off\n");
-		mi_cfg->dc_enable = false;
+		DSI_INFO("screen off\n");
 	}
 	mi_cfg->last_bl_level = bl_lvl;
 	if (bl_lvl)

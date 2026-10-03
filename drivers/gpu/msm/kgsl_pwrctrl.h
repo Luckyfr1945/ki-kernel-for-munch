@@ -261,6 +261,7 @@ unsigned int kgsl_pwrctrl_adjust_pwrlevel(struct kgsl_device *device,
 	unsigned int new_level);
 void kgsl_pwrctrl_set_thermal_cycle(struct kgsl_device *device,
 	unsigned int new_level);
+void kgsl_set_performance_mode(bool enable);
 
 static inline unsigned long kgsl_get_clkrate(struct clk *clk)
 {

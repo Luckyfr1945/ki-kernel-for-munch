@@ -39,7 +39,68 @@ ui_print "  ********************************";
 ui_print " ";
 
 # Pick kernel Image & DTB
-if [ -f "$AKHOME/kernels/miui/Image" ]; then
+if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; then
+    IS_MIUI=0;
+    IS_AOSP=0;
+
+    # Check for manual override flags
+    if [ -f /tmp/aosp ] || [ -f /sdcard/aosp ] || [ -f /data/aosp ]; then
+        IS_AOSP=1;
+    elif [ -f /tmp/miui ] || [ -f /sdcard/miui ] || [ -f /data/miui ]; then
+        IS_MIUI=1;
+    fi;
+
+    # If no manual override, inspect mounted system or try mounting system
+    if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ]; then
+        SYSTEM_MOUNTED=0;
+        if [ ! -f /system/build.prop ] && [ ! -f /system/system/build.prop ] && [ ! -f /system_root/system/build.prop ]; then
+            mkdir -p /s_chk 2>/dev/null;
+            mount -o ro /dev/block/mapper/system /s_chk 2>/dev/null || mount -o ro /dev/block/bootdevice/by-name/system /s_chk 2>/dev/null;
+            [ -f /s_chk/build.prop ] || [ -f /s_chk/system/build.prop ] && SYSTEM_MOUNTED=1;
+        fi;
+
+        PROP_LIST="/system_root/system/build.prop /system/system/build.prop /system/build.prop /system/etc/build.prop /s_chk/system/build.prop /s_chk/build.prop /product/etc/build.prop";
+
+        # 1. First check for distinct AOSP / Custom ROM indicators
+        for prop in $PROP_LIST; do
+            if [ -f "$prop" ]; then
+                if grep -q -i -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior" "$prop" 2>/dev/null; then
+                    IS_AOSP=1;
+                    break;
+                fi;
+            fi;
+        done;
+
+        # 2. Check for official MIUI / HyperOS system versioning
+        # NEVER check /vendor/build.prop because AOSP ROMs on Xiaomi reuse vendor blobs containing 'ro.miui'
+        if [ "$IS_AOSP" -eq 0 ]; then
+            for prop in $PROP_LIST; do
+                if [ -f "$prop" ]; then
+                    if grep -q -E "^ro\.miui\.ui\.version|^ro\.mi\.os\.version|^ro\.build\.version\.incremental=V[0-9]" "$prop" 2>/dev/null; then
+                        IS_MIUI=1;
+                        break;
+                    fi;
+                fi;
+            done;
+        fi;
+
+        if [ "$SYSTEM_MOUNTED" -eq 1 ]; then
+            umount /s_chk 2>/dev/null;
+            rm -rf /s_chk 2>/dev/null;
+        fi;
+    fi;
+
+    # Default fallback is AOSP
+    if [ "$IS_MIUI" -eq 1 ] && [ "$IS_AOSP" -eq 0 ]; then
+        ui_print "- Detected: MIUI / HyperOS ROM";
+        cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+        [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
+    else
+        ui_print "- Detected: AOSP / Custom ROM";
+        cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
+        [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb";
+    fi;
+elif [ -f "$AKHOME/kernels/miui/Image" ]; then
     ui_print "- Target: MIUI / HyperOS";
     cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
     [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
@@ -108,6 +169,10 @@ on boot
     chown system system /sys/kernel/ki_profile/mode
     chown system system /sys/kernel/ki_profile/thermal_throttle
     chown system system /sys/kernel/ki_profile/spoof_version
+    chmod 0666 /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker
+    chmod 0666 /sys/class/misc/boeffla_wakelock_blocker/default_wakelocks
+    chown system system /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker
+    chown system system /sys/class/misc/boeffla_wakelock_blocker/default_wakelocks
 
 # Enable kernel version spoof ONLY after full boot — prevents bootreceiver/recovery
 # from seeing the 5.15 string during early init and triggering a recovery loop.
@@ -155,10 +220,12 @@ if [ -n "$vendor_boot_block" ]; then
     PATCH_VBMETA_FLAG=auto;
 
     reset_ak;
-    if [ -f "$AKHOME/kernels/miui/dtb" ]; then
+    if [ "$IS_MIUI" -eq 1 ] && [ -f "$AKHOME/kernels/miui/dtb" ]; then
         cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
     elif [ -f "$AKHOME/kernels/aosp/dtb" ]; then
         cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb";
+    elif [ -f "$AKHOME/kernels/miui/dtb" ]; then
+        cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
     elif [ -f "$AKHOME/kernels/dtb" ]; then
         cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb";
     fi;
@@ -200,11 +267,32 @@ chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/kernel/gpu/* 2>/dev/null
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null
 chmod 666 /sys/touchpanel/reversed_keys 2>/dev/null
+chmod 666 /sys/class/drm/card0-DSI-*/dimming 2>/dev/null
+chmod 666 /sys/class/drm/card0-DSI-*/dc_dimming 2>/dev/null
+chmod 666 /sys/class/drm/card0-DSI-*/disp_param 2>/dev/null
+chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/dev/null
+chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
+chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null
 
-chmod 664 /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
-chmod 664 /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
+chmod 666 /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
+chmod 666 /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
 echo 1 > /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
 echo 1 > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
+
+chmod 666 /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
+chmod 666 /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+echo 1 > /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
+echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+
+echo 90 > /proc/sys/vm/swappiness 2>/dev/null
+chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
+echo "wlan_pno_wl;wlan_extscan_wl;wlan_wow_wl;netmgr_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+
+for q in /sys/block/*/queue/scheduler; do
+    if [ -f "$q" ]; then
+        echo maple > "$q" 2>/dev/null
+    fi
+done
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
 fi;

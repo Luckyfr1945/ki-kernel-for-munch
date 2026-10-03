@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/pm_opp.h>
 #include <linux/thermal.h>
+#include <linux/ki_profile.h>
 
 #include <trace/events/thermal.h>
 
@@ -177,6 +178,10 @@ static int devfreq_cooling_set_cur_state(struct thermal_cooling_device *cdev,
 	int ret;
 
 	if (state == dfc->cooling_state)
+		return 0;
+
+	/* Ki-Profile Gaming Turbo: Do not throttle GPU devfreq during performance mode */
+	if (unlikely(!ki_thermal_throttle_enabled && state > 0))
 		return 0;
 
 	dev_dbg(dev, "Setting cooling state %lu\n", state);

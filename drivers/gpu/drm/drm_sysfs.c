@@ -234,11 +234,49 @@ static DEVICE_ATTR_RO(enabled);
 static DEVICE_ATTR_RO(dpms);
 static DEVICE_ATTR_RO(modes);
 
+int dsi_display_set_dimming(struct drm_connector *connector, bool enable);
+int dsi_display_get_dimming(struct drm_connector *connector, bool *enabled);
+
+static ssize_t dimming_store(struct device *device,
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	bool enable;
+	int ret;
+
+	if (strtobool(buf, &enable) < 0) {
+		int val;
+		if (kstrtoint(buf, 0, &val))
+			return -EINVAL;
+		enable = (val != 0);
+	}
+
+	ret = dsi_display_set_dimming(connector, enable);
+	return ret ? ret : count;
+}
+
+static ssize_t dimming_show(struct device *device,
+			   struct device_attribute *attr,
+			   char *buf)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	bool enabled = false;
+
+	dsi_display_get_dimming(connector, &enabled);
+	return snprintf(buf, PAGE_SIZE, "%d\n", enabled ? 1 : 0);
+}
+
+static DEVICE_ATTR_RW(dimming);
+static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0644, dimming_show, dimming_store);
+
 static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_status.attr,
 	&dev_attr_enabled.attr,
 	&dev_attr_dpms.attr,
 	&dev_attr_modes.attr,
+	&dev_attr_dimming.attr,
+	&dev_attr_dc_dimming.attr,
 	NULL
 };
 

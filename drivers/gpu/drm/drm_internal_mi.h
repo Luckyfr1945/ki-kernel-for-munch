@@ -16,11 +16,20 @@
 #ifndef _DRM_INTERFACE_MI_H_
 #define _DRM_INTERFACE_MI_H_
 
+#ifndef DISPPARAM_DIMMING
+#define DISPPARAM_DIMMING_OFF 0xE00
+#define DISPPARAM_DIMMING     0xF00
+#endif
+
 /* dsi_display_mi.c */
 int dsi_display_set_disp_param(struct drm_connector *connector,
 				u32 param_type);
 int dsi_display_get_disp_param(struct drm_connector *connector,
 				u32 *param_type);
+int dsi_display_set_dimming(struct drm_connector *connector,
+				bool enable);
+int dsi_display_get_dimming(struct drm_connector *connector,
+				bool *enabled);
 
 ssize_t dsi_display_write_mipi_reg(struct drm_connector *connector,
 				char *buf);

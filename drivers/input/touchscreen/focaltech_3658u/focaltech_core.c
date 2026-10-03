@@ -628,7 +628,8 @@ static int fts_read_touchdata(struct fts_ts_data *data)
 
 	ret = fts_read(buf, 1, buf + 1, data->pnt_buf_size - 1);
 	if (ret < 0) {
-		FTS_ERROR("touch data(%x) abnormal,ret:%d", buf[1], ret);
+		if (!data->suspended)
+			FTS_ERROR("touch data(%x) abnormal,ret:%d", buf[1], ret);
 		return -EIO;
 	}
 
@@ -1847,6 +1848,7 @@ static int fts_ts_suspend(struct device *dev)
 		return 0;
 	}
 
+	ts_data->suspended = true;
 	cancel_delayed_work_sync(&ts_data->init_work);
 
 	if (ts_data->fw_loading) {
@@ -1987,10 +1989,12 @@ static int fts_palm_sensor_cmd(int value)
 
 	ret = fts_write_reg(FTS_PALM_EN, value ? FTS_PALM_ON : FTS_PALM_OFF);
 
-	if (ret < 0)
-		FTS_ERROR("Set palm sensor switch failed!\n");
-	else
+	if (ret < 0) {
+		if (!fts_data || !fts_data->suspended)
+			FTS_ERROR("Set palm sensor switch failed!\n");
+	} else {
 		FTS_INFO("Set palm sensor switch: %d\n", value);
+	}
 
 	return ret;
 }

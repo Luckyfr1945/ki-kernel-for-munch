@@ -264,6 +264,7 @@ static int __init boeffla_wl_blocker_init(void)
 	}
 
 	/* Initialize with default list */
+	strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
 	strncpy(list_wl_default, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl_default) - 1);
 	build_search_string(list_wl, list_wl_default);
 

@@ -14,6 +14,7 @@
 #include <linux/thermal.h>
 
 #include "kgsl_device.h"
+#include "adreno.h"
 #include "kgsl_pwrscale.h"
 #include "kgsl_trace.h"
 #include "kgsl_trace_power.h"
@@ -1243,6 +1244,46 @@ static ssize_t __force_on_store(struct device *dev,
 
 	return count;
 }
+
+/**
+ * kgsl_set_performance_mode - switch GPU between extreme gaming and daily power states
+ * @enable: true for extreme gaming turbo, false for balanced/battery daily profiles
+ *
+ * Floors Adreno 650 at powerlevel 2 (510 MHz) so clocks never drop to 150/330 MHz
+ * during intense 3D scenes (WuWa/Genshin), extends idle timeout to 1000ms, forces
+ * DDR AXI bus high to eliminate texture streaming hitching, and disables clock throttling.
+ */
+void kgsl_set_performance_mode(bool enable)
+{
+	struct kgsl_device *device = kgsl_get_device(KGSL_DEVICE_3D0);
+	struct kgsl_pwrctrl *pwr;
+	struct adreno_device *adreno_dev;
+
+	if (!device)
+		return;
+
+	pwr = &device->pwrctrl;
+	adreno_dev = ADRENO_DEVICE(device);
+
+	mutex_lock(&device->mutex);
+	if (enable) {
+		if (pwr->num_pwrlevels >= 3)
+			pwr->min_pwrlevel = min_t(unsigned int, 2, pwr->num_pwrlevels - 2);
+		pwr->interval_timeout = 1000;
+		__force_on(device, KGSL_PWRFLAGS_AXI_ON, 1);
+		if (adreno_dev)
+			clear_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
+	} else {
+		pwr->min_pwrlevel = pwr->num_pwrlevels - 2;
+		pwr->interval_timeout = 80;
+		__force_on(device, KGSL_PWRFLAGS_AXI_ON, 0);
+		if (adreno_dev)
+			set_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
+	}
+	kgsl_pwrctrl_pwrlevel_change(device, pwr->active_pwrlevel);
+	mutex_unlock(&device->mutex);
+}
+EXPORT_SYMBOL_GPL(kgsl_set_performance_mode);
 
 static ssize_t force_clk_on_show(struct device *dev,
 				struct device_attribute *attr, char *buf)

@@ -9,6 +9,7 @@
 #include <linux/cpu.h>
 #include <linux/of_device.h>
 #include <linux/suspend.h>
+#include <linux/ki_profile.h>
 
 #define CPU_ISOLATE_LEVEL 1
 
@@ -173,6 +174,10 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 		return -EINVAL;
 
 	state = !!state;
+	/* Ki-Profile Gaming Turbo: Do not isolate CPU cores during performance mode */
+	if (unlikely(!ki_thermal_throttle_enabled && state > 0))
+		return 0;
+
 	/* Check if the old cooling action is same as new cooling action */
 	if (cpu_isolate_cdev->cpu_isolate_state == state)
 		return 0;
