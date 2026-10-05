@@ -220,7 +220,14 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         exit 1
     fi
 
+    echo "Compiling DTBs (Extreme UV + OC 683 MHz)..."
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb
+
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
+    cp out/arch/arm64/boot/dtb build_artifacts/aosp/dtb
     echo ">>> AOSP Build Done! <<<"
 fi
 
@@ -266,7 +273,14 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         exit 1
     fi
 
+    echo "Compiling DTBs (Extreme UV + OC 683 MHz)..."
+    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    rm -rf out/arch/arm64/boot/dts
+    make $MAKE_ARGS dtbs -j$(nproc)
+    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb
+
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
+    cp out/arch/arm64/boot/dtb build_artifacts/miui/dtb
     echo ">>> MIUI / HyperOS Build Done! <<<"
 fi
 
@@ -280,17 +294,21 @@ rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/dtb anykerne
 if [ "$TARGET_OS" == "aosp" ]; then
     mkdir -p anykernel/kernels/aosp/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
+    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
 elif [ "$TARGET_OS" == "miui" ]; then
     mkdir -p anykernel/kernels/miui/
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
+    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
 else
     mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
+    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
+    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
 fi
 
-# DO NOT include dtb or dtbo (preserve panel/touch calibration from ROM)
-rm -f anykernel/dtb anykernel/dtbo.img anykernel/kernels/dtb anykernel/kernels/dtbo.img anykernel/kernels/*/*.dtb anykernel/kernels/*/*.img 2>/dev/null
+# DO NOT include dtbo (preserve panel/touch drivers from ROM)
+rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/*/*.img 2>/dev/null
 cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
 cd anykernel
