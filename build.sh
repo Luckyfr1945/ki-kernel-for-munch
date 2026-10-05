@@ -60,6 +60,12 @@ if ! command -v clang >/dev/null 2>&1; then
     exit 1
 fi
 
+# Prioritize ZyC Clang 16 if available
+if [ -d "$HOME/zyc-clang/bin" ]; then
+    export PATH="$HOME/zyc-clang/bin:$PATH"
+    echo "Using ZyC Clang: [$HOME/zyc-clang/bin]"
+fi
+
 # Enable ccache for fast compiling
 export CCACHE_DIR="$HOME/.cache/ccache_mikernel"
 export CC="ccache gcc"
@@ -70,7 +76,7 @@ echo "CCACHE_DIR: [$CCACHE_DIR]"
 export KBUILD_BUILD_USER="build-user"
 export KBUILD_BUILD_HOST="build-host 4.19.404R"
 
-MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
 
 if [ ! -f "arch/arm64/configs/${TARGET_DEVICE}_defconfig" ]; then
     echo "Error: arch/arm64/configs/${TARGET_DEVICE}_defconfig not found."
@@ -190,6 +196,13 @@ git clone https://github.com/AstideLabs/AnyKernel3 -b kona --single-branch --dep
 local_version_date_str="-${BUILD_DATETIME}-${KERNEL_NAME}-${KERNEL_VERSION}"
 sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
 
+# Pre-generate SELinux headers so KernelSU never races with parallel make
+if [ ! -f "security/selinux/flask.h" ]; then
+    echo "Pre-generating SELinux flask.h..."
+    gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include scripts/selinux/genheaders/genheaders.c -o /tmp/genheaders
+    /tmp/genheaders security/selinux/flask.h security/selinux/av_permissions.h
+fi
+
 # ------------------------------------------------------------
 # BUILD AOSP
 # ------------------------------------------------------------
@@ -207,22 +220,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         exit 1
     fi
 
-    echo "Compiling DTBs (Extreme + Stock)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_extreme
-    cp -f out/arch/arm64/boot/dtb_extreme out/arch/arm64/boot/dtb
-
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_stock
-
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
-    cp out/arch/arm64/boot/dtb build_artifacts/aosp/dtb
-    cp out/arch/arm64/boot/dtb_extreme build_artifacts/aosp/dtb_extreme
-    cp out/arch/arm64/boot/dtb_stock build_artifacts/aosp/dtb_stock
     echo ">>> AOSP Build Done! <<<"
 fi
 
@@ -268,22 +266,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         exit 1
     fi
 
-    echo "Compiling DTBs (Extreme + Stock)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_extreme
-    cp -f out/arch/arm64/boot/dtb_extreme out/arch/arm64/boot/dtb
-
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > out/arch/arm64/boot/dtb_stock
-
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
-    cp out/arch/arm64/boot/dtb build_artifacts/miui/dtb
-    cp out/arch/arm64/boot/dtb_extreme build_artifacts/miui/dtb_extreme
-    cp out/arch/arm64/boot/dtb_stock build_artifacts/miui/dtb_stock
     echo ">>> MIUI / HyperOS Build Done! <<<"
 fi
 
@@ -297,19 +280,17 @@ rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/dtb anykerne
 if [ "$TARGET_OS" == "aosp" ]; then
     mkdir -p anykernel/kernels/aosp/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
-    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
 elif [ "$TARGET_OS" == "miui" ]; then
     mkdir -p anykernel/kernels/miui/
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
 else
     mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
-    cp -r build_artifacts/aosp/* anykernel/kernels/aosp/
-    cp -r build_artifacts/miui/* anykernel/kernels/miui/
+    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
+    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
 fi
 
-# DO NOT include dtbo (preserve panel/touch drivers from ROM)
-rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/aosp/dtbo.img anykernel/kernels/miui/dtbo.img 2>/dev/null
+# DO NOT include dtb or dtbo (preserve panel/touch calibration from ROM)
+rm -f anykernel/dtb anykernel/dtbo.img anykernel/kernels/dtb anykernel/kernels/dtbo.img anykernel/kernels/*/*.dtb anykernel/kernels/*/*.img 2>/dev/null
 cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 
 cd anykernel
