@@ -24,6 +24,7 @@ struct sugov_tunables {
 	unsigned int		hispeed_load;
 	unsigned int		hispeed_freq;
 	unsigned int		rtg_boost_freq;
+	unsigned int		floor_freq;
 	bool			pl;
 };
 
@@ -38,6 +39,7 @@ struct sugov_policy {
 	struct list_head	tunables_hook;
 	unsigned long hispeed_util;
 	unsigned long rtg_boost_util;
+	unsigned long floor_util;
 	unsigned long max;
 
 	raw_spinlock_t		update_lock;	/* For shared policies */
@@ -651,6 +653,9 @@ static void sugov_walt_adjust(struct sugov_cpu *sg_cpu, unsigned long *util,
 	if (use_pelt())
 		return;
 
+	if (sg_policy->floor_util)
+		*util = max(*util, sg_policy->floor_util);
+
 	if (is_rtg_boost)
 		*util = max(*util, sg_policy->rtg_boost_util);
 
@@ -728,6 +733,9 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 		boost_util = target_util(sg_policy,
 				    sg_policy->tunables->rtg_boost_freq);
 		sg_policy->rtg_boost_util = boost_util;
+
+		sg_policy->floor_util = sg_policy->tunables->floor_freq ?
+				target_util(sg_policy, sg_policy->tunables->floor_freq) : 0;
 	}
 
 	util = sugov_iowait_apply(sg_cpu, time, util, max);
@@ -839,6 +847,9 @@ sugov_update_shared(struct update_util_data *hook, u64 time, unsigned int flags)
 		boost_util = target_util(sg_policy,
 				    sg_policy->tunables->rtg_boost_freq);
 		sg_policy->rtg_boost_util = boost_util;
+
+		sg_policy->floor_util = sg_policy->tunables->floor_freq ?
+				target_util(sg_policy, sg_policy->tunables->floor_freq) : 0;
 	}
 
 	sugov_iowait_boost(sg_cpu, time, flags);
@@ -1067,6 +1078,36 @@ static ssize_t rtg_boost_freq_store(struct gov_attr_set *attr_set,
 	return count;
 }
 
+static ssize_t floor_freq_show(struct gov_attr_set *attr_set, char *buf)
+{
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", tunables->floor_freq);
+}
+
+static ssize_t floor_freq_store(struct gov_attr_set *attr_set,
+				const char *buf, size_t count)
+{
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
+	unsigned int val;
+	struct sugov_policy *sg_policy;
+	unsigned long floor_util;
+	unsigned long flags;
+
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	tunables->floor_freq = val;
+	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		floor_util = val ? target_util(sg_policy, val) : 0;
+		sg_policy->floor_util = floor_util;
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	}
+
+	return count;
+}
+
 static ssize_t pl_show(struct gov_attr_set *attr_set, char *buf)
 {
 	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
@@ -1088,6 +1129,7 @@ static ssize_t pl_store(struct gov_attr_set *attr_set, const char *buf,
 static struct governor_attr hispeed_load = __ATTR_RW(hispeed_load);
 static struct governor_attr hispeed_freq = __ATTR_RW(hispeed_freq);
 static struct governor_attr rtg_boost_freq = __ATTR_RW(rtg_boost_freq);
+static struct governor_attr floor_freq = __ATTR_RW(floor_freq);
 static struct governor_attr pl = __ATTR_RW(pl);
 
 static struct attribute *sugov_attributes[] = {
@@ -1096,6 +1138,7 @@ static struct attribute *sugov_attributes[] = {
 	&hispeed_load.attr,
 	&hispeed_freq.attr,
 	&rtg_boost_freq.attr,
+	&floor_freq.attr,
 	&pl.attr,
 	NULL
 };
@@ -1219,6 +1262,7 @@ static void sugov_tunables_save(struct cpufreq_policy *policy,
 	cached->hispeed_load = tunables->hispeed_load;
 	cached->rtg_boost_freq = tunables->rtg_boost_freq;
 	cached->hispeed_freq = tunables->hispeed_freq;
+	cached->floor_freq = tunables->floor_freq;
 	cached->up_rate_limit_us = tunables->up_rate_limit_us;
 	cached->down_rate_limit_us = tunables->down_rate_limit_us;
 }
@@ -1242,6 +1286,7 @@ static void sugov_tunables_restore(struct cpufreq_policy *policy)
 	tunables->hispeed_load = cached->hispeed_load;
 	tunables->rtg_boost_freq = cached->rtg_boost_freq;
 	tunables->hispeed_freq = cached->hispeed_freq;
+	tunables->floor_freq = cached->floor_freq;
 	tunables->up_rate_limit_us = cached->up_rate_limit_us;
 	tunables->down_rate_limit_us = cached->down_rate_limit_us;
 }
@@ -1293,6 +1338,7 @@ static int sugov_init(struct cpufreq_policy *policy)
 	tunables->down_rate_limit_us = cpufreq_policy_transition_delay_us(policy);
 	tunables->hispeed_load = DEFAULT_HISPEED_LOAD;
 	tunables->hispeed_freq = 0;
+	tunables->floor_freq = 0;
 
 	switch (policy->cpu) {
 	default:
@@ -1569,6 +1615,67 @@ int sugov_set_cluster_hispeed(unsigned int cpu, unsigned int freq_hz, unsigned i
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_hispeed);
+
+/**
+ * sugov_set_cluster_floor - set floor frequency for a CPU's cluster
+ * @cpu:     representative CPU of the cluster
+ * @freq_hz: floor target frequency in Hz (0 to disable)
+ *
+ * Eliminates DVFS ramp-up and clock synthesizer latency in Performance
+ * mode by ensuring the governor never selects a frequency lower than freq_hz.
+ */
+int sugov_set_cluster_floor(unsigned int cpu, unsigned int freq_hz)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+	unsigned long util;
+	unsigned long flags;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->floor_freq = freq_hz;
+	list_for_each_entry(sg_policy, &tunables->attr_set.policy_list, tunables_hook) {
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		util = freq_hz ? target_util(sg_policy, freq_hz) : 0;
+		sg_policy->floor_util = util;
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_floor);
+
+/**
+ * sugov_set_cluster_pl - enable or disable WALT performance level hints
+ * @cpu:    representative CPU of the cluster
+ * @enable: true to enable PL hints, false to disable
+ */
+int sugov_set_cluster_pl(unsigned int cpu, bool enable)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->pl = enable;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_pl);
 
 
 static int __init sugov_register(void)

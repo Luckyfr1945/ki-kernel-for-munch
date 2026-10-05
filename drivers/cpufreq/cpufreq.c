@@ -32,6 +32,7 @@
 #include <linux/tick.h>
 #include <linux/sched/topology.h>
 #include <linux/sched/sysctl.h>
+#include <linux/ki_profile.h>
 
 #include <trace/events/power.h>
 
@@ -760,16 +761,19 @@ static ssize_t store_scaling_min_freq
 	 * Little (CPU 0-3): Max min_freq 1.34 GHz (1344000 kHz)
 	 * Gold   (CPU 4-6): Max min_freq 1.05 GHz (1056000 kHz)
 	 * Prime  (CPU 7):   Max min_freq 844.8 MHz (844800 kHz)
+	 * Bypassed in Ki-Profile Performance mode for unrestricted turbo floor.
 	 */
-	if (policy->cpu < 4) {
-		if (val > 1344000)
-			val = 1344000;
-	} else if (policy->cpu < 7) {
-		if (val > 1056000)
-			val = 1056000;
-	} else {
-		if (val > 844800)
-			val = 844800;
+	if (current_profile_mode != KI_PROFILE_PERFORMANCE) {
+		if (policy->cpu < 4) {
+			if (val > 1344000)
+				val = 1344000;
+		} else if (policy->cpu < 7) {
+			if (val > 1056000)
+				val = 1056000;
+		} else {
+			if (val > 844800)
+				val = 844800;
+		}
 	}
 
 	new_policy.min = val;

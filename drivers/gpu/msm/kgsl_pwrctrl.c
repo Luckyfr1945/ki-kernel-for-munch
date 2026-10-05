@@ -1267,20 +1267,23 @@ void kgsl_set_performance_mode(bool enable)
 
 	mutex_lock(&device->mutex);
 	if (enable) {
-		if (pwr->num_pwrlevels >= 3)
-			pwr->min_pwrlevel = min_t(unsigned int, 2, pwr->num_pwrlevels - 2);
-		pwr->interval_timeout = 1000;
+		if (pwr->num_pwrlevels >= 2)
+			pwr->min_pwrlevel = min_t(unsigned int, 1, pwr->num_pwrlevels - 2);
+		pwr->interval_timeout = 2000;
 		__force_on(device, KGSL_PWRFLAGS_AXI_ON, 1);
+		__force_on(device, KGSL_PWRFLAGS_CLK_ON, 1);
 		if (adreno_dev)
 			clear_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
+		kgsl_pwrctrl_pwrlevel_change(device, 0);
 	} else {
 		pwr->min_pwrlevel = pwr->num_pwrlevels - 2;
 		pwr->interval_timeout = 80;
 		__force_on(device, KGSL_PWRFLAGS_AXI_ON, 0);
+		__force_on(device, KGSL_PWRFLAGS_CLK_ON, 0);
 		if (adreno_dev)
 			set_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
+		kgsl_pwrctrl_pwrlevel_change(device, pwr->active_pwrlevel);
 	}
-	kgsl_pwrctrl_pwrlevel_change(device, pwr->active_pwrlevel);
 	mutex_unlock(&device->mutex);
 }
 EXPORT_SYMBOL_GPL(kgsl_set_performance_mode);

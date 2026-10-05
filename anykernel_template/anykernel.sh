@@ -104,31 +104,48 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         fi;
     fi;
 
-    # Apply selected kernel Image
+    # Apply selected kernel Image and DTB
     if [ "$IS_MIUI" -eq 1 ] && [ "$IS_AOSP" -eq 0 ]; then
         ui_print "- Detected: MIUI / HyperOS ROM";
         cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+        [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
     else
         ui_print "- Detected: AOSP / Custom ROM";
         cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
+        [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
     fi;
 elif [ -f "$AKHOME/kernels/miui/Image" ]; then
     ui_print "- Target: MIUI / HyperOS";
     cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+    [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
 elif [ -f "$AKHOME/kernels/aosp/Image" ]; then
     ui_print "- Target: AOSP";
     cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
+    [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
 elif [ -f "$AKHOME/kernels/Image" ]; then
     cp -f "$AKHOME/kernels/Image" "$AKHOME/Image";
+    [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
 fi;
 
-# DO NOT touch DTB or DTBO (preserve panel/touch and AVB signature on vendor_boot)
-rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" "$AKHOME/kernels/aosp/dtb" "$AKHOME/kernels/miui/dtb" 2>/dev/null;
+# DO NOT touch DTBO (preserve panel/touch drivers from ROM)
+rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
 
 # 1. Flash Kernel Image to boot partition (preserve original ramdisk xattrs/SELinux intact)
 ui_print "- Flashing kernel to boot...";
 split_boot;
 flash_boot;
+
+# 2. Flash DTB to vendor_boot partition (Extreme UV + OC 683 MHz GPU table)
+if [ -f "$AKHOME/dtb_vendor" ]; then
+    ui_print "- Flashing dtb to vendor_boot...";
+    BLOCK=vendor_boot;
+    reset_ak;
+    rm -f "$AKHOME/Image";
+    cp -f "$AKHOME/dtb_vendor" "$AKHOME/dtb";
+    split_boot;
+    flash_boot;
+    rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
+fi;
 
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
 if [ -d /data/adb ]; then
@@ -187,7 +204,7 @@ chmod 666 /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 echo 1 > /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
 echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 
-echo 90 > /proc/sys/vm/swappiness 2>/dev/null
+echo 150 > /proc/sys/vm/swappiness 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
 echo "wlan_pno_wl;wlan_extscan_wl;wlan_wow_wl;netmgr_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 

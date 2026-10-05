@@ -22,7 +22,8 @@
 #include <linux/dyn_fsync.h>
 #endif
 
-static int current_profile_mode = KI_PROFILE_BALANCED;
+int current_profile_mode = KI_PROFILE_BALANCED;
+EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
 
 static const char * const profile_names[] = {
@@ -67,6 +68,12 @@ static int apply_ki_profile(int mode)
 		sugov_set_cluster_hispeed(0, 0, 85);
 		sugov_set_cluster_hispeed(4, 0, 85);
 		sugov_set_cluster_hispeed(7, 0, 85);
+		sugov_set_cluster_floor(0, 0);
+		sugov_set_cluster_floor(4, 0);
+		sugov_set_cluster_floor(7, 0);
+		sugov_set_cluster_pl(0, false);
+		sugov_set_cluster_pl(4, false);
+		sugov_set_cluster_pl(7, false);
 		kgsl_set_performance_mode(false);
 		/* High migration margin → stay on Silver for light tasks */
 		sched_set_updown_migrate(92, 85);
@@ -79,7 +86,7 @@ static int apply_ki_profile(int mode)
 		 * Swappiness 90 with LZ4 fast swapping ensures anonymous pages are compressed
 		 * cleanly into zRAM without holding back app memory.
 		 */
-		vm_swappiness = 90;
+		vm_swappiness = 150;
 		watermark_scale_factor = 12;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
@@ -114,6 +121,12 @@ static int apply_ki_profile(int mode)
 		sugov_set_cluster_hispeed(0, 0, 85);
 		sugov_set_cluster_hispeed(4, 0, 85);
 		sugov_set_cluster_hispeed(7, 0, 85);
+		sugov_set_cluster_floor(0, 0);
+		sugov_set_cluster_floor(4, 0);
+		sugov_set_cluster_floor(7, 0);
+		sugov_set_cluster_pl(0, false);
+		sugov_set_cluster_pl(4, false);
+		sugov_set_cluster_pl(7, false);
 		kgsl_set_performance_mode(false);
 		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
 		sched_set_updown_migrate(85, 75);
@@ -127,7 +140,7 @@ static int apply_ki_profile(int mode)
 		 * Provides healthy free page headroom while preventing catastrophic
 		 * kswapd storms and direct reclaim freezes upon waking from deep idle.
 		 */
-		vm_swappiness = 90;
+		vm_swappiness = 150;
 		watermark_scale_factor = 16;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
@@ -138,36 +151,48 @@ static int apply_ki_profile(int mode)
 	case KI_PROFILE_PERFORMANCE:
 		/*
 		 * Silver, Gold, Prime: 0us up delay (instant boost to top speed).
-		 * 25000us (25ms) down hold: holds frequencies across consecutive frame
+		 * 150000us (150ms) down hold: holds frequencies across consecutive frame
 		 * rendering intervals (8.3ms for 120Hz, 11.1ms for 90Hz, 16.6ms for 60Hz),
 		 * completely eliminating micro-stutters and mid-game FPS dips!
 		 */
-		ret = sugov_set_cluster_rate_limits(0, 0, 25000);
+		ret = sugov_set_cluster_rate_limits(0, 0, 150000);
 		if (ret) {
 			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 1;
 		}
-		ret = sugov_set_cluster_rate_limits(4, 0, 25000);
+		ret = sugov_set_cluster_rate_limits(4, 0, 150000);
 		if (ret) {
 			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 2;
 		}
-		ret = sugov_set_cluster_rate_limits(7, 0, 25000);
+		ret = sugov_set_cluster_rate_limits(7, 0, 150000);
 		if (ret) {
 			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
 			err |= 4;
 		}
 
 		/*
+		 * High Frequency Floor (Zero-Lag Floor):
+		 * Eliminates DVFS ramp-up and clock synthesizer latency by preventing
+		 * cores from dropping into low power states between frame renders:
+		 * Silver (cpu0): 1.21 GHz floor (1209600 kHz)
+		 * Gold   (cpu4): 1.61 GHz floor (1612800 kHz)
+		 * Prime  (cpu7): 1.71 GHz floor (1708800 kHz)
+		 */
+		sugov_set_cluster_floor(0, 1209600);
+		sugov_set_cluster_floor(4, 1612800);
+		sugov_set_cluster_floor(7, 1708800);
+
+		/*
 		 * Instant Snap Hispeed (Game Boost without RTG dependency):
-		 * When any cluster load crosses 35-40%, snaps directly to max turbo.
+		 * When any cluster load crosses 15%, snaps directly to max turbo.
 		 * Silver: 1.80 GHz max (1804800 kHz)
 		 * Gold:   2.42 GHz max (2419200 kHz)
 		 * Prime:  3.19 GHz max turbo (3187200 kHz)
 		 */
-		sugov_set_cluster_hispeed(0, 1804800, 40);
-		sugov_set_cluster_hispeed(4, 2419200, 35);
-		sugov_set_cluster_hispeed(7, 3187200, 35);
+		sugov_set_cluster_hispeed(0, 1804800, 15);
+		sugov_set_cluster_hispeed(4, 2419200, 15);
+		sugov_set_cluster_hispeed(7, 3187200, 15);
 
 		/*
 		 * WALT RTG Turbo Boost (Mentok):
@@ -179,12 +204,20 @@ static int apply_ki_profile(int mode)
 		sugov_set_cluster_rtg_boost(7, 3187200);
 
 		/*
-		 * Ultra-Aggressive Task Migration:
-		 * Tasks migrate to Gold/Prime at only 35% load and remain pinned
-		 * until load drops below 20%. Related thread groups upmigrate at 50%.
+		 * WALT Performance Level (PL) Hinting:
+		 * Enables instant frequency response from foreground game threads.
 		 */
-		sched_set_updown_migrate(35, 20);
-		sched_set_group_updown_migrate(50, 30);
+		sugov_set_cluster_pl(0, true);
+		sugov_set_cluster_pl(4, true);
+		sugov_set_cluster_pl(7, true);
+
+		/*
+		 * Ultra-Aggressive Task Migration:
+		 * Tasks migrate to Gold/Prime at only 20% load and remain pinned
+		 * until load drops below 10%. Related thread groups upmigrate at 30%.
+		 */
+		sched_set_updown_migrate(20, 10);
+		sched_set_group_updown_migrate(30, 15);
 
 		/*
 		 * Full Throttle Boost & Core Revive:
@@ -229,13 +262,15 @@ static int apply_ki_profile(int mode)
 
 		/*
 		 * RAM Tuning — Gaming Turbo Mentok:
-		 * - swappiness 90: leverages ultra-fast LZ4 compression for quick anonymous reclaim.
+		 * - swappiness 150: aggressively moves idle/cold anonymous memory into fast
+		 *   LZ4-compressed zRAM, freeing up uncompressed physical RAM for game assets
+		 *   and filesystem page cache.
 		 * - watermark_scale_factor 25: large free memory buffer prevents mid-game
 		 *   direct reclaim freezes and hitching.
 		 * - watermark_boost_factor 0: prevents kswapd stall storms.
 		 * - vfs_cache_pressure 100: balanced reclamation prevents memory starvation in 4GB+ games.
 		 */
-		vm_swappiness = 90;
+		vm_swappiness = 150;
 		watermark_scale_factor = 25;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;

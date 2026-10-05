@@ -1,9 +1,32 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-02  
+**Build Date:** 2026-10-05  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI / HyperOS & AOSP
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+
+---
+
+## v1.4 P3
+• Extreme Gaming & Anti-Drop FPS Overhaul (Locked 60 / 120 FPS Pacing):
+  - Added Zero-Lag CPU Floor Frequency (`sugov_set_cluster_floor`):
+    * Silver (CPU 0–3): 1.21 GHz minimum floor (eliminates 300 MHz drops)
+    * Gold (CPU 4–6): 1.61 GHz minimum floor (eliminates 710 MHz drops)
+    * Prime (CPU 7): 1.71 GHz minimum floor (eliminates 844 MHz drops)
+    * Completely eliminates DVFS ramp-up and clock synthesizer relock delay
+  - Instant Snap Hispeed threshold lowered to 15% load (immediate jump to 1.80 / 2.42 / 3.19 GHz on any render activity)
+  - Extended cpufreq down-rate delay (`down_rate_limit_us`) to 150ms (holds peak turbo across ~9 frames without clock bouncing)
+  - Enabled WALT Performance Level (PL) Hinting (`sugov_set_cluster_pl`) for foreground game threads
+  - Ultra-aggressive task & group migration:
+    * `sched_set_updown_migrate(20, 10)` — tasks migrate to Gold at only 20% load
+    * `sched_set_group_updown_migrate(30, 15)` — render thread groups pinned to Gold/Prime
+  - Adreno 650 GPU Turbo Enhancements:
+    * Floor frequency raised to 587 MHz (operates exclusively at 587 MHz & 683 MHz OC)
+    * Instant jump to 683 MHz max turbo upon activating Performance mode
+    * Forced `CLK_ON = 1` (GPU clocks stay awake, eliminating slumber/wake-up stalls)
+    * Extended GPU idle timeout to 2000ms
+  - Tuned VM Swappiness to 150 across profiles with LZ4 zRAM (frees up physical RAM for game assets and hot page cache, eliminates direct reclaim freezes)
+  - Integrated Konabess Extreme UV v2 + OC 683 MHz DTB into AnyKernel3 vendor_boot flashing
 
 ---
 
