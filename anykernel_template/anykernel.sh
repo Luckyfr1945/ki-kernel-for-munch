@@ -122,63 +122,13 @@ elif [ -f "$AKHOME/kernels/Image" ]; then
     cp -f "$AKHOME/kernels/Image" "$AKHOME/Image";
 fi;
 
-# DO NOT touch DTBO (preserve panel/touch calibration from ROM)
-rm -f "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
+# DO NOT touch DTB or DTBO (preserve panel/touch and AVB signature on vendor_boot)
+rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" "$AKHOME/kernels/aosp/dtb" "$AKHOME/kernels/miui/dtb" 2>/dev/null;
 
 # 1. Flash Kernel Image to boot partition (preserve original ramdisk xattrs/SELinux intact)
 ui_print "- Flashing kernel to boot...";
 split_boot;
 flash_boot;
-
-# 2. Flash DTB (Extreme UV + OC 683 MHz)
-dtb_block="";
-for dev in /dev/block/bootdevice/by-name/dtb \
-           /dev/block/by-name/dtb; do
-    if [ -e "${dev}${SLOT}" ] || [ -e "$dev" ]; then
-        dtb_block="$dev";
-        break;
-    fi;
-done;
-
-if [ -n "$dtb_block" ]; then
-    ui_print "- Flashing dtb to dtb partition...";
-    if [ "$IS_MIUI" -eq 1 ] && [ -f "$AKHOME/kernels/miui/dtb" ]; then
-        cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
-    elif [ -f "$AKHOME/kernels/aosp/dtb" ]; then
-        cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb";
-    elif [ -f "$AKHOME/kernels/dtb" ]; then
-        cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb";
-    fi;
-    flash_generic dtb;
-fi;
-
-vendor_boot_block="";
-for dev in /dev/block/bootdevice/by-name/vendor_boot \
-           /dev/block/by-name/vendor_boot; do
-    if [ -e "${dev}${SLOT}" ] || [ -e "$dev" ]; then
-        vendor_boot_block="$dev";
-        break;
-    fi;
-done;
-
-if [ -n "$vendor_boot_block" ]; then
-    ui_print "- Flashing dtb to vendor_boot partition...";
-    BLOCK=$vendor_boot_block;
-    IS_SLOT_DEVICE=auto;
-    RAMDISK_COMPRESSION=auto;
-    PATCH_VBMETA_FLAG=auto;
-
-    reset_ak;
-    if [ "$IS_MIUI" -eq 1 ] && [ -f "$AKHOME/kernels/miui/dtb" ]; then
-        cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb";
-    elif [ -f "$AKHOME/kernels/aosp/dtb" ]; then
-        cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb";
-    elif [ -f "$AKHOME/kernels/dtb" ]; then
-        cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb";
-    fi;
-    split_boot;
-    flash_boot;
-fi;
 
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
 if [ -d /data/adb ]; then
