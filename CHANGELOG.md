@@ -20,6 +20,7 @@
   - Auto-revive all isolated cores (`sched_unisolate_cpu`) upon activating Performance mode
   - Optimized VFS cache pressure and memory headroom for heavy 4GB+ games
 • Added Maple I/O Scheduler (Android flash/UFS 3.1 optimized FIFO scheduler)
+• Added KCAL Color Calibration driver (/sys/devices/platform/kcal_ctrl.0)
 • Auto-populated Boeffla Wakelock Blocker on boot (wlan_pno_wl, wlan_extscan_wl, wlan_wow_wl, netmgr_wl)
 • Fixed Focaltech 3658u Touchscreen sleep EIO and CRC abnormal logs on screen off/on
 • Fixed Aftermarket / KW LCD DC dimming DCS commands and smart FPS fallback
