@@ -162,6 +162,7 @@ chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 chmod 666 /dev/ntsync 2>/dev/null
+chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/mode 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/spoof_version 2>/dev/null

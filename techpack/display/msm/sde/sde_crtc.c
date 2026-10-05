@@ -36,6 +36,7 @@
 #include "sde_hw_util.h"
 #include "sde_hw_catalog.h"
 #include "sde_color_processing.h"
+#include "sde_kcal.h"
 #include "sde_encoder.h"
 #include "sde_connector.h"
 #include "sde_vbif.h"
@@ -3259,6 +3260,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 		sde_crtc->mi_dimlayer_type = fod_sync_info;
 
 		sde_cp_crtc_apply_properties(crtc);
+		sde_kcal_apply(crtc);
 	}
 
 	/*
@@ -4214,6 +4216,8 @@ static void sde_crtc_enable(struct drm_crtc *crtc,
 	/* Enable ESD thread */
 	for (i = 0; i < cstate->num_connectors; i++)
 		sde_connector_schedule_status_work(cstate->connectors[i], true);
+
+	sde_kcal_notify_dirty();
 }
 
 /* no input validation - caller API has all the checks */

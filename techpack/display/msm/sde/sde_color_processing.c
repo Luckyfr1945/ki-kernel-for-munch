@@ -20,6 +20,7 @@
 #include "dsi_panel.h"
 #include "sde_hw_color_proc_common_v4.h"
 #include "sde_connector.h"
+#include "sde_kcal.h"
 
 struct sde_cp_node {
 	u32 property_id;
@@ -296,8 +297,12 @@ static int set_dspp_pcc_feature(struct sde_hw_dspp *hw_dspp,
 			hw_cfg->payload_clear = NULL;
 		}
 
+		sde_kcal_modify_pcc(hw_crtc, hw_cfg);
+
 		if (hw_cfg->payload_clear) {
 			pcc_cfg = hw_cfg->payload_clear;
+		} else if (hw_cfg->payload) {
+			pcc_cfg = hw_cfg->payload;
 		}
 
 		hw_dspp->ops.setup_pcc(hw_dspp, hw_cfg);
@@ -1889,6 +1894,9 @@ void sde_cp_crtc_apply_properties(struct drm_crtc *crtc)
 					sde_crtc->mixers[i].hw_lm->idx, 1);
 		}
 	}
+
+	if (set_dspp_flush)
+		sde_kcal_notify_dirty();
 exit:
 	mutex_unlock(&sde_crtc->crtc_cp_lock);
 }

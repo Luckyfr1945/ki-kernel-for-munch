@@ -37,6 +37,7 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_connector.o \
 	sde/clone_cooling_device.o \
 	sde/sde_color_processing.o \
+	sde/sde_kcal.o \
 	sde/sde_vbif.o \
 	sde_io_util.o \
 	sde/sde_hw_reg_dma_v1_color_proc.o \
