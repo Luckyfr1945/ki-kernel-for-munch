@@ -183,6 +183,8 @@ chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/mode 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/spoof_version 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/active_profile 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/kernel/gpu/* 2>/dev/null
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null
@@ -207,6 +209,11 @@ echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 echo 150 > /proc/sys/vm/swappiness 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
 echo "wlan_pno_wl;wlan_extscan_wl;wlan_wow_wl;netmgr_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+
+# LMKD Tuning (Anti-Kill Multitasking & PSI Memory Retention)
+setprop sys.lmk.kill_heaviest_task false 2>/dev/null
+setprop ro.lmk.psi_partial_stall_ms 180 2>/dev/null
+setprop ro.lmk.thrashing_limit 50 2>/dev/null
 
 for q in /sys/block/*/queue/scheduler; do
     if [ -f "$q" ]; then

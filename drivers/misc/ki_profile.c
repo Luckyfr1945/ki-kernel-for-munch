@@ -17,14 +17,32 @@
 #include <linux/mutex.h>
 #include <linux/mm.h>
 #include <linux/workqueue.h>
+#include <linux/thermal.h>
+#include <linux/notifier.h>
+#include <drm/drm_notifier_mi.h>
 #include <linux/ki_profile.h>
 #ifdef CONFIG_DYNAMIC_FSYNC
 #include <linux/dyn_fsync.h>
 #endif
 
+/* Profile chosen by the user (sysfs "mode") */
 int current_profile_mode = KI_PROFILE_BALANCED;
 EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
+
+/* Profile actually applied right now (differs while screen is off) */
+static int ki_active_mode = -1;
+
+/*
+ * Screen-off Auto Battery:
+ * Screen off  -> after KI_SCREEN_OFF_DELAY_MS switch to Battery profile.
+ * Screen on   -> restore the user's profile immediately.
+ * The delay avoids flapping from proximity-sensor blanking during calls.
+ */
+#define KI_SCREEN_OFF_DELAY_MS	3000
+static bool ki_screen_off_battery = true;
+static bool ki_screen_on = true;
+static struct delayed_work ki_screen_work;
 
 static const char * const profile_names[] = {
 	[KI_PROFILE_BATTERY] = "battery",
@@ -37,251 +55,303 @@ extern int watermark_scale_factor;
 extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
+/*
+ * Thermal Auto-Guard (Performance mode only):
+ * Thermal bypass stays active for max FPS, but throttling is re-armed when
+ * CPU/GPU die >= 85C or body (quiet_therm) >= 46C, and released again once
+ * die <= 75C and body <= 42C. Polls every 2s, only while Performance is on.
+ */
+#define KI_GUARD_POLL_MS	2000
+#define KI_GUARD_DIE_HOT	85000
+#define KI_GUARD_DIE_COOL	75000
+#define KI_GUARD_SKIN_HOT	46000
+#define KI_GUARD_SKIN_COOL	42000
+
+static const char * const ki_guard_die_zones[] = {
+	"cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr", "cpu-1-3-usr",
+	"cpu-1-4-usr", "cpu-1-5-usr", "cpu-1-6-usr", "cpu-1-7-usr",
+	"gpuss-0-usr", "gpuss-1-usr",
+};
+
+static struct thermal_zone_device *ki_guard_die_tz[ARRAY_SIZE(ki_guard_die_zones)];
+static struct thermal_zone_device *ki_guard_skin_tz;
+static bool ki_guard_resolved;
+static bool ki_guard_tripped;
+static struct delayed_work ki_guard_work;
+
+static void ki_guard_resolve_zones(void)
+{
+	struct thermal_zone_device *tz;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
+		tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
+		ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
+	}
+	tz = thermal_zone_get_zone_by_name("quiet_therm");
+	ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
+	ki_guard_resolved = true;
+}
+
+static int ki_guard_read(struct thermal_zone_device *tz)
+{
+	int temp;
+
+	if (!tz || thermal_zone_get_temp(tz, &temp))
+		return INT_MIN;
+	return temp;
+}
+
+static void ki_guard_work_fn(struct work_struct *work)
+{
+	int i, die = INT_MIN, skin;
+
+	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
+		ki_guard_tripped = false;
+		return;
+	}
+
+	if (!ki_guard_resolved)
+		ki_guard_resolve_zones();
+
+	for (i = 0; i < ARRAY_SIZE(ki_guard_die_tz); i++)
+		die = max(die, ki_guard_read(ki_guard_die_tz[i]));
+	skin = ki_guard_read(ki_guard_skin_tz);
+
+	if (!ki_guard_tripped &&
+	    (die >= KI_GUARD_DIE_HOT || skin >= KI_GUARD_SKIN_HOT)) {
+		ki_guard_tripped = true;
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+		pr_info("ki_profile: guard tripped (die=%d skin=%d), throttle re-armed\n",
+			die, skin);
+	} else if (ki_guard_tripped &&
+		   die <= KI_GUARD_DIE_COOL && skin <= KI_GUARD_SKIN_COOL) {
+		ki_guard_tripped = false;
+		WRITE_ONCE(ki_thermal_throttle_enabled, false);
+		pr_info("ki_profile: guard cooled (die=%d skin=%d), gaming unlocked\n",
+			die, skin);
+	}
+
+	queue_delayed_work(system_power_efficient_wq, &ki_guard_work,
+			   msecs_to_jiffies(KI_GUARD_POLL_MS));
+}
+
+/* Representative CPU of each cluster: Silver, Gold, Prime */
+#define KI_NR_CLUSTERS	3
+static const unsigned int ki_cluster_cpu[KI_NR_CLUSTERS] = { 0, 4, 7 };
+
+struct ki_cluster_tune {
+	unsigned int up_us;		/* sugov up rate limit */
+	unsigned int down_us;		/* sugov down rate limit */
+	unsigned int hispeed_freq;	/* kHz, 0 = disabled */
+	unsigned int hispeed_load;	/* % */
+	unsigned int rtg_boost_freq;	/* kHz, 0 = disabled */
+	unsigned int floor_freq;	/* kHz, 0 = disabled */
+};
+
+struct ki_profile_tune {
+	struct ki_cluster_tune cl[KI_NR_CLUSTERS];
+	bool pl;			/* WALT PL hints */
+	bool gpu_perf;			/* kgsl performance mode */
+	bool thermal_throttle;
+	int sched_boost;
+	unsigned int up_migrate, down_migrate;
+	unsigned int grp_up_migrate, grp_down_migrate;
+	unsigned int window_stats_policy; /* 1 = MAX, 2 = MAX_RECENT_AVG */
+	int swappiness;
+	int wmark_scale;
+	int vfs_cache_pressure;
+};
+
+static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
+	/*
+	 * Battery Saver: lazy ramp-up, Prime only under hard sustained load,
+	 * light tasks kept on Silver.
+	 */
+	[KI_PROFILE_BATTERY] = {
+		.cl = {
+			{ .up_us = 1500,  .down_us = 4000, .hispeed_load = 85 },
+			{ .up_us = 3000,  .down_us = 4000, .hispeed_load = 85 },
+			{ .up_us = 10000, .down_us = 4000, .hispeed_load = 85 },
+		},
+		.thermal_throttle = true,
+		.up_migrate = 92, .down_migrate = 85,
+		.grp_up_migrate = 100, .grp_down_migrate = 95,
+		.window_stats_policy = 2,
+		.swappiness = 150, .wmark_scale = 12, .vfs_cache_pressure = 100,
+	},
+	/*
+	 * Balanced: zero up-delay + 2ms down hold for snappy 120Hz; light tasks
+	 * on Silver, bursts assisted by Gold.
+	 */
+	[KI_PROFILE_BALANCED] = {
+		.cl = {
+			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
+			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
+			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
+		},
+		.thermal_throttle = true,
+		.up_migrate = 85, .down_migrate = 75,
+		.grp_up_migrate = 100, .grp_down_migrate = 95,
+		.window_stats_policy = 2,
+		.swappiness = 150, .wmark_scale = 16, .vfs_cache_pressure = 80,
+	},
+	/*
+	 * Performance / Gaming Turbo:
+	 *  - 0us up / 150ms down hold across frame intervals (no clock bouncing)
+	 *  - Zero-lag floor: Silver 1.21G, Gold 1.61G, Prime 1.71G
+	 *  - Snap to cluster max at 15% load, RTG boost to cluster max
+	 *  - Aggressive migration 20/10 (groups 30/15), PL hints, sched_boost 1
+	 *  - WINDOW_STATS_MAX, thermal throttle bypass, GPU perf mode
+	 */
+	[KI_PROFILE_PERFORMANCE] = {
+		.cl = {
+			{ 0, 150000, 1804800, 15, 1804800, 1209600 },
+			{ 0, 150000, 2419200, 15, 2419200, 1612800 },
+			{ 0, 150000, 3187200, 15, 3187200, 1708800 },
+		},
+		.pl = true,
+		.gpu_perf = true,
+		.thermal_throttle = false,
+		.sched_boost = 1,
+		.up_migrate = 20, .down_migrate = 10,
+		.grp_up_migrate = 30, .grp_down_migrate = 15,
+		.window_stats_policy = 1,
+		.swappiness = 150, .wmark_scale = 25, .vfs_cache_pressure = 100,
+	},
+};
+
 static int apply_ki_profile(int mode)
 {
-	int ret, err = 0;
+	const struct ki_profile_tune *t;
+	int i, ret, err = 0;
 
-	switch (mode) {
-	case KI_PROFILE_BATTERY:
-		/* Silver (cpu0): conservative ramp-up, 4ms hold to avoid clock thrashing */
-		ret = sugov_set_cluster_rate_limits(0, 1500, 4000);
+	if (mode < 0 || mode >= KI_PROFILE_MAX)
+		mode = KI_PROFILE_BALANCED;
+	t = &ki_tunes[mode];
+
+	for (i = 0; i < KI_NR_CLUSTERS; i++) {
+		const struct ki_cluster_tune *c = &t->cl[i];
+		unsigned int cpu = ki_cluster_cpu[i];
+
+		ret = sugov_set_cluster_rate_limits(cpu, c->up_us, c->down_us);
 		if (ret) {
-			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 1;
+			pr_warn("ki_profile: cpu%u sugov not ready (%d), cpufreq limits skipped\n",
+				cpu, ret);
+			err |= BIT(i);
 		}
-		/* Gold (cpu4): slow to boost */
-		ret = sugov_set_cluster_rate_limits(4, 3000, 4000);
-		if (ret) {
-			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 2;
-		}
-		/* Prime (cpu7): fires only under hard sustained load */
-		ret = sugov_set_cluster_rate_limits(7, 10000, 4000);
-		if (ret) {
-			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 4;
-		}
-		/* Clear RTG boost: prevent WALT rtgb_active from holding CPUs high during idle */
-		sugov_set_cluster_rtg_boost(0, 0);
-		sugov_set_cluster_rtg_boost(4, 0);
-		sugov_set_cluster_rtg_boost(7, 0);
-		sugov_set_cluster_hispeed(0, 0, 85);
-		sugov_set_cluster_hispeed(4, 0, 85);
-		sugov_set_cluster_hispeed(7, 0, 85);
-		sugov_set_cluster_floor(0, 0);
-		sugov_set_cluster_floor(4, 0);
-		sugov_set_cluster_floor(7, 0);
-		sugov_set_cluster_pl(0, false);
-		sugov_set_cluster_pl(4, false);
-		sugov_set_cluster_pl(7, false);
-		kgsl_set_performance_mode(false);
-		/* High migration margin → stay on Silver for light tasks */
-		sched_set_updown_migrate(92, 85);
-		sched_set_group_updown_migrate(100, 95);
-		sched_set_boost(0);
-		sysctl_sched_window_stats_policy = 2; /* WINDOW_STATS_MAX_RECENT_AVG */
-		ki_thermal_throttle_enabled = true;
-		/*
-		 * RAM Tuning — Battery Saver:
-		 * Swappiness 90 with LZ4 fast swapping ensures anonymous pages are compressed
-		 * cleanly into zRAM without holding back app memory.
-		 */
-		vm_swappiness = 150;
-		watermark_scale_factor = 12;
-		watermark_boost_factor = 0;
-		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = 100;
-		pr_info("ki_profile: Battery profile active (CPU lazy + minimal zRAM churn)\n");
-		break;
+		sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq);
+		sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load);
+		sugov_set_cluster_floor(cpu, c->floor_freq);
+		sugov_set_cluster_pl(cpu, t->pl);
+	}
 
-	case KI_PROFILE_BALANCED:
-	default:
-		/* Silver (cpu0): zero ramp-up delay, 2000us down hold for snappy 120Hz */
-		ret = sugov_set_cluster_rate_limits(0, 0, 2000);
-		if (ret) {
-			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 1;
-		}
-		/* Gold (cpu4): zero ramp-up delay for instant game thread responsiveness */
-		ret = sugov_set_cluster_rate_limits(4, 0, 2000);
-		if (ret) {
-			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 2;
-		}
-		/* Prime (cpu7): zero ramp-up delay for heavy load spikes and 120Hz frame deadlines */
-		ret = sugov_set_cluster_rate_limits(7, 0, 2000);
-		if (ret) {
-			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 4;
-		}
-		/* Clear RTG boost: prevent stale WALT rtgb_active from previous Performance mode */
-		sugov_set_cluster_rtg_boost(0, 0);
-		sugov_set_cluster_rtg_boost(4, 0);
-		sugov_set_cluster_rtg_boost(7, 0);
-		sugov_set_cluster_hispeed(0, 0, 85);
-		sugov_set_cluster_hispeed(4, 0, 85);
-		sugov_set_cluster_hispeed(7, 0, 85);
-		sugov_set_cluster_floor(0, 0);
-		sugov_set_cluster_floor(4, 0);
-		sugov_set_cluster_floor(7, 0);
-		sugov_set_cluster_pl(0, false);
-		sugov_set_cluster_pl(4, false);
-		sugov_set_cluster_pl(7, false);
-		kgsl_set_performance_mode(false);
-		/* Balanced migration: light tasks on Silver, bursts assist on Gold */
-		sched_set_updown_migrate(85, 75);
-		sched_set_group_updown_migrate(100, 95);
-		sched_set_boost(0);
-		sysctl_sched_window_stats_policy = 2; /* WINDOW_STATS_MAX_RECENT_AVG */
-		ki_thermal_throttle_enabled = true;
-		/*
-		 * RAM Tuning — Balanced Daily:
-		 * watermark_scale_factor 16 + watermark_boost_factor 0:
-		 * Provides healthy free page headroom while preventing catastrophic
-		 * kswapd storms and direct reclaim freezes upon waking from deep idle.
-		 */
-		vm_swappiness = 150;
-		watermark_scale_factor = 16;
-		watermark_boost_factor = 0;
-		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = 80;
-		pr_info("ki_profile: Balanced profile active (Butter-smooth 120Hz + Fast Response)\n");
-		break;
+	kgsl_set_performance_mode(t->gpu_perf);
+	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
+	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
+	sched_set_boost(t->sched_boost);
 
-	case KI_PROFILE_PERFORMANCE:
-		/*
-		 * Silver, Gold, Prime: 0us up delay (instant boost to top speed).
-		 * 150000us (150ms) down hold: holds frequencies across consecutive frame
-		 * rendering intervals (8.3ms for 120Hz, 11.1ms for 90Hz, 16.6ms for 60Hz),
-		 * completely eliminating micro-stutters and mid-game FPS dips!
-		 */
-		ret = sugov_set_cluster_rate_limits(0, 0, 150000);
-		if (ret) {
-			pr_warn("ki_profile: cpu0 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 1;
-		}
-		ret = sugov_set_cluster_rate_limits(4, 0, 150000);
-		if (ret) {
-			pr_warn("ki_profile: cpu4 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 2;
-		}
-		ret = sugov_set_cluster_rate_limits(7, 0, 150000);
-		if (ret) {
-			pr_warn("ki_profile: cpu7 sugov not ready (%d), cpufreq limits skipped\n", ret);
-			err |= 4;
-		}
+	/* Revive any core isolated by core_ctl for multi-core turbo spikes */
+	if (t->sched_boost) {
+		int cpu;
 
-		/*
-		 * High Frequency Floor (Zero-Lag Floor):
-		 * Eliminates DVFS ramp-up and clock synthesizer latency by preventing
-		 * cores from dropping into low power states between frame renders:
-		 * Silver (cpu0): 1.21 GHz floor (1209600 kHz)
-		 * Gold   (cpu4): 1.61 GHz floor (1612800 kHz)
-		 * Prime  (cpu7): 1.71 GHz floor (1708800 kHz)
-		 */
-		sugov_set_cluster_floor(0, 1209600);
-		sugov_set_cluster_floor(4, 1612800);
-		sugov_set_cluster_floor(7, 1708800);
+		for_each_possible_cpu(cpu)
+			sched_unisolate_cpu(cpu);
+	}
 
-		/*
-		 * Instant Snap Hispeed (Game Boost without RTG dependency):
-		 * When any cluster load crosses 15%, snaps directly to max turbo.
-		 * Silver: 1.80 GHz max (1804800 kHz)
-		 * Gold:   2.42 GHz max (2419200 kHz)
-		 * Prime:  3.19 GHz max turbo (3187200 kHz)
-		 */
-		sugov_set_cluster_hispeed(0, 1804800, 15);
-		sugov_set_cluster_hispeed(4, 2419200, 15);
-		sugov_set_cluster_hispeed(7, 3187200, 15);
+	sysctl_sched_window_stats_policy = t->window_stats_policy;
+	ki_thermal_throttle_enabled = t->thermal_throttle;
 
-		/*
-		 * WALT RTG Turbo Boost (Mentok):
-		 * Boosts foreground top-app / gaming render threads immediately
-		 * to max cluster frequencies if marked by RTG.
-		 */
-		sugov_set_cluster_rtg_boost(0, 1804800);
-		sugov_set_cluster_rtg_boost(4, 2419200);
-		sugov_set_cluster_rtg_boost(7, 3187200);
-
-		/*
-		 * WALT Performance Level (PL) Hinting:
-		 * Enables instant frequency response from foreground game threads.
-		 */
-		sugov_set_cluster_pl(0, true);
-		sugov_set_cluster_pl(4, true);
-		sugov_set_cluster_pl(7, true);
-
-		/*
-		 * Ultra-Aggressive Task Migration:
-		 * Tasks migrate to Gold/Prime at only 20% load and remain pinned
-		 * until load drops below 10%. Related thread groups upmigrate at 30%.
-		 */
-		sched_set_updown_migrate(20, 10);
-		sched_set_group_updown_migrate(30, 15);
-
-		/*
-		 * Full Throttle Boost & Core Revive:
-		 * Unisolate all 8 cores and enable WALT frequency aggregation
-		 * for instant dual/multi-core turbo spikes.
-		 */
-		sched_set_boost(1);
-		{
-			int cpu;
-			for_each_possible_cpu(cpu)
-				sched_unisolate_cpu(cpu);
-		}
-
-		/*
-		 * WINDOW_STATS_MAX (1):
-		 * Tracks peak demand across windows instead of average, providing
-		 * zero-lag instantaneous cpufreq responsiveness under load.
-		 */
-		sysctl_sched_window_stats_policy = 1;
-
-		/*
-		 * Thermal Throttling Bypass (Gaming Unlocked):
-		 * Bypasses thermal drops on CPU and GPU so 3.19GHz Prime and 683MHz
-		 * GPU stay locked without dropping FPS. Critical emergency shutdown
-		 * remains intact for hardware safety.
-		 */
-		ki_thermal_throttle_enabled = false;
-
-		/*
-		 * GPU Extreme Gaming Turbo (Adreno 650 Mentok):
-		 * - Floor GPU clock at 510 MHz (never drops to 150/330 MHz).
-		 * - Keep DDR AXI bus locked open (eliminates texture streaming hitching).
-		 * - Disable internal Adreno cycle-skipping clock throttling.
-		 * - Idle timeout 1000ms.
-		 */
-		kgsl_set_performance_mode(true);
+	/* Thermal auto-guard runs only while thermal bypass is active */
+	ki_guard_tripped = false;
+	if (!t->thermal_throttle)
+		mod_delayed_work(system_power_efficient_wq, &ki_guard_work, 0);
+	else
+		cancel_delayed_work(&ki_guard_work);
 
 #ifdef CONFIG_DYNAMIC_FSYNC
-		/* Bypasses synchronous filesystem stalls while screen is ON */
+	/* Bypass synchronous filesystem stalls while screen is ON */
+	if (mode == KI_PROFILE_PERFORMANCE)
 		dyn_fsync_active = true;
 #endif
 
-		/*
-		 * RAM Tuning — Gaming Turbo Mentok:
-		 * - swappiness 150: aggressively moves idle/cold anonymous memory into fast
-		 *   LZ4-compressed zRAM, freeing up uncompressed physical RAM for game assets
-		 *   and filesystem page cache.
-		 * - watermark_scale_factor 25: large free memory buffer prevents mid-game
-		 *   direct reclaim freezes and hitching.
-		 * - watermark_boost_factor 0: prevents kswapd stall storms.
-		 * - vfs_cache_pressure 100: balanced reclamation prevents memory starvation in 4GB+ games.
-		 */
-		vm_swappiness = 150;
-		watermark_scale_factor = 25;
-		watermark_boost_factor = 0;
-		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = 100;
-		pr_info("ki_profile: Performance profile active (Mentok Extreme Gaming Turbo — 120FPS Locked!)\n");
+	/* RAM: LZ4 zRAM friendly, no watermark boost to avoid kswapd storms */
+	vm_swappiness = t->swappiness;
+	watermark_scale_factor = t->wmark_scale;
+	watermark_boost_factor = 0;
+	sysctl_compact_unevictable_allowed = 0;
+	sysctl_vfs_cache_pressure = t->vfs_cache_pressure;
+	setup_per_zone_wmarks();
+
+	WRITE_ONCE(ki_active_mode, mode);
+	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
+	return err;
+}
+
+/* Profile that should be applied given user choice and screen state */
+static int ki_effective_mode(void)
+{
+	if (ki_screen_off_battery && !ki_screen_on)
+		return KI_PROFILE_BATTERY;
+	return current_profile_mode;
+}
+
+/* Caller must hold ki_profile_mutex */
+static int ki_apply_effective(bool force)
+{
+	int mode = ki_effective_mode();
+
+	if (!force && mode == ki_active_mode)
+		return 0;
+	return apply_ki_profile(mode);
+}
+
+static void ki_screen_work_fn(struct work_struct *work)
+{
+	mutex_lock(&ki_profile_mutex);
+	ki_apply_effective(false);
+	mutex_unlock(&ki_profile_mutex);
+}
+
+static int ki_display_notifier_cb(struct notifier_block *nb,
+				  unsigned long val, void *data)
+{
+	struct mi_drm_notifier *evdata = data;
+	int blank;
+
+	if (val != MI_DRM_EVENT_BLANK || !evdata || !evdata->data ||
+	    evdata->id != MSM_DRM_PRIMARY_DISPLAY)
+		return NOTIFY_OK;
+
+	blank = *(int *)evdata->data;
+	switch (blank) {
+	case MI_DRM_BLANK_UNBLANK:
+		if (ki_screen_on)
+			break;
+		ki_screen_on = true;
+		mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
+		break;
+	case MI_DRM_BLANK_LP1:
+	case MI_DRM_BLANK_LP2:
+	case MI_DRM_BLANK_STANDBY:
+	case MI_DRM_BLANK_SUSPEND:
+	case MI_DRM_BLANK_POWERDOWN:
+		if (!ki_screen_on)
+			break;
+		ki_screen_on = false;
+		mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
+				 msecs_to_jiffies(KI_SCREEN_OFF_DELAY_MS));
+		break;
+	default:
 		break;
 	}
 
-	setup_per_zone_wmarks();
-	return err;
+	return NOTIFY_OK;
 }
+
+static struct notifier_block ki_display_nb = {
+	.notifier_call = ki_display_notifier_cb,
+};
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -301,7 +371,8 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 
 	mutex_lock(&ki_profile_mutex);
 	current_profile_mode = val;
-	apply_ki_profile(val);
+	/* While screen is off the new choice is applied on next screen on */
+	ki_apply_effective(true);
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
@@ -320,6 +391,36 @@ static ssize_t current_profile_show(struct kobject *kobj, struct kobj_attribute 
 static ssize_t available_modes_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "0: Battery Saver\n1: Balanced\n2: Performance/Gaming Turbo\n");
+}
+
+static ssize_t active_profile_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	int mode = READ_ONCE(ki_active_mode);
+
+	if (mode < 0 || mode >= KI_PROFILE_MAX)
+		return scnprintf(buf, PAGE_SIZE, "unknown\n");
+	return scnprintf(buf, PAGE_SIZE, "%s\n", profile_names[mode]);
+}
+
+static ssize_t screen_off_battery_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", ki_screen_off_battery ? 1 : 0);
+}
+
+static ssize_t screen_off_battery_store(struct kobject *kobj, struct kobj_attribute *attr,
+					const char *buf, size_t count)
+{
+	bool val;
+
+	if (kstrtobool(buf, &val))
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	ki_screen_off_battery = val;
+	ki_apply_effective(false);
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
 }
 
 bool ki_thermal_throttle_enabled = true;
@@ -349,18 +450,23 @@ static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
 static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
+static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
+static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 
 static struct attribute *ki_profile_attrs[] = {
 	&mode_attr.attr,
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
 	&thermal_throttle_attr.attr,
+	&active_profile_attr.attr,
+	&screen_off_battery_attr.attr,
 	NULL,
 };
 
 static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
-	if (attr == &mode_attr.attr || attr == &thermal_throttle_attr.attr)
+	if (attr == &mode_attr.attr || attr == &thermal_throttle_attr.attr ||
+	    attr == &screen_off_battery_attr.attr)
 		return 0666;
 	return attr->mode;
 }
@@ -379,7 +485,7 @@ static void ki_profile_delayed_work_fn(struct work_struct *work)
 	int err;
 
 	mutex_lock(&ki_profile_mutex);
-	err = apply_ki_profile(current_profile_mode);
+	err = ki_apply_effective(true);
 	mutex_unlock(&ki_profile_mutex);
 
 	if (err && boot_settle_retries < 6) {
@@ -411,9 +517,19 @@ static int __init ki_profile_init(void)
 		return rc;
 	}
 
-	apply_ki_profile(current_profile_mode);
-
+	INIT_DELAYED_WORK(&ki_guard_work, ki_guard_work_fn);
+	INIT_DELAYED_WORK(&ki_screen_work, ki_screen_work_fn);
 	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
+
+	mutex_lock(&ki_profile_mutex);
+	ki_apply_effective(true);
+	mutex_unlock(&ki_profile_mutex);
+
+	rc = mi_drm_register_client(&ki_display_nb);
+	if (rc)
+		pr_warn("ki_profile: display notifier register failed (%d), screen-off battery disabled\n",
+			rc);
+
 	/*
 	 * Schedule delayed enforcement after 25 seconds so userspace post_boot
 	 * scripts (which overwrite schedutil and migration margins) are overridden

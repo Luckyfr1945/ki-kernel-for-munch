@@ -27,6 +27,21 @@
     * Extended GPU idle timeout to 2000ms
   - Tuned VM Swappiness to 150 across profiles with LZ4 zRAM (frees up physical RAM for game assets and hot page cache, eliminates direct reclaim freezes)
   - Integrated Konabess Extreme UV v2 + OC 683 MHz DTB into AnyKernel3 vendor_boot flashing
+• Stability, Thermal Safety & Multitasking Upgrades:
+  - Added In-Kernel Thermal Auto-Guard (`ki_profile`):
+    * Bypasses thermal throttle during Performance gaming for maximum FPS, but monitors die and skin thermals every 2s
+    * Automatically re-arms throttling if CPU/GPU die >= 85°C or body (quiet_therm) >= 46°C for hardware protection
+    * Automatically releases throttle when cooled to die <= 75°C and body <= 42°C with hysteresis
+  - Added Screen-off Auto Battery Profile (`ki_profile`):
+    * Hooks into Xiaomi DRM display notifier (`mi_drm_register_client`)
+    * Automatically switches to Battery profile after 3s of screen off to maximize deep sleep battery life
+    * Instantly (0ms) restores user's active profile (Balanced/Performance) upon screen on
+    * Sysfs controls: `/sys/kernel/ki_profile/screen_off_battery` and `/sys/kernel/ki_profile/active_profile`
+  - Added LMKD & PSI Anti-Kill Multitasking Tuning:
+    * Disabled `sys.lmk.kill_heaviest_task` to prevent sudden app closures during memory spikes
+    * Extended `ro.lmk.psi_partial_stall_ms` to 180ms to allow zRAM compression before killing apps
+    * Tuned `ro.lmk.thrashing_limit` to 50 for smooth foreground app retention
+  - Refactored Ki-Profile core into a clean, lightweight, table-driven engine
 
 ---
 
