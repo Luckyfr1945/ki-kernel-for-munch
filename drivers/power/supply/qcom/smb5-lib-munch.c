@@ -2404,7 +2404,9 @@ int smblib_vbus_regulator_is_enabled(struct regulator_dev *rdev)
 int smblib_get_prop_input_suspend(struct smb_charger *chg,
 				  union power_supply_propval *val)
 {
-	val->intval = chg->bypass_active ? 1 : 0;
+	val->intval
+		= (get_client_vote(chg->usb_icl_votable, USER_VOTER) == 0)
+		 || get_client_vote(chg->dc_suspend_votable, USER_VOTER);
 	return 0;
 }
 
@@ -2607,11 +2609,7 @@ int smblib_get_prop_batt_status(struct smb_charger *chg,
 		}
 	}
 	if (chg->bypass_active) {
-#ifdef CONFIG_XIAOMI_MIUI
 		val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
-#else
-		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
-#endif
 		return 0;
 	}
 	if (chg->report_input_absent) {
@@ -3181,46 +3179,69 @@ static void smblib_get_start_vbat_before_step_charge(struct smb_charger *chg)
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				  const union power_supply_propval *val)
 {
-	uid_t uid = from_kuid(&init_user_ns, current_uid());
+	int rc;
 
-	if (!chg->chg_disable_votable)
+	/* vote 0mA when suspended */
+	rc = vote(chg->usb_icl_votable, USER_VOTER, (bool)val->intval, 0);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't vote to %s USB rc=%d\n",
+			(bool)val->intval ? "suspend" : "resume", rc);
+		return rc;
+	}
+
+	rc = vote(chg->dc_suspend_votable, USER_VOTER, (bool)val->intval, 0);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't vote to %s DC rc=%d\n",
+			(bool)val->intval ? "suspend" : "resume", rc);
+		return rc;
+	}
+
+	power_supply_changed(chg->batt_psy);
+	return rc;
+}
+
+int smblib_set_bypass(struct smb_charger *chg, bool en)
+{
+	int rc = 0;
+
+	if (!chg || !chg->chg_disable_votable)
 		return -ENODEV;
 
-	/*
-	 * Prevent background Xiaomi system daemons (like micharge running as UID 1000)
-	 * from disabling bypass charging when it was explicitly enabled by user (root UID 0).
-	 */
-	if (chg->bypass_active && val->intval == 0 && uid != 0) {
-		pr_info("SMB5: blocking non-root (uid=%u comm=%s) from disabling bypass\n",
-			uid, current->comm);
+	mutex_lock(&chg->bypass_lock);
+	if (chg->bypass_active == en) {
+		mutex_unlock(&chg->bypass_lock);
 		return 0;
 	}
 
-	chg->bypass_active = (bool)val->intval;
+	chg->bypass_active = en;
 
-	if (chg->bypass_active) {
-		/* True Bypass: disable battery charging (0mA into battery), override USB ICL to 3.0A */
-		vote(chg->chg_disable_votable, USER_BYPASS_VOTER, true, 0);
-		if (chg->usb_icl_votable) {
-			vote(chg->usb_icl_votable, USER_VOTER, false, 0);
-			vote_override(chg->usb_icl_votable, USER_BYPASS_VOTER, true, 3000000);
-		}
-		pr_info("SMB5: true bypass enabled (3A ICL, 0mA to battery)\n");
-	} else {
-		/* Normal charging */
-		vote(chg->chg_disable_votable, USER_BYPASS_VOTER, false, 0);
-		if (chg->usb_icl_votable) {
-			vote(chg->usb_icl_votable, USER_VOTER, false, 0);
-			vote_override(chg->usb_icl_votable, USER_BYPASS_VOTER, false, 0);
-		}
-		pr_info("SMB5: bypass disabled (normal charging resumed)\n");
-	}
+	/*
+	 * True Bypass Mode:
+	 * Disable battery charging (0mA into battery) via main charger.
+	 * Also disable Charge Pump (bq2597x) so PPS fast charging cannot charge battery.
+	 * We intentionally DO NOT override usb_icl_votable so all safety voters
+	 * (thermal regulation, moisture detection, adapter capabilities) remain fully intact.
+	 */
+	rc = vote(chg->chg_disable_votable, USER_BYPASS_VOTER, en, 0);
+	if (rc < 0)
+		smblib_err(chg, "Couldn't vote %s chg_disable rc=%d\n",
+			en ? "enable" : "disable", rc);
+
+	if (!chg->cp_disable_votable)
+		chg->cp_disable_votable = find_votable("CP_DISABLE");
+	if (chg->cp_disable_votable)
+		vote(chg->cp_disable_votable, USER_BYPASS_VOTER, en, 0);
+
+	mutex_unlock(&chg->bypass_lock);
 
 	power_supply_changed(chg->batt_psy);
 	if (chg->usb_psy)
 		power_supply_changed(chg->usb_psy);
 
-	return 0;
+	pr_info("SMB5: bypass charging %s (chg_disable voted, safety voters intact)\n",
+		en ? "enabled" : "disabled");
+
+	return rc;
 }
 
 int smblib_set_prop_battery_input_suspend(struct smb_charger *chg,
@@ -3878,10 +3899,6 @@ int smblib_set_prop_battery_charging_enabled(struct smb_charger *chg,
 {
 	int icl = 0;
 
-	/* If true bypass is active, do NOT let background system calls cancel it */
-	if (chg->bypass_active)
-		return 0;
-
 	if (chg->is_qc_class_a && !chg->qc3_raise_done)
 		icl = MAIN_ICL_MIN;
 
@@ -4129,6 +4146,27 @@ static void smblib_reg_work(struct work_struct *work)
 					get_effective_client(chg->awake_votable));
 
 	if (usb_present||usb_vol_in > 4000) {
+		if (chg->bypass_active) {
+			union power_supply_propval bval = {0, };
+			int b_soc = -EINVAL, b_temp = -EINVAL;
+
+			if (chg->bms_psy) {
+				if (!power_supply_get_property(chg->bms_psy,
+						POWER_SUPPLY_PROP_CAPACITY, &bval))
+					b_soc = bval.intval;
+				if (!power_supply_get_property(chg->bms_psy,
+						POWER_SUPPLY_PROP_TEMP, &bval))
+					b_temp = bval.intval;
+			}
+
+			/* Safety failsafe: disable bypass if SOC <= 15% or battery temp > 43°C (430) */
+			if ((b_soc >= 0 && b_soc <= 15) || (b_temp > 430)) {
+				pr_warn("SMB5: safety guard tripped! Disabling bypass (SOC=%d%%, Temp=%d.%dC)\n",
+					b_soc, b_temp / 10, b_temp % 10);
+				smblib_set_bypass(chg, false);
+			}
+		}
+
 		smblib_dbg(chg, PR_OEM, "ICL vote value is %d voted by %s\n",
 					get_effective_result(chg->usb_icl_votable),
 					get_effective_client(chg->usb_icl_votable));
@@ -5820,16 +5858,6 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 			val->intval = false;
 		val->intval = pval.intval;
 		return 0;
-	}
-
-	if (chg->bypass_active) {
-#ifdef CONFIG_XIAOMI_MIUI
-		rc = smblib_get_prop_usb_present(chg, val);
-		return rc;
-#else
-		val->intval = false;
-		return 0;
-#endif
 	}
 
 	if (get_client_vote_locked(chg->usb_icl_votable, USER_VOTER) == 0) {
@@ -10014,6 +10042,12 @@ static void typec_src_removal(struct smb_charger *chg)
 	cancel_delayed_work_sync(&chg->raise_qc3_vbus_work);
 	cancel_delayed_work_sync(&chg->check_init_boot);
 
+	/* reset bypass charging */
+	if (chg->bypass_active) {
+		pr_info("SMB5: charger unplugged, resetting bypass charging\n");
+		smblib_set_bypass(chg, false);
+	}
+
 	/* reset input current limit voters */
 	vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
 			is_flash_active(chg) ? SDP_CURRENT_UA : SDP_100_MA);
@@ -12709,6 +12743,7 @@ int smblib_init(struct smb_charger *chg)
 	int rc = 0;
 
 	mutex_init(&chg->smb_lock);
+	mutex_init(&chg->bypass_lock);
 	mutex_init(&chg->irq_status_lock);
 	mutex_init(&chg->dcin_aicl_lock);
 	mutex_init(&chg->dpdm_lock);

@@ -846,6 +846,7 @@ struct smb_charger {
 	bool			fake_plug_out;
 	bool			cp_to_sw_status;
 	bool			bypass_active;
+	struct mutex		bypass_lock;
 
 	/* Screen-On Fast Charge & USB Force Fast Charge */
 	struct notifier_block	screen_nb;
@@ -1074,6 +1075,7 @@ int smblib_get_prop_batt_iterm(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
+int smblib_set_bypass(struct smb_charger *chg, bool en);
 int smblib_set_prop_battery_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_batt_capacity(struct smb_charger *chg,

@@ -3421,17 +3421,24 @@ static ssize_t bypass_charging_store(struct device *dev,
 {
 	struct power_supply *psy = to_power_supply(dev);
 	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	union power_supply_propval pval;
-	int val;
+	int val, rc;
+	uid_t uid = from_kuid(&init_user_ns, current_uid());
 
 	if (!chg)
 		return -ENODEV;
 
+	if (uid != 0) {
+		pr_warn_ratelimited("SMB5: non-root access denied for bypass_charging (uid=%u comm=%s)\n",
+			uid, current->comm);
+		return -EPERM;
+	}
+
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
 
-	pval.intval = !!val;
-	smblib_set_prop_input_suspend(chg, &pval);
+	rc = smblib_set_bypass(chg, !!val);
+	if (rc < 0)
+		return rc;
 
 	return count;
 }
