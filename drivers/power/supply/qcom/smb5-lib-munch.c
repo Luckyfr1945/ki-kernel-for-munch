@@ -2404,9 +2404,7 @@ int smblib_vbus_regulator_is_enabled(struct regulator_dev *rdev)
 int smblib_get_prop_input_suspend(struct smb_charger *chg,
 				  union power_supply_propval *val)
 {
-	val->intval
-		= (get_client_vote(chg->usb_icl_votable, USER_VOTER) == 0)
-		 || get_client_vote(chg->dc_suspend_votable, USER_VOTER);
+	val->intval = chg->bypass_active ? 1 : 0;
 	return 0;
 }
 
@@ -3179,25 +3177,10 @@ static void smblib_get_start_vbat_before_step_charge(struct smb_charger *chg)
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				  const union power_supply_propval *val)
 {
-	int rc;
+	if (!chg)
+		return -EINVAL;
 
-	/* vote 0mA when suspended */
-	rc = vote(chg->usb_icl_votable, USER_VOTER, (bool)val->intval, 0);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't vote to %s USB rc=%d\n",
-			(bool)val->intval ? "suspend" : "resume", rc);
-		return rc;
-	}
-
-	rc = vote(chg->dc_suspend_votable, USER_VOTER, (bool)val->intval, 0);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't vote to %s DC rc=%d\n",
-			(bool)val->intval ? "suspend" : "resume", rc);
-		return rc;
-	}
-
-	power_supply_changed(chg->batt_psy);
-	return rc;
+	return smblib_set_bypass(chg, !!val->intval);
 }
 
 int smblib_set_bypass(struct smb_charger *chg, bool en)
