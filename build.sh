@@ -193,7 +193,7 @@ mkdir -p build_artifacts/aosp build_artifacts/miui
 echo "Cloning AnyKernel3..."
 git clone https://github.com/AstideLabs/AnyKernel3 -b kona --single-branch --depth=1 anykernel
 
-local_version_date_str="-${BUILD_DATETIME}-${KERNEL_NAME}-${KERNEL_VERSION}"
+local_version_date_str="-${KERNEL_NAME}-${KERNEL_VERSION}"
 sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
 
 # Pre-generate SELinux headers so KernelSU never races with parallel make
