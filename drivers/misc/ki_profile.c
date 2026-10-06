@@ -15,20 +15,20 @@
 #include <linux/string.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <linux/mm.h>
 #include <linux/workqueue.h>
 #include <linux/thermal.h>
+#include <linux/power_supply.h>
 #include <linux/notifier.h>
 #include <drm/drm_notifier_mi.h>
 #include <linux/ki_profile.h>
-#ifdef CONFIG_DYNAMIC_FSYNC
-#include <linux/dyn_fsync.h>
-#endif
 
 /* Profile chosen by the user (sysfs "mode") */
 int current_profile_mode = KI_PROFILE_BALANCED;
 EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
+static DEFINE_SPINLOCK(ki_guard_lock);
 
 /* Profile actually applied right now (differs while screen is off) */
 static int ki_active_mode = -1;
@@ -36,7 +36,7 @@ static int ki_active_mode = -1;
 /*
  * Screen-off Auto Battery:
  * Screen off  -> after KI_SCREEN_OFF_DELAY_MS switch to Battery profile.
- * Screen on   -> restore the user's profile immediately.
+ * Screen on   -> restore the user's profile immediately (via early DRM blank).
  * The delay avoids flapping from proximity-sensor blanking during calls.
  */
 #define KI_SCREEN_OFF_DELAY_MS	3000
@@ -58,14 +58,17 @@ extern int sysctl_vfs_cache_pressure;
 /*
  * Thermal Auto-Guard (Performance mode only):
  * Thermal bypass stays active for max FPS, but throttling is re-armed when
- * CPU/GPU die >= 85C or body (quiet_therm) >= 46C, and released again once
- * die <= 75C and body <= 42C. Polls every 2s, only while Performance is on.
+ * CPU/GPU die >= 85C, body (quiet_therm) >= 46C, or battery >= 45C.
+ * Released again once die <= 75C, body <= 42C, and battery <= 41C.
+ * Polls every 2s, only while Performance is active.
  */
 #define KI_GUARD_POLL_MS	2000
-#define KI_GUARD_DIE_HOT	85000
-#define KI_GUARD_DIE_COOL	75000
-#define KI_GUARD_SKIN_HOT	46000
-#define KI_GUARD_SKIN_COOL	42000
+#define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
+#define KI_GUARD_DIE_COOL	75000 /* 75.0°C */
+#define KI_GUARD_SKIN_HOT	46000 /* 46.0°C */
+#define KI_GUARD_SKIN_COOL	42000 /* 42.0°C */
+#define KI_GUARD_BATT_HOT	45000 /* 45.0°C */
+#define KI_GUARD_BATT_COOL	41000 /* 41.0°C */
 
 static const char * const ki_guard_die_zones[] = {
 	"cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr", "cpu-1-3-usr",
@@ -79,18 +82,28 @@ static bool ki_guard_resolved;
 static bool ki_guard_tripped;
 static struct delayed_work ki_guard_work;
 
+bool ki_thermal_throttle_enabled = true;
+EXPORT_SYMBOL_GPL(ki_thermal_throttle_enabled);
+
 static void ki_guard_resolve_zones(void)
 {
 	struct thermal_zone_device *tz;
-	int i;
+	int i, valid_count = 0;
 
 	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
 		tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
 		ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
+		if (ki_guard_die_tz[i])
+			valid_count++;
 	}
 	tz = thermal_zone_get_zone_by_name("quiet_therm");
 	ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
-	ki_guard_resolved = true;
+	if (ki_guard_skin_tz)
+		valid_count++;
+
+	/* Only mark resolved if at least one thermal zone is valid */
+	if (valid_count > 0)
+		ki_guard_resolved = true;
 }
 
 static int ki_guard_read(struct thermal_zone_device *tz)
@@ -102,14 +115,36 @@ static int ki_guard_read(struct thermal_zone_device *tz)
 	return temp;
 }
 
+static int ki_guard_read_batt(void)
+{
+	struct power_supply *psy = power_supply_get_by_name("battery");
+	union power_supply_propval val;
+	int ret;
+
+	if (!psy)
+		return INT_MIN;
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val);
+	power_supply_put(psy);
+	if (ret)
+		return INT_MIN;
+	return val.intval * 100; /* convert tenths of °C to millidegrees C */
+}
+
 static void ki_guard_work_fn(struct work_struct *work)
 {
-	int i, die = INT_MIN, skin;
+	int i, die = INT_MIN, skin, batt;
+	unsigned long flags;
+	bool hot_condition = false;
+	bool cool_condition = false;
+	bool die_ok, skin_ok, batt_ok;
 
+	spin_lock_irqsave(&ki_guard_lock, flags);
 	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
 		ki_guard_tripped = false;
+		spin_unlock_irqrestore(&ki_guard_lock, flags);
 		return;
 	}
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
 	if (!ki_guard_resolved)
 		ki_guard_resolve_zones();
@@ -117,20 +152,45 @@ static void ki_guard_work_fn(struct work_struct *work)
 	for (i = 0; i < ARRAY_SIZE(ki_guard_die_tz); i++)
 		die = max(die, ki_guard_read(ki_guard_die_tz[i]));
 	skin = ki_guard_read(ki_guard_skin_tz);
+	batt = ki_guard_read_batt();
 
-	if (!ki_guard_tripped &&
-	    (die >= KI_GUARD_DIE_HOT || skin >= KI_GUARD_SKIN_HOT)) {
+	/* Hot / Trip condition: if ANY valid sensor crosses HOT threshold */
+	if ((die != INT_MIN && die >= KI_GUARD_DIE_HOT) ||
+	    (skin != INT_MIN && skin >= KI_GUARD_SKIN_HOT) ||
+	    (batt != INT_MIN && batt >= KI_GUARD_BATT_HOT))
+		hot_condition = true;
+
+	/*
+	 * Cool / Recovery condition (Fail-safe):
+	 * Must have valid die readings and all available sensors <= COOL.
+	 * If sensor readings are missing/INT_MIN, cool_condition is FALSE.
+	 */
+	die_ok = (die != INT_MIN) && (die <= KI_GUARD_DIE_COOL);
+	skin_ok = (skin == INT_MIN) || (skin <= KI_GUARD_SKIN_COOL);
+	batt_ok = (batt == INT_MIN) || (batt <= KI_GUARD_BATT_COOL);
+	if (die_ok && skin_ok && batt_ok)
+		cool_condition = true;
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	/* Re-check active mode under spinlock to eliminate races with apply_ki_profile */
+	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
+		ki_guard_tripped = false;
+		spin_unlock_irqrestore(&ki_guard_lock, flags);
+		return;
+	}
+
+	if (!ki_guard_tripped && hot_condition) {
 		ki_guard_tripped = true;
 		WRITE_ONCE(ki_thermal_throttle_enabled, true);
-		pr_info("ki_profile: guard tripped (die=%d skin=%d), throttle re-armed\n",
-			die, skin);
-	} else if (ki_guard_tripped &&
-		   die <= KI_GUARD_DIE_COOL && skin <= KI_GUARD_SKIN_COOL) {
+		pr_info("ki_profile: guard tripped (die=%d skin=%d batt=%d), throttle re-armed\n",
+			die, skin, batt);
+	} else if (ki_guard_tripped && cool_condition) {
 		ki_guard_tripped = false;
 		WRITE_ONCE(ki_thermal_throttle_enabled, false);
-		pr_info("ki_profile: guard cooled (die=%d skin=%d), gaming unlocked\n",
-			die, skin);
+		pr_info("ki_profile: guard cooled (die=%d skin=%d batt=%d), gaming unlocked\n",
+			die, skin, batt);
 	}
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
 	queue_delayed_work(system_power_efficient_wq, &ki_guard_work,
 			   msecs_to_jiffies(KI_GUARD_POLL_MS));
@@ -202,7 +262,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 *  - Zero-lag floor: Silver 1.21G, Gold 1.61G, Prime 1.71G
 	 *  - Snap to cluster max at 15% load, RTG boost to cluster max
 	 *  - Aggressive migration 20/10 (groups 30/15), PL hints, sched_boost 1
-	 *  - WINDOW_STATS_MAX, thermal throttle bypass, GPU perf mode
+	 *  - WINDOW_STATS_MAX, thermal throttle bypass with auto-guard, GPU perf mode
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
@@ -225,6 +285,7 @@ static int apply_ki_profile(int mode)
 {
 	const struct ki_profile_tune *t;
 	int i, ret, err = 0;
+	unsigned long flags;
 
 	if (mode < 0 || mode >= KI_PROFILE_MAX)
 		mode = KI_PROFILE_BALANCED;
@@ -251,29 +312,19 @@ static int apply_ki_profile(int mode)
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
 	sched_set_boost(t->sched_boost);
 
-	/* Revive any core isolated by core_ctl for multi-core turbo spikes */
-	if (t->sched_boost) {
-		int cpu;
-
-		for_each_possible_cpu(cpu)
-			sched_unisolate_cpu(cpu);
-	}
-
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
+
+	/* Atomic thermal state switch under spinlock */
+	spin_lock_irqsave(&ki_guard_lock, flags);
 	ki_thermal_throttle_enabled = t->thermal_throttle;
+	ki_guard_tripped = false;
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
 	/* Thermal auto-guard runs only while thermal bypass is active */
-	ki_guard_tripped = false;
 	if (!t->thermal_throttle)
 		mod_delayed_work(system_power_efficient_wq, &ki_guard_work, 0);
 	else
 		cancel_delayed_work(&ki_guard_work);
-
-#ifdef CONFIG_DYNAMIC_FSYNC
-	/* Bypass synchronous filesystem stalls while screen is ON */
-	if (mode == KI_PROFILE_PERFORMANCE)
-		dyn_fsync_active = true;
-#endif
 
 	/* RAM: LZ4 zRAM friendly, no watermark boost to avoid kswapd storms */
 	vm_swappiness = t->swappiness;
@@ -291,9 +342,9 @@ static int apply_ki_profile(int mode)
 /* Profile that should be applied given user choice and screen state */
 static int ki_effective_mode(void)
 {
-	if (ki_screen_off_battery && !ki_screen_on)
+	if (ki_screen_off_battery && !READ_ONCE(ki_screen_on))
 		return KI_PROFILE_BATTERY;
-	return current_profile_mode;
+	return READ_ONCE(current_profile_mode);
 }
 
 /* Caller must hold ki_profile_mutex */
@@ -301,7 +352,7 @@ static int ki_apply_effective(bool force)
 {
 	int mode = ki_effective_mode();
 
-	if (!force && mode == ki_active_mode)
+	if (!force && mode == READ_ONCE(ki_active_mode))
 		return 0;
 	return apply_ki_profile(mode);
 }
@@ -319,28 +370,40 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 	struct mi_drm_notifier *evdata = data;
 	int blank;
 
-	if (val != MI_DRM_EVENT_BLANK || !evdata || !evdata->data ||
-	    evdata->id != MSM_DRM_PRIMARY_DISPLAY)
+	if (!evdata || !evdata->data || evdata->id != MSM_DRM_PRIMARY_DISPLAY)
 		return NOTIFY_OK;
 
 	blank = *(int *)evdata->data;
+
+	/* Early unblank: restore profile before panel completes powering on */
+	if (val == MI_DRM_EARLY_EVENT_BLANK && blank == MI_DRM_BLANK_UNBLANK) {
+		if (!READ_ONCE(ki_screen_on)) {
+			WRITE_ONCE(ki_screen_on, true);
+			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
+		}
+		return NOTIFY_OK;
+	}
+
+	if (val != MI_DRM_EVENT_BLANK)
+		return NOTIFY_OK;
+
 	switch (blank) {
 	case MI_DRM_BLANK_UNBLANK:
-		if (ki_screen_on)
-			break;
-		ki_screen_on = true;
-		mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
+		if (!READ_ONCE(ki_screen_on)) {
+			WRITE_ONCE(ki_screen_on, true);
+			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
+		}
 		break;
 	case MI_DRM_BLANK_LP1:
 	case MI_DRM_BLANK_LP2:
 	case MI_DRM_BLANK_STANDBY:
 	case MI_DRM_BLANK_SUSPEND:
 	case MI_DRM_BLANK_POWERDOWN:
-		if (!ki_screen_on)
-			break;
-		ki_screen_on = false;
-		mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
-				 msecs_to_jiffies(KI_SCREEN_OFF_DELAY_MS));
+		if (READ_ONCE(ki_screen_on)) {
+			WRITE_ONCE(ki_screen_on, false);
+			mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
+					 msecs_to_jiffies(KI_SCREEN_OFF_DELAY_MS));
+		}
 		break;
 	default:
 		break;
@@ -355,7 +418,7 @@ static struct notifier_block ki_display_nb = {
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", current_profile_mode);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(current_profile_mode));
 }
 
 static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -370,7 +433,7 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 		return -EINVAL;
 
 	mutex_lock(&ki_profile_mutex);
-	current_profile_mode = val;
+	WRITE_ONCE(current_profile_mode, val);
 	/* While screen is off the new choice is applied on next screen on */
 	ki_apply_effective(true);
 	mutex_unlock(&ki_profile_mutex);
@@ -380,10 +443,11 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 
 static ssize_t current_profile_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
+	int mode = READ_ONCE(current_profile_mode);
 	const char *name = "unknown";
 
-	if (current_profile_mode >= 0 && current_profile_mode < KI_PROFILE_MAX)
-		name = profile_names[current_profile_mode];
+	if (mode >= 0 && mode < KI_PROFILE_MAX)
+		name = profile_names[mode];
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n", name);
 }
@@ -423,33 +487,15 @@ static ssize_t screen_off_battery_store(struct kobject *kobj, struct kobj_attrib
 	return count;
 }
 
-bool ki_thermal_throttle_enabled = true;
-EXPORT_SYMBOL_GPL(ki_thermal_throttle_enabled);
-
 static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", ki_thermal_throttle_enabled ? 1 : 0);
-}
-
-static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribute *attr,
-				      const char *buf, size_t count)
-{
-	int val;
-
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-
-	ki_thermal_throttle_enabled = (val != 0);
-	pr_info("ki_profile: Thermal throttle %s\n",
-		ki_thermal_throttle_enabled ? "enabled (Safe)" : "disabled (Gaming Unlocked)");
-
-	return count;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
 }
 
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
-static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
+static struct kobj_attribute thermal_throttle_attr = __ATTR_RO(thermal_throttle);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 
@@ -465,10 +511,9 @@ static struct attribute *ki_profile_attrs[] = {
 
 static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
-	if (attr == &mode_attr.attr || attr == &thermal_throttle_attr.attr ||
-	    attr == &screen_off_battery_attr.attr)
-		return 0666;
-	return attr->mode;
+	if (attr == &mode_attr.attr || attr == &screen_off_battery_attr.attr)
+		return 0644;
+	return attr->mode; /* 0444 for RO attrs */
 }
 
 static const struct attribute_group ki_profile_attr_group = {
@@ -496,14 +541,20 @@ static void ki_profile_delayed_work_fn(struct work_struct *work)
 		return;
 	}
 
-	pr_info("ki_profile: Boot settlement complete, profile %d (%s) active and locked\n",
-		current_profile_mode, profile_names[current_profile_mode]);
+	pr_info("ki_profile: Boot settlement complete, profile %d (%s) active\n",
+		READ_ONCE(current_profile_mode), profile_names[READ_ONCE(current_profile_mode)]);
 }
 
 static int __init ki_profile_init(void)
 {
 	int rc;
 
+	/* 1. Initialize all delayed work queues BEFORE creating sysfs */
+	INIT_DELAYED_WORK(&ki_guard_work, ki_guard_work_fn);
+	INIT_DELAYED_WORK(&ki_screen_work, ki_screen_work_fn);
+	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
+
+	/* 2. Create kobject and sysfs group */
 	ki_profile_kobj = kobject_create_and_add("ki_profile", kernel_kobj);
 	if (!ki_profile_kobj) {
 		pr_err("ki_profile: Failed to create kobject\n");
@@ -517,14 +568,12 @@ static int __init ki_profile_init(void)
 		return rc;
 	}
 
-	INIT_DELAYED_WORK(&ki_guard_work, ki_guard_work_fn);
-	INIT_DELAYED_WORK(&ki_screen_work, ki_screen_work_fn);
-	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
-
+	/* 3. Apply default profile */
 	mutex_lock(&ki_profile_mutex);
 	ki_apply_effective(true);
 	mutex_unlock(&ki_profile_mutex);
 
+	/* 4. Register MI DRM display notifier */
 	rc = mi_drm_register_client(&ki_display_nb);
 	if (rc)
 		pr_warn("ki_profile: display notifier register failed (%d), screen-off battery disabled\n",
