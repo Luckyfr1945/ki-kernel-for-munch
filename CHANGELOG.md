@@ -42,6 +42,13 @@
     * Extended `ro.lmk.psi_partial_stall_ms` to 180ms to allow zRAM compression before killing apps
     * Tuned `ro.lmk.thrashing_limit` to 50 for smooth foreground app retention
   - Refactored Ki-Profile core into a clean, lightweight, table-driven engine
+• Networking & Controller Upgrades:
+  - Enabled CAKE Smart Queue Management Qdisc (`CONFIG_NET_SCH_CAKE=y`):
+    * Advanced bufferbloat elimination paired with native BBRv3 congestion control
+    * Keeps online gaming ping ultra-low and jitter-free even under heavy background downloads or hotspot tethering
+  - Enabled Sony PlayStation 5 DualSense Controller Driver (`CONFIG_HID_PLAYSTATION=y` & `CONFIG_PLAYSTATION_FF=y`):
+    * Full native plug-and-play support for PS5 DualSense controllers via USB and Bluetooth
+    * Force feedback vibration, lightbar, and motion sensor controls fully supported
 
 ---
 
