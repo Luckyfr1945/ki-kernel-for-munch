@@ -18,6 +18,7 @@ void kgsl_set_performance_mode(bool enable);
 void sched_set_updown_migrate(unsigned int up, unsigned int down);
 void sched_set_group_updown_migrate(unsigned int up_pct, unsigned int down_pct);
 int sched_set_boost(int type);
+void ki_cpufreq_reset_idle_floors(int mode);
 
 extern int current_profile_mode;
 extern bool ki_thermal_throttle_enabled;

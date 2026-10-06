@@ -307,6 +307,8 @@ static int apply_ki_profile(int mode)
 		sugov_set_cluster_pl(cpu, t->pl);
 	}
 
+	ki_cpufreq_reset_idle_floors(mode);
+
 	kgsl_set_performance_mode(t->gpu_perf);
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);

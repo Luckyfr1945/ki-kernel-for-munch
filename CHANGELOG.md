@@ -56,6 +56,20 @@
   - Added automatic cable-disconnect cleanup: resets bypass state and unvotes charging disable when the charger is unplugged
   - Integrated Automatic Failsafe Guard: monitors battery state during bypass and automatically disengages bypass if SOC drops <= 15% or battery temperature exceeds 43°C
   - Hardened sysfs node `/sys/class/power_supply/battery/bypass_charging` with root permission enforcement (`-EPERM` for non-root) and strict error handling
+• Deep Idle Frequency Unlocking & Userspace Boost Defense (`cpufreq` & `ki_profile`):
+  - Solved Little cluster stuck at 691.2 MHz caused by vendor ROM `post_boot.sh` and `powerhint.json` hardcoded baseline
+  - In-kernel sysfs intercept in `store_scaling_min_freq`: maps userspace idle hint reset (`val <= 691200`) directly to true hardware minimum (300 MHz)
+  - Preserved silky touch/interaction boost response while guaranteeing instant drop back to 300 MHz idle
+  - Added programmatic floor enforcement (`ki_cpufreq_reset_idle_floors`) across all clusters on boot and profile switch
+  - Locked minimum frequency to hardware baseline in Battery mode (Silver 300M, Gold 710M, Prime 845M), preventing runaway userspace apps from inflating idle floor
+  - Added baseline frequency initialization in AnyKernel3 `00_nkm_bypass.sh` service
+• Universal 67W Turbo Charge & PPS Optimization Across All ROMs (AOSP & MIUI/HyperOS):
+  - Completely unlocked 67W direct flash charging on AOSP / Custom ROMs by bypassing MIUI-proprietary userspace digest checks
+  - Eliminated BQ27Z561 fuel gauge 2A charging current clamp (`CURRENT_MAX`) and unvoted `BMS_FG_VERIFY` / `BMS_VERIFY_VOTER` limits
+  - Automated PPS verification in USB-PD Policy Manager (`pd_policy_manager_munch`): promotes all qualified PPS adapters to `POWER_SUPPLY_PPS_VERIFIED` immediately without requiring proprietary `pd_authentication`
+  - Unvoted `NON_PPS_PD_FCC_VOTER` 3000 mA restriction and eliminated 5-second PPS negotiation delay
+  - Automatically unvoted `PD_VERIFED_VOTER` in `smb5-lib-munch` and mapped all USB-PD / PPS charging to `QUICK_CHARGE_TURBE` for full turbo speeds and UI animation support
+  - Integrated AnyKernel3 service.d triggers for `pd_authentication`, `fastcharge_mode`, and `authentic` sysfs nodes
 
 ---
 

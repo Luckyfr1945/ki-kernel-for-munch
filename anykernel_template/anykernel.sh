@@ -206,6 +206,15 @@ chmod 666 /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 echo 1 > /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
 echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 
+chmod 666 /sys/class/power_supply/usb/pd_authentication 2>/dev/null
+echo 1 > /sys/class/power_supply/usb/pd_authentication 2>/dev/null
+chmod 666 /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
+echo 1 > /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
+chmod 666 /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
+echo 1 > /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
+chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
+echo 1 > /sys/class/power_supply/bms/authentic 2>/dev/null
+
 echo 150 > /proc/sys/vm/swappiness 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
 echo "wlan_pno_wl;wlan_extscan_wl;wlan_wow_wl;netmgr_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
@@ -220,6 +229,11 @@ for q in /sys/block/*/queue/scheduler; do
         echo maple > "$q" 2>/dev/null
     fi
 done
+
+# Ensure CPU idle floors allow full hardware scaling (Silver 300MHz, Gold 710MHz, Prime 845MHz)
+echo 300000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/null
+echo 710400 > /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq 2>/dev/null
+echo 844800 > /sys/devices/system/cpu/cpufreq/policy7/scaling_min_freq 2>/dev/null
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
 fi;

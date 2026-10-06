@@ -1756,17 +1756,16 @@ static void usbpd_pd_contact(struct usbpd_pm *pdpm, int status)
 	}
 }
 
-static void usbpd_pps_non_verified_contact(struct usbpd_pm *pdpm, int status)
+static void __maybe_unused usbpd_pps_non_verified_contact(struct usbpd_pm *pdpm, int status)
 {
 	pdpm->pd_active = status;
 
 	if (status) {
 		usbpd_pm_evaluate_src_caps(pdpm);
 		if (pdpm->fcc_votable)
-			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, true,
-			     NON_PPS_PD_FCC_LIMIT);
+			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 		if (pdpm->pps_supported)
-			schedule_delayed_work(&pdpm->pm_work, 5 * HZ);
+			schedule_delayed_work(&pdpm->pm_work, 0);
 	} else {
 		usbpd_pm_disconnect(pdpm);
 		if (pdpm->fcc_votable)
@@ -1834,8 +1833,13 @@ static void usb_psy_change_work(struct work_struct *work)
 		goto out;
 	}
 
+	/*
+	 * Universal 67W / PPS Support Across All ROMs:
+	 * Automatically authenticate and engage full PPS Verified Fast Charge (67W)
+	 * for any qualified PPS adapter, without requiring MIUI's proprietary
+	 * userspace pd_authentication daemon.
+	 */
 	if ((pdpm->pd_active < POWER_SUPPLY_PPS_VERIFIED) &&
-	    (pd_auth_val.intval == 1) &&
 	    (val.intval == POWER_SUPPLY_PD_PPS_ACTIVE)) {
 		msleep(30);
 		usbpd_pd_contact(pdpm, POWER_SUPPLY_PPS_VERIFIED);
@@ -1843,8 +1847,7 @@ static void usb_psy_change_work(struct work_struct *work)
 			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 	} else if (!pdpm->pd_active &&
 		   (val.intval == POWER_SUPPLY_PD_PPS_ACTIVE)) {
-		usbpd_pps_non_verified_contact(pdpm,
-					       POWER_SUPPLY_PPS_NON_VERIFIED);
+		usbpd_pd_contact(pdpm, POWER_SUPPLY_PPS_VERIFIED);
 		if (pdpm->fcc_votable)
 			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 	} else if (pdpm->pd_active && !val.intval) {
@@ -1853,8 +1856,7 @@ static void usb_psy_change_work(struct work_struct *work)
 			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 	} else if (!pdpm->pd_active && val.intval == POWER_SUPPLY_PD_ACTIVE) {
 		if (pdpm->fcc_votable)
-			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, true,
-			     NON_PPS_PD_FCC_LIMIT);
+			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 	}
 out:
 	pdpm->psy_change_running = false;

@@ -3227,6 +3227,12 @@ int smblib_set_bypass(struct smb_charger *chg, bool en)
 		smblib_err(chg, "Couldn't vote %s chg_disable rc=%d\n",
 			en ? "enable" : "disable", rc);
 
+	/* Override USB ICL to 3.0A so charger supplies all motherboard current under high load */
+	if (chg->usb_icl_votable) {
+		vote(chg->usb_icl_votable, USER_VOTER, false, 0);
+		vote_override(chg->usb_icl_votable, USER_BYPASS_VOTER, en, en ? 3000000 : 0);
+	}
+
 	if (!chg->cp_disable_votable)
 		chg->cp_disable_votable = find_votable("CP_DISABLE");
 	if (chg->cp_disable_votable)
@@ -3898,6 +3904,10 @@ int smblib_set_prop_battery_charging_enabled(struct smb_charger *chg,
 				const union power_supply_propval *val)
 {
 	int icl = 0;
+
+	/* If true bypass is active, do NOT let background system calls cancel it or throttle ICL to 50mA */
+	if (chg->bypass_active)
+		return 0;
 
 	if (chg->is_qc_class_a && !chg->qc3_raise_done)
 		icl = MAIN_ICL_MIN;
@@ -7371,15 +7381,13 @@ int smblib_set_prop_pd_active(struct smb_charger *chg,
 		vote(chg->usb_icl_votable, PD_VOTER, true, USBIN_100MA);
 		vote(chg->usb_icl_votable, USB_PSY_VOTER, false, 0);
 		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, false, 0);
-		/*set the fcc to PD_UNVERIFED_CURRENT when pd is not verifed*/
-		if (!chg->pd_verifed) {
-			rc = vote(chg->fcc_votable, PD_VERIFED_VOTER,
-					true, PD_UNVERIFED_CURRENT);
-			if (rc < 0)
-				smblib_err(chg, "Couldn't unvote PD_VERIFED_VOTER, rc=%d\n", rc);
-		} else {
-			vote(chg->fcc_votable, PD_VERIFED_VOTER, false, 0);
-		}
+		/*
+		 * Universal 67W / PPS Support Across All ROMs:
+		 * Treat all PD / PPS chargers as fully verified so AOSP and custom ROMs
+		 * without proprietary MIUI daemons achieve unthrottled 67W fast charging.
+		 */
+		chg->pd_verifed = true;
+		vote(chg->fcc_votable, PD_VERIFED_VOTER, false, 0);
 		/*
 		 * For PPS, Charge Pump is preferred over parallel charger if
 		 * present.
@@ -9205,7 +9213,8 @@ int smblib_get_quick_charge_type(struct smb_charger *chg)
 		return 0;
 	}
 
-	if ((chg->real_charger_type == POWER_SUPPLY_TYPE_USB_PD) && chg->pd_verifed) {
+	if ((chg->real_charger_type == POWER_SUPPLY_TYPE_USB_PD) ||
+	    (chg->pd_active == POWER_SUPPLY_PD_PPS_ACTIVE)) {
 		return QUICK_CHARGE_TURBE;
 	}
 
@@ -10207,13 +10216,11 @@ static void typec_src_removal(struct smb_charger *chg)
 	chg->report_input_absent = false;
 	chg->qc3_raise_done = false;
 
-	if (chg->pd_verifed) {
-		chg->pd_verifed = false;
-		if (smblib_get_fastcharge_mode(chg) == true) {
-			smblib_set_fastcharge_mode(chg, false);
-			chg->last_ffc_remove_time = ktime_get();
-		}
+	if (smblib_get_fastcharge_mode(chg) == true) {
+		smblib_set_fastcharge_mode(chg, false);
+		chg->last_ffc_remove_time = ktime_get();
 	}
+	chg->pd_verifed = true;
 }
 
 static void typec_mode_unattached(struct smb_charger *chg)
@@ -12844,6 +12851,7 @@ int smblib_init(struct smb_charger *chg)
 	chg->raw_system_temp_level = 0;
 	chg->force_fast_charge = 1;
 	chg->force_fast_charge_ua = 3000000;
+	chg->pd_verifed = true;
 #if (!defined CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH) && (!defined CONFIG_DUAL_FUEL_GAUGE_BQ27Z561)
 	chg->esr_work_status = ESR_CHECK_FCC_NOLIMIT;
 #endif

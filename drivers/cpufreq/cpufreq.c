@@ -755,23 +755,44 @@ static ssize_t store_scaling_min_freq
 		return -EINVAL;
 
 	/*
-	 * Kernel-level Idle Floor Clamp:
-	 * Prevent userspace performance daemons (vendor.miperf / perfservice)
-	 * from locking CPU minimum frequencies to unsustainable max-boost levels.
-	 * Little (CPU 0-3): Max min_freq 1.34 GHz (1344000 kHz)
-	 * Gold   (CPU 4-6): Max min_freq 1.05 GHz (1056000 kHz)
-	 * Prime  (CPU 7):   Max min_freq 844.8 MHz (844800 kHz)
-	 * Bypassed in Ki-Profile Performance mode for unrestricted turbo floor.
+	 * Kernel-level Idle Floor & Boost Management:
+	 *
+	 * 1. Battery Saver mode:
+	 *    Prevent userspace from inflating idle floor.
+	 *    Enforce true hardware minimums (Silver 300M, Gold 710.4M, Prime 844.8M).
+	 *
+	 * 2. Balanced mode:
+	 *    - Userspace ROM vendor scripts (post_boot.sh) and powerhint.json hardcode
+	 *      691.2 MHz as the lowest entry in CPULittleClusterMinFreq.
+	 *      When userspace resets its touch/launch boost or attempts to set idle floor
+	 *      (val <= 691200 on Little), map it to true hardware minimum (300 MHz)
+	 *      so Little cores can achieve deep sleep / idle without latency penalty.
+	 *    - Gold / Prime: val <= cpuinfo.min_freq maps to cpuinfo.min_freq.
+	 *    - Clamp maximum boost min_freq to prevent rogue daemons from pinning max clocks:
+	 *      Little (CPU 0-3): max min_freq 1.34 GHz (1344000 kHz)
+	 *      Gold   (CPU 4-6): max min_freq 1.05 GHz (1056000 kHz)
+	 *      Prime  (CPU 7):   max min_freq 844.8 MHz (844800 kHz)
+	 *
+	 * 3. Performance mode:
+	 *    Unrestricted turbo floor.
 	 */
-	if (current_profile_mode != KI_PROFILE_PERFORMANCE) {
+	if (current_profile_mode == KI_PROFILE_BATTERY) {
+		val = policy->cpuinfo.min_freq;
+	} else if (current_profile_mode == KI_PROFILE_BALANCED) {
 		if (policy->cpu < 4) {
-			if (val > 1344000)
+			if (val <= 691200)
+				val = policy->cpuinfo.min_freq;
+			else if (val > 1344000)
 				val = 1344000;
 		} else if (policy->cpu < 7) {
-			if (val > 1056000)
+			if (val <= 710400)
+				val = policy->cpuinfo.min_freq;
+			else if (val > 1056000)
 				val = 1056000;
 		} else {
-			if (val > 844800)
+			if (val <= 844800)
+				val = policy->cpuinfo.min_freq;
+			else if (val > 844800)
 				val = 844800;
 		}
 	}
@@ -2441,6 +2462,39 @@ unlock:
 	cpufreq_cpu_put(policy);
 }
 EXPORT_SYMBOL(cpufreq_update_policy);
+
+/**
+ * ki_cpufreq_reset_idle_floors - reset all policy min frequencies to hardware baseline
+ * @mode: active Ki-Profile mode
+ *
+ * Ensures all clusters have their user_policy.min set to true hardware minimums
+ * (Silver 300MHz, Gold 710.4MHz, Prime 844.8MHz) so processors can settle cleanly
+ * into deep idle when untangled from userspace post_boot and boost daemons.
+ */
+void ki_cpufreq_reset_idle_floors(int mode)
+{
+	struct cpufreq_policy *policy;
+
+	for_each_active_policy(policy) {
+		struct cpufreq_policy new_policy;
+
+		down_write(&policy->rwsem);
+		if (policy_is_inactive(policy)) {
+			up_write(&policy->rwsem);
+			continue;
+		}
+
+		memcpy(&new_policy, policy, sizeof(*policy));
+		policy->user_policy.min = policy->cpuinfo.min_freq;
+		new_policy.min = policy->cpuinfo.min_freq;
+		new_policy.max = policy->user_policy.max;
+
+		cpufreq_set_policy(policy, &new_policy);
+
+		up_write(&policy->rwsem);
+	}
+}
+EXPORT_SYMBOL_GPL(ki_cpufreq_reset_idle_floors);
 
 /*********************************************************************
  *               BOOST						     *

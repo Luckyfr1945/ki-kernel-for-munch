@@ -1742,9 +1742,6 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			bq->charging_current = fg_read_charging_current(bq);
 		}
 		val->intval = bq->charging_current;
-		if (bq->verify_digest_success == false) {
-			val->intval = min(val->intval, 2000);
-		}
 		val->intval *= 1000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
@@ -1757,30 +1754,10 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 		}
 		val->intval = bq->charging_voltage;
 		bq_dbg(PR_DEBUG, "fg_read_gauge_voltage_max: %d\n", val->intval);
-/*
-		if (val->intval == BQ_MAXIUM_VOLTAGE_FOR_CELL) {
-			if (bq->batt_volt > BQ_PACK_MAXIUM_VOLTAGE_FOR_PMIC_SAFETY) {
-				ov_count[bq->fg_index]++;
-				if (ov_count[bq->fg_index] > 4) {
-					ov_count[bq->fg_index] = 0;
-					bq->cell_ov_check++;
-				}
-			} else {
-				ov_count[bq->fg_index] = 0;
-			}
-			if (bq->cell_ov_check > 4)
-				bq->cell_ov_check = 4;
-
-			val->intval = BQ_PACK_MAXIUM_VOLTAGE_FOR_PMIC - bq->cell_ov_check * 10;
-			bq_dbg(PR_DEBUG, "prop_voltage_max: %d\n", val->intval);
-			if ((bq->batt_soc == 100) && (val->intval == BQ_PACK_MAXIUM_VOLTAGE_FOR_PMIC))
-				val->intval = BQ_MAXIUM_VOLTAGE_FOR_CELL;
-		}
-*/
 		val->intval *= 1000;
 		break;
 	case POWER_SUPPLY_PROP_AUTHENTIC:
-		val->intval = bq->verify_digest_success;
+		val->intval = 1;
 		break;
 	case POWER_SUPPLY_PROP_CHIP_OK:
 		if (bq->fake_chip_ok != -EINVAL) {
@@ -1875,14 +1852,12 @@ static int fg_set_property(struct power_supply *psy,
 		bq->optimiz_soc = val->intval;
 		break;
 	case POWER_SUPPLY_PROP_AUTHENTIC:
-		bq->verify_digest_success = !!val->intval;
+		bq->verify_digest_success = true;
 #ifndef CONFIG_DUAL_FUEL_GAUGE_BQ27Z561
 		if (!bq->fcc_votable)
 			bq->fcc_votable = find_votable("FCC");
-		vote(bq->fcc_votable, BMS_FG_VERIFY, !bq->verify_digest_success,
-				!bq->verify_digest_success ? 2000000 : 0);
-		vote(bq->fcc_votable, BMS_VERIFY_VOTER, !bq->verify_digest_success,
-				!bq->verify_digest_success ? 2000000 : 0);
+		vote(bq->fcc_votable, BMS_FG_VERIFY, false, 0);
+		vote(bq->fcc_votable, BMS_VERIFY_VOTER, false, 0);
 #endif
 		break;
 	case POWER_SUPPLY_PROP_CHIP_OK:
@@ -2991,6 +2966,7 @@ static int bq_fg_probe(struct i2c_client *client,
 
 	fg_get_manufacture_data(bq);
 	fg_set_fastcharge_mode(bq, false);
+	bq->verify_digest_success = true;
 
 	mutex_init(&bq->i2c_rw_lock);
 	mutex_init(&bq->data_lock);

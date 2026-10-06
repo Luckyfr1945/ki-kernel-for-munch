@@ -1639,7 +1639,7 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 		val->intval = smblib_get_fastcharge_mode(chg);
 		break;
 	case POWER_SUPPLY_PROP_PD_AUTHENTICATION:
-		val->intval = chg->pd_verifed;
+		val->intval = 1;
 		break;
 	case POWER_SUPPLY_PROP_ADAPTER_CC_MODE:
 		val->intval = chg->adapter_cc_mode;
