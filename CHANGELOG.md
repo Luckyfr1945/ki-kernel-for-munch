@@ -49,11 +49,12 @@
   - Enabled Sony PlayStation 5 DualSense Controller Driver (`CONFIG_HID_PLAYSTATION=y` & `CONFIG_PLAYSTATION_FF=y`):
     * Full native plug-and-play support for PS5 DualSense controllers via USB and Bluetooth
     * Force feedback vibration, lightbar, and motion sensor controls fully supported
-• Hardened Bypass Charging v2 Architecture Overhaul:
+• Hardened Bypass Charging v2 Architecture Overhaul (No-Drain Gaming Edition):
   - Decoupled bypass charging completely from `POWER_SUPPLY_PROP_INPUT_SUSPEND` to prevent breaking internal kernel suspend operations (connector thermal protection >= 70°C & BMS I2C error recovery)
-  - Eliminated hazardous `vote_override` on `usb_icl_votable`: bypass now uses standard `chg_disable_votable` + `cp_disable_votable` (Charge Pump bq2597x) without overriding input current limits
-  - Preserved 100% of critical hardware safety voters: thermal regulation, moisture/liquid detection (`LPD_VOTER`, `MOISTURE_VOTER`), die temperature, and adapter limits remain fully active
-  - Added automatic cable-disconnect cleanup: resets bypass state and unvotes charging disable when the charger is unplugged
+  - Enforced 3.0A USB Input Current Limit override (`vote_override` 3000000 uA) during bypass: guarantees chargers (including laptop USB-PD 65W/100W) deliver full 15W–27W to the motherboard (`VSYS`), completely eliminating battery supplement drain (-1400 mA) during heavy gaming loads
+  - Added anti-choke guard in `smblib_set_prop_battery_charging_enabled`: prevents Android battery HAL from throttling input current to 50mA (`MAIN_CHG_SUSPEND_ICL`) when charging is disabled
+  - Automatically unvotes Charge Pump (`cp_disable_votable`) so fast charging pump does not feed battery
+  - Added automatic cable-disconnect cleanup: resets bypass state and restores normal charging when the charger is unplugged
   - Integrated Automatic Failsafe Guard: monitors battery state during bypass and automatically disengages bypass if SOC drops <= 15% or battery temperature exceeds 43°C
   - Hardened sysfs node `/sys/class/power_supply/battery/bypass_charging` with root permission enforcement (`-EPERM` for non-root) and strict error handling
 • Deep Idle Frequency Unlocking & Userspace Boost Defense (`cpufreq` & `ki_profile`):
