@@ -141,6 +141,7 @@ apply_ksu_config() {
             -d KSU_ALLOWLIST_WORKAROUND \
             -e KSU_LSM_SECURITY_HOOKS \
             -d KSU_MANUAL_HOOK \
+            -e KSU_MULTI_MANAGER_SUPPORT \
             -e KSU_SUSFS
 
         if [ $SUSFS_ENABLE -eq 1 ]; then

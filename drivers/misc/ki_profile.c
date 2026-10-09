@@ -33,6 +33,15 @@ static DEFINE_SPINLOCK(ki_guard_lock);
 /* Profile actually applied right now (differs while screen is off) */
 static int ki_active_mode = -1;
 
+int ki_get_active_profile(void)
+{
+	int mode = READ_ONCE(ki_active_mode);
+	if (mode < 0)
+		return READ_ONCE(current_profile_mode);
+	return mode;
+}
+EXPORT_SYMBOL_GPL(ki_get_active_profile);
+
 /*
  * Screen-off Auto Battery:
  * Screen off  -> after KI_SCREEN_OFF_DELAY_MS switch to Battery profile.
@@ -225,36 +234,45 @@ struct ki_profile_tune {
 
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
-	 * Battery Saver: lazy ramp-up, Prime only under hard sustained load,
-	 * light tasks kept on Silver.
+	 * Battery Saver:
+	 * Fokus hemat baterai nyata (irit polll).
+	 * Tasks dikurung di Silver cluster (up_migrate = 98/90),
+	 * Hispeed rendah (Silver 1.05GHz, Gold 1.17GHz, Prime 1.27GHz).
+	 * Ramp-up malas (up_us: 2ms, 4ms, 8ms), drop cepat ke idle (down_us: 2000us = 2ms).
+	 * Swappiness 60 untuk menghemat daya CPU dari kompresi zRAM berlebih.
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 1500,  .down_us = 4000, .hispeed_load = 85 },
-			{ .up_us = 3000,  .down_us = 4000, .hispeed_load = 85 },
-			{ .up_us = 10000, .down_us = 4000, .hispeed_load = 85 },
+			{ .up_us = 2000,  .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 95 },
+			{ .up_us = 4000,  .down_us = 2000, .hispeed_freq = 1171200, .hispeed_load = 95 },
+			{ .up_us = 8000,  .down_us = 2000, .hispeed_freq = 1267200, .hispeed_load = 95 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 92, .down_migrate = 85,
+		.up_migrate = 98, .down_migrate = 90,
 		.grp_up_migrate = 100, .grp_down_migrate = 95,
 		.window_stats_policy = 2,
-		.swappiness = 150, .wmark_scale = 12, .vfs_cache_pressure = 100,
+		.swappiness = 60, .wmark_scale = 16, .vfs_cache_pressure = 80,
 	},
 	/*
-	 * Balanced: zero up-delay + 2ms down hold for snappy 120Hz; light tasks
-	 * on Silver, bursts assisted by Gold.
+	 * Balanced:
+	 * Nyaman & smooth 120Hz untuk harian (sosmed, chat, UI responsif).
+	 * Schedutil up-rate cepat (up_us: 500us, 1000us, 2000us) saat layar disentuh,
+	 * tapi down_us dipersingkat dari 20ms jadi 4ms (4000us) agar tidak buang baterai.
+	 * Hispeed: Silver 1.21GHz, Gold 1.38GHz, Prime 1.51GHz.
+	 * Migrasi seimbang (up_migrate = 85, down_migrate = 75) agar app berat dibantu Gold tanpa lag.
+	 * Swappiness = 80, Wmark = 16, vfs_cache_pressure = 80 (anti-kill multitasking).
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
-			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
-			{ .up_us = 0, .down_us = 2000, .hispeed_load = 85 },
+			{ .up_us = 500,  .down_us = 4000, .hispeed_freq = 1209600, .hispeed_load = 90 },
+			{ .up_us = 1000, .down_us = 4000, .hispeed_freq = 1382400, .hispeed_load = 90 },
+			{ .up_us = 2000, .down_us = 4000, .hispeed_freq = 1516800, .hispeed_load = 90 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 85, .down_migrate = 75,
-		.grp_up_migrate = 100, .grp_down_migrate = 95,
+		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 150, .wmark_scale = 16, .vfs_cache_pressure = 80,
+		.swappiness = 80, .wmark_scale = 16, .vfs_cache_pressure = 80,
 	},
 	/*
 	 * Performance / Gaming Turbo:
@@ -281,7 +299,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	},
 };
 
-static int apply_ki_profile(int mode)
+static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
 	int i, ret, err = 0;
@@ -307,7 +325,8 @@ static int apply_ki_profile(int mode)
 		sugov_set_cluster_pl(cpu, t->pl);
 	}
 
-	ki_cpufreq_reset_idle_floors(mode);
+	if (force)
+		ki_cpufreq_reset_idle_floors(mode);
 
 	kgsl_set_performance_mode(t->gpu_perf);
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
@@ -328,22 +347,35 @@ static int apply_ki_profile(int mode)
 	else
 		cancel_delayed_work(&ki_guard_work);
 
-	/* RAM: LZ4 zRAM friendly, no watermark boost to avoid kswapd storms */
-	vm_swappiness = t->swappiness;
-	watermark_scale_factor = t->wmark_scale;
-	watermark_boost_factor = 0;
-	sysctl_compact_unevictable_allowed = 0;
-	sysctl_vfs_cache_pressure = t->vfs_cache_pressure;
-	setup_per_zone_wmarks();
+	/*
+	 * Update VM watermarks only on explicit force switch (boot or user sysfs),
+	 * never during rapid screen on/off to prevent zone lock contention & SoD.
+	 */
+	if (force) {
+		vm_swappiness = t->swappiness;
+		watermark_scale_factor = t->wmark_scale;
+		watermark_boost_factor = 0;
+		sysctl_compact_unevictable_allowed = 0;
+		sysctl_vfs_cache_pressure = t->vfs_cache_pressure;
+		setup_per_zone_wmarks();
+	}
 
 	WRITE_ONCE(ki_active_mode, mode);
 	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
 	return err;
 }
 
-/* Profile that should be applied given user choice and screen state */
+/* Profile that should be applied given user choice, screen state, and power supply */
 static int ki_effective_mode(void)
 {
+	/*
+	 * If connected to external power / charging, do NOT throttle to Battery Saver
+	 * when screen is off. Android runs background maintenance (dexopt, fstrim) while
+	 * charging and needs normal CPU capacity.
+	 */
+	if (power_supply_is_system_supplied() > 0)
+		return READ_ONCE(current_profile_mode);
+
 	if (ki_screen_off_battery && !READ_ONCE(ki_screen_on))
 		return KI_PROFILE_BATTERY;
 	return READ_ONCE(current_profile_mode);
@@ -356,7 +388,7 @@ static int ki_apply_effective(bool force)
 
 	if (!force && mode == READ_ONCE(ki_active_mode))
 		return 0;
-	return apply_ki_profile(mode);
+	return apply_ki_profile(mode, force);
 }
 
 static void ki_screen_work_fn(struct work_struct *work)

@@ -1,11 +1,74 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-06  
+**Build Date:** 2026-10-09  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI / HyperOS & AOSP
+**Variant:** MIUI / HyperOS & AOSP (Android 14 – Android 17 ✅)
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+**BPF Compatibility:** LineageOS 24 / LineageOS Base ✅ (Verified Boot on Android 17)  
 
 ---
+
+## v1.4 P5 ✅ Verified Booting on Android 17 (LineageOS 24 Base)
+• Resolved Sleep of Death (SoD) & Charging Black-Screen Hang:
+  - Smart AC/Power Supply Aware: Prevented forced Battery Saver throttling on screen-off when plugged into charger (`power_supply_is_system_supplied() > 0`), ensuring Android idle maintenance (dexopt, fstrim) runs smoothly without starving the CPU
+  - Sane Headroom & Lock Protection: Removed dynamic `setup_per_zone_wmarks()` and `ki_cpufreq_reset_idle_floors()` from rapid screen on/off workqueues to prevent memory zone lock contention and deadlocks with kswapd/zRAM
+  - Active Screen-Off Profile Sync: Added `ki_get_active_profile()` in [include/linux/ki_profile.h](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/include/linux/ki_profile.h) and [drivers/cpufreq/cpufreq.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/drivers/cpufreq/cpufreq.c) so CPU idle floor clamp (300 MHz) is enforced against background daemons during standby
+• Native Baseband-Guard LSM Integration (Anti-Format / Partition Shield):
+  - Integrated `Baseband-guard` Linux Security Module (`security/baseband-guard/` with `CONFIG_BBG=y`)
+  - Hardens and write-protects critical partitions against malicious root scripts, bad flashers, and wipe commands:
+    * Protected: `modemst1`, `modemst2`, `fsg`, `fsc` (IMEI & Baseband RF calibration)
+    * Protected: `xbl`, `xbl_config`, `abl`, `tz`, `hyp`, `dsp`, `devinfo` (Bootloader & TrustZone)
+    * Enforces strict allowlist (`boot`, `userdata`, `metadata`, `misc`, `dtbo`, `vbmeta`, `recovery`)
+• Multi-Manager Root Support (ReSukiSU + KSU Multi-Manager):
+  - Enabled `CONFIG_KSU_MULTI_MANAGER_SUPPORT=y` in kernel and build system
+  - Built-in recognition for APK signatures of 6 top manager implementations:
+    * ReSukiSU Manager (Official)
+    * KSUN / RKSU (KernelSU-Next)
+    * KOWSU (KOWX712/KernelSU)
+    * SukiSU-Ultra
+    * MKSU (5ec1cff/KernelSU)
+    * Official KernelSU (tiann/KernelSU)
+  - Retained Dynamic Manager feature for custom/self-compiled APK signatures
+• Fixed Background Media & Music Streaming Stopping on Screen-Off:
+  - Removed `wlan_wow_wl` (Wake-on-WLAN) and `netmgr_wl` from Boeffla Wakelock Blocker default list in [boeffla_wl_blocker.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/drivers/base/power/boeffla_wl_blocker.c) and [anykernel.sh](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/anykernel_template/anykernel.sh)
+  - Added strict in-kernel exemption in `is_critical_wakelock()` for audio/sound/media and network streaming wakelocks so YouTube (ReVanced/Premium), Spotify, and browser music continue smoothly without pausing when the screen is locked
+• Fixed Aggressive App Kills & Multitasking Eviction (2x TikTok & Instagram No-Reload):
+  - Fixed erroneous LMKD props in [anykernel.sh](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/anykernel_template/anykernel.sh): set `kill_heaviest_task = true` (preventing brute-force serial purging of cached apps)
+  - Relaxed `ro.lmk.psi_partial_stall_ms` to 250ms and `ro.lmk.thrashing_limit` to 100, preventing false-positive kills during heavy video segment caching (TikTok / IG reels)
+  - Lowered `vm_swappiness` from 150 to 80 and set `vfs_cache_pressure = 80` across Balanced & Battery profiles to keep app dentry/inode caches in RAM
+• Clear Differentiation Between Balanced and Battery Saver:
+  - Balanced: Smooth 120Hz scrolling, fast 500us touch ramp, shortened 4ms down-hold (down from 20ms for battery savings), Silver 1.21G / Gold 1.38G / Prime 1.51G, migration 85/75
+  - Battery Saver: True power-saver ("Irit Pol"), 98% pinned to Silver (migration 98/90), down-hold 2ms (instant drop to 300MHz), swappiness 60 (minimal zRAM churn), Silver 1.05G / Gold 1.17G / Prime 1.27G
+• Cleaned Schedutil Governor Locking:
+  - Removed redundant spinlock in `sugov_set_cluster_floor()` in [cpufreq_schedutil.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/kernel/sched/cpufreq_schedutil.c)
+• Live Hardware & Gaming Monitor (monitor_perf.sh) Overhaul:
+  - Fixed blank RAM & zRAM metrics (`Free MB / Total MB / zRAM MB`) via atomic device helper script
+  - Fixed duplicate Display FPS string formatting (`Display FPS : 42.9 FPS`)
+  - Modernized App detection via `topResumedActivity` (supports Android 14/15/16/17)
+  - SurfaceFlinger display rate synchronization (clean 60 Hz / 120 Hz)
+  - Added `[r]` interactive key to reset frame/jank stats on the fly
+
+## v1.4 P4
+• Android 17 Boot & BPF Subsystem Overhaul — **Confirmed Working** ✅:
+  - **Real-device verified:** Ki-Kernel boots cleanly and fully stable on Android 17 (LineageOS 24 base)
+  - **BPF on par with LineageOS 24:** BPF verifier, program loader, and map semantics behave identically to upstream LineageOS 4.19-based kernels
+  - Fixed fatal `reboot,bpfloader-failed` on Android 15, 16, and 17:
+    * Cherry-picked upstream LineageOS fix (`UPSTREAM: selinux: enable genfscon labeling for securityfs` with `SE_SBGENFS` in `security/selinux/hooks.c`)
+    * Enabled `CONFIG_SECURITYFS=y` in vendor & device defconfigs
+  - Modernized arm64 BPF JIT & instruction set:
+    * Backported BPF `JMP32` instruction set (32-bit jumps) for modern Clang `-mcpu=v3` compatibility
+    * Backported 64-bit atomic operations (`BPF_ATOMIC`, atomic add, fetch_add)
+    * Backported `XDP_SOCKETS` socket ops and coarse-grained ktime for Bionic bpf loader compatibility
+  - Wired up `close_range()` system call (NR 436 in `fs/open.c` & `syscalls.h`) for Bionic runtime loader
+  - Purged all dirty e404 hacks & fake uname (`5.15`) — kernel cleanly identifies as native **4.19.325** to prevent BPF verifier breakage and GKI mismatch rejections
+• Native NoMount Subsystem Integration (Built-in VFS Redirection):
+  - Integrated `NoMount` driver natively into kernel core (`fs/nomount/` with `CONFIG_NOMOUNT=y`)
+  - Enables mountless module loading & path redirection in RAM without generating visible mounts in `/proc/mounts` or `/proc/self/mountinfo`
+  - Integrated Linux Keyring communication (`add_key`) for userspace `nm` tool and WebUI
+  - Supports UID app exclusion/isolation for banking apps and root detectors
+  - Seamlessly paired with ReSukiSU and SUSFS v1.5.x
+• Smart Bypass Charging UI Polish:
+  - Hidden lightning/charging icon during bypass charging mode for clean static battery status bar indication
 
 ## v1.4 P3
 • Extreme Gaming & Anti-Drop FPS Overhaul (Locked 60 / 120 FPS Pacing):

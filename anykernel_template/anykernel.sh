@@ -215,14 +215,16 @@ echo 1 > /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
 echo 1 > /sys/class/power_supply/bms/authentic 2>/dev/null
 
-echo 150 > /proc/sys/vm/swappiness 2>/dev/null
+echo 80 > /proc/sys/vm/swappiness 2>/dev/null
+echo 80 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
-echo "wlan_pno_wl;wlan_extscan_wl;wlan_wow_wl;netmgr_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+echo "wlan_pno_wl;wlan_extscan_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 
-# LMKD Tuning (Anti-Kill Multitasking & PSI Memory Retention)
-setprop sys.lmk.kill_heaviest_task false 2>/dev/null
-setprop ro.lmk.psi_partial_stall_ms 180 2>/dev/null
-setprop ro.lmk.thrashing_limit 50 2>/dev/null
+# LMKD Tuning (Anti-Kill Multitasking: kill single heaviest only on true OOM, prevent cache purge)
+setprop sys.lmk.kill_heaviest_task true 2>/dev/null
+setprop ro.lmk.kill_heaviest_task true 2>/dev/null
+setprop ro.lmk.psi_partial_stall_ms 250 2>/dev/null
+setprop ro.lmk.thrashing_limit 100 2>/dev/null
 
 for q in /sys/block/*/queue/scheduler; do
     if [ -f "$q" ]; then

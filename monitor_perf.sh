@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Ki-Kernel Realtime Gaming & Hardware Monitor for POCO F4 / munch (SM8250)
-# Tracks Hardware Display FPS, per-game SurfaceFlinger FPS, frame jank/drops,
+# Tracks Hardware Display FPS, App/Game FPS, frame jank/drops,
 # rolling FPS graph, CPU clusters, Adreno 650 GPU, Temperatures,
-# Bypass Charging, and Ki-Profile mode with interactive profile toggles.
+# Bypass Charging, RAM & zRAM, and Ki-Profile mode with interactive toggles.
 # ==============================================================================
 
 # ANSI Color Codes
@@ -26,125 +26,45 @@ if [ -z "$DEVICE" ] || [ "$DEVICE" = "unknown" ]; then
     exit 1
 fi
 
+# Deploy helper script to device for zero-overhead atomic metrics collection
+HELPER_SRC="$(dirname "$0")/scripts/ki_monitor_helper.sh"
+if [ -f "$HELPER_SRC" ]; then
+    adb push "$HELPER_SRC" /data/local/tmp/ki_monitor_helper.sh >/dev/null 2>&1
+    adb shell "su -c 'chmod 755 /data/local/tmp/ki_monitor_helper.sh'" >/dev/null 2>&1
+fi
+
 # Set 500ms periodicity on device for accurate real-time FPS
-adb shell "su -c 'echo 500 > /sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-0/fps_periodicity_ms 2>/dev/null'" 2>/dev/null
+adb shell "su -c 'echo 500 > /sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-0/fps_periodicity_ms 2>/dev/null'" >/dev/null 2>&1
 
 # Rolling FPS history (last 30 samples = ~30s)
 FPS_HISTORY=()
 HISTORY_MAX=30
-JANK_COUNT=0
-FRAME_DROP_COUNT=0
 PREV_TOTAL_FRAMES=0
 PREV_JANKY_FRAMES=0
+PREV_TIME_MS=0
+APP_FPS="0.0"
+JANK_PCT="0.0"
 
 clear
 echo -e "${C_CYAN}${C_BOLD}Starting Ki-Kernel Monitor on device ${DEVICE}...${C_RESET}"
 
-# ─── SurfaceFlinger per-game FPS ─────────────────────────────────────────────
-get_game_fps() {
-    # Dump SurfaceFlinger stats for the top visible app layer
-    # Returns: "GAME_PKG|GAME_FPS|TOTAL_FRAMES|JANKY_FRAMES"
-    adb shell "su -c '
-        TOP_APP=\$(dumpsys activity activities 2>/dev/null | grep -m1 \"mResumedActivity\" | grep -oE \"[a-zA-Z0-9._]+/[a-zA-Z0-9._]+\" | head -n1 | cut -d/ -f1)
-        [ -z \"\$TOP_APP\" ] && TOP_APP=\"unknown\"
-
-        # Get SurfaceFlinger stats for matching layers
-        SF_STATS=\$(dumpsys SurfaceFlinger --latency-clear 2>/dev/null; sleep 0.5; dumpsys SurfaceFlinger --latency 2>/dev/null | grep -A 500 \"\$TOP_APP\" | head -n 200)
-
-        # Count frames from timestamp differences (ns to fps)
-        FRAME_TIMES=\$(echo \"\$SF_STATS\" | awk \"NR>1 && \\\$1>0 && \\\$1!~/^0+\$/ {print \\\$1}\" | head -n 100)
-        TOTAL=\$(echo \"\$FRAME_TIMES\" | wc -l)
-        if [ \"\$TOTAL\" -gt 5 ]; then
-            FIRST=\$(echo \"\$FRAME_TIMES\" | head -n1)
-            LAST=\$(echo \"\$FRAME_TIMES\" | tail -n1)
-            DURATION_NS=\$((LAST - FIRST))
-            if [ \"\$DURATION_NS\" -gt 0 ]; then
-                GAME_FPS=\$(awk \"BEGIN {printf \\\"%.1f\\\", (\$TOTAL * 1000000000) / \$DURATION_NS}\")
-            else
-                GAME_FPS=0
-            fi
-        else
-            GAME_FPS=0
-        fi
-
-        # Jank via gfxinfo
-        GFXINFO=\$(dumpsys gfxinfo \"\$TOP_APP\" 2>/dev/null)
-        TOTAL_FRAMES=\$(echo \"\$GFXINFO\" | grep -m1 \"Total frames\" | awk \"{print \\\$NF}\")
-        JANKY_FRAMES=\$(echo \"\$GFXINFO\" | grep -m1 \"Janky frames\" | awk \"{print \\\$NF}\" | grep -oE \"[0-9]+\" | head -n1)
-        FRAME_DROPS=\$(echo \"\$GFXINFO\" | grep -m1 \"Number Missed Vsync\" | awk \"{print \\\$NF}\")
-        [ -z \"\$TOTAL_FRAMES\" ]  && TOTAL_FRAMES=0
-        [ -z \"\$JANKY_FRAMES\" ]  && JANKY_FRAMES=0
-        [ -z \"\$FRAME_DROPS\" ]   && FRAME_DROPS=0
-
-        echo \"\$TOP_APP|\$GAME_FPS|\$TOTAL_FRAMES|\$JANKY_FRAMES|\$FRAME_DROPS\"
-    '" 2>/dev/null
-}
-
-# ─── Hardware metrics ─────────────────────────────────────────────────────────
-get_metrics() {
-    adb shell "su -c '
-        FPS_RAW=\$(cat /sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-0/measured_fps 2>/dev/null)
-        FPS=\$(echo \"\$FPS_RAW\" | grep -oE \"fps: [0-9.]+\" | awk \"{print \$2}\")
-        [ -z \"\$FPS\" ] && FPS=\"0.0\"
-
-        KI_MODE=\$(cat /sys/kernel/ki_profile/mode 2>/dev/null)
-        KI_THROTTLE=\$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null)
-
-        CPU0=\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
-        CPU4=\$(cat /sys/devices/system/cpu/cpu4/cpufreq/scaling_cur_freq 2>/dev/null)
-        CPU7=\$(cat /sys/devices/system/cpu/cpu7/cpufreq/scaling_cur_freq 2>/dev/null)
-
-        GPU_FREQ=\$(cat /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq 2>/dev/null)
-        GPU_LOAD=\$(cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null)
-        GPU_THROT=\$(cat /sys/class/kgsl/kgsl-3d0/throttling 2>/dev/null)
-        GPU_BUS=\$(cat /sys/class/kgsl/kgsl-3d0/force_bus_on 2>/dev/null)
-
-        SOC_TEMP=\$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
-        BATT_TEMP=\$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
-
-        BATT_LEVEL=\$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
-        BATT_STATUS=\$(cat /sys/class/power_supply/battery/status 2>/dev/null)
-        BATT_CURRENT=\$(cat /sys/class/power_supply/battery/current_now 2>/dev/null)
-        BYPASS=\$(cat /sys/class/power_supply/battery/bypass_charging 2>/dev/null)
-
-        MEM_FREE=\$(awk \"/MemAvailable:/ {print int(\$2/1024)}\" /proc/meminfo)
-        MEM_TOTAL=\$(awk \"/MemTotal:/ {print int(\$2/1024)}\" /proc/meminfo)
-        ZRAM_USED=\$(awk \"/SwapTotal/ {total=\$2} /SwapFree/ {free=\$2} END {print int((total-free)/1024)}\" /proc/meminfo)
-
-        # Count actual hardware vsync events from DRM in 200ms window
-        count=0
-        start=\$(date +%s%3N)
-        end=\$((start + 200))
-        while [ \$(date +%s%3N) -lt \$end ]; do
-            read -r line < /sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-0/vsync_event 2>/dev/null && count=\$((count+1))
-        done
-        PANEL_HZ=\$(awk \"BEGIN {printf \\\"%d\\\", \$count * 5}\")
-
-        echo \"\$FPS|\$KI_MODE|\$KI_THROTTLE|\$CPU0|\$CPU4|\$CPU7|\$GPU_FREQ|\$GPU_LOAD|\$GPU_THROT|\$GPU_BUS|\$SOC_TEMP|\$BATT_TEMP|\$BATT_LEVEL|\$BATT_STATUS|\$BATT_CURRENT|\$BYPASS|\$MEM_FREE|\$MEM_TOTAL|\$ZRAM_USED|\$PANEL_HZ\"
-    '" 2>/dev/null
-}
-
 # ─── Rolling FPS Bar Graph (30 samples) ───────────────────────────────────────
 draw_fps_graph() {
     local fps_val="$1"
-    # Add to history
     FPS_HISTORY+=("$fps_val")
     if [ "${#FPS_HISTORY[@]}" -gt "$HISTORY_MAX" ]; then
         FPS_HISTORY=("${FPS_HISTORY[@]:1}")
     fi
 
-    # Draw graph (height: 6 rows, each row = 20fps)
     local bars=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
     local max_fps=125
     local graph=""
     for val in "${FPS_HISTORY[@]}"; do
         local fint=$(echo "$val" | awk '{print int($1)}')
-        # clamp
         [ "$fint" -gt "$max_fps" ] && fint=$max_fps
         [ "$fint" -lt 0 ] && fint=0
         local idx=$(awk "BEGIN {print int($fint * 7 / $max_fps)}")
         local bar="${bars[$idx]}"
-        # Color by fps
         if [ "$fint" -ge 110 ]; then
             graph+="${C_CYAN}${bar}${C_RESET}"
         elif [ "$fint" -ge 55 ]; then
@@ -155,7 +75,6 @@ draw_fps_graph() {
             graph+="${C_RED}${bar}${C_RESET}"
         fi
     done
-    # Pad with spaces if history shorter than max
     local pad=$((HISTORY_MAX - ${#FPS_HISTORY[@]}))
     for ((i=0; i<pad; i++)); do
         graph=" ${graph}"
@@ -177,40 +96,55 @@ get_jank_color() {
 
 trap 'tput cnorm; echo -e "\n${C_RESET}Monitor closed."; exit 0' INT TERM EXIT
 tput civis
-
-LOOP=0
-GAME_PKG=""; GAME_FPS="0.0"; TOTAL_FRAMES=0; JANKY_FRAMES=0; FRAME_DROPS=0
+clear
 
 while true; do
-    LOOP=$((LOOP + 1))
+    NOW_MS=$(date +%s%3N)
 
-    # Fetch hardware metrics every loop
-    RAW=$(get_metrics)
+    # Fetch hardware metrics in one fast atomic pass
+    RAW=$(adb shell "su -c /data/local/tmp/ki_monitor_helper.sh" 2>/dev/null)
     if [ -z "$RAW" ]; then
-        sleep 1
+        sleep 0.8
         continue
     fi
 
-    IFS='|' read -r FPS KI_MODE KI_THROTTLE CPU0 CPU4 CPU7 GPU_FREQ GPU_LOAD GPU_THROT GPU_BUS SOC_TEMP BATT_TEMP BATT_LEVEL BATT_STATUS BATT_CURRENT BYPASS MEM_FREE MEM_TOTAL ZRAM_USED PANEL_HZ <<< "$RAW"
+    IFS='|' read -r FPS KI_MODE KI_THROT CPU0 CPU4 CPU7 GPU_FREQ GPU_LOAD GPU_THROT GPU_BUS SOC_TEMP BATT_TEMP BATT_LEVEL BATT_STATUS BATT_CURRENT BYPASS MEM_FREE MEM_TOTAL ZRAM_USED PANEL_HZ TOP_APP TOTAL_FRAMES JANKY_FRAMES FRAME_DROPS <<< "$RAW"
 
-    # Fetch per-game stats every 3 loops (gfxinfo is slower)
-    if [ $((LOOP % 3)) -eq 0 ]; then
-        GAME_RAW=$(get_game_fps)
-        if [ -n "$GAME_RAW" ]; then
-            IFS='|' read -r GAME_PKG GAME_FPS TOTAL_FRAMES JANKY_FRAMES FRAME_DROPS <<< "$GAME_RAW"
+    # Delta App FPS calculation
+    if [ "$PREV_TIME_MS" -gt 0 ]; then
+        DELTA_MS=$((NOW_MS - PREV_TIME_MS))
+        DELTA_FRAMES=$((TOTAL_FRAMES - PREV_TOTAL_FRAMES))
+        DELTA_JANKY=$((JANKY_FRAMES - PREV_JANKY_FRAMES))
+
+        if [ "$DELTA_MS" -gt 0 ] && [ "$DELTA_FRAMES" -ge 0 ]; then
+            APP_FPS=$(awk "BEGIN {printf \"%.1f\", ($DELTA_FRAMES * 1000) / $DELTA_MS}")
+        else
+            APP_FPS="0.0"
+        fi
+
+        if [ "$DELTA_FRAMES" -gt 0 ] && [ "$DELTA_JANKY" -ge 0 ]; then
+            JANK_PCT=$(awk "BEGIN {printf \"%.1f\", ($DELTA_JANKY * 100) / $DELTA_FRAMES}")
+        else
+            JANK_PCT="0.0"
         fi
     fi
+    PREV_TOTAL_FRAMES=${TOTAL_FRAMES:-0}
+    PREV_JANKY_FRAMES=${JANKY_FRAMES:-0}
+    PREV_TIME_MS=$NOW_MS
 
-    # Delta jank frames since last sample
-    DELTA_JANKY=$((JANKY_FRAMES - PREV_JANKY_FRAMES))
-    DELTA_TOTAL=$((TOTAL_FRAMES - PREV_TOTAL_FRAMES))
-    if [ "$DELTA_TOTAL" -gt 0 ]; then
-        JANK_PCT=$(awk "BEGIN {printf \"%.1f\", ($DELTA_JANKY * 100) / $DELTA_TOTAL}")
-    else
-        JANK_PCT="0.0"
-    fi
-    PREV_JANKY_FRAMES=$JANKY_FRAMES
-    PREV_TOTAL_FRAMES=$TOTAL_FRAMES
+    # Friendly App Name
+    case "$TOP_APP" in
+        *trill*|*tiktok*|*aweme*) APP_NAME="TikTok" ;;
+        *shopee*) APP_NAME="Shopee" ;;
+        *instagram*) APP_NAME="Instagram" ;;
+        *whatsapp*) APP_NAME="WhatsApp" ;;
+        *youtube*) APP_NAME="YouTube" ;;
+        *freefire*|*dts*) APP_NAME="Free Fire" ;;
+        *mobile.legends*) APP_NAME="Mobile Legends" ;;
+        *genshin*) APP_NAME="Genshin Impact" ;;
+        *launcher*|*System*|*systemui*) APP_NAME="System Launcher" ;;
+        *) APP_NAME=$(echo "$TOP_APP" | sed 's/.*\.\([^.]*\)$/\1/') ;;
+    esac
 
     # Unit conversions
     CPU0_GHZ=$(awk "BEGIN {printf \"%.2f\", ${CPU0:-0}/1000000}")
@@ -228,27 +162,27 @@ while true; do
     elif [ "$FPS_NUM" -ge 40 ]; then FPS_COLOR="$C_YELLOW"
     else FPS_COLOR="$C_RED"; fi
 
-    # Game FPS color
-    GFPS_NUM=$(echo "$GAME_FPS" | awk '{print int($1)}')
-    if [ "$GFPS_NUM" -ge 110 ]; then GFPS_COLOR="${C_CYAN}${C_BOLD}"
-    elif [ "$GFPS_NUM" -ge 55 ]; then GFPS_COLOR="${C_GREEN}${C_BOLD}"
-    elif [ "$GFPS_NUM" -ge 40 ]; then GFPS_COLOR="${C_YELLOW}${C_BOLD}"
-    else GFPS_COLOR="${C_RED}${C_BOLD}"; fi
+    # App FPS color
+    AFPS_NUM=$(echo "$APP_FPS" | awk '{print int($1)}')
+    if [ "$AFPS_NUM" -ge 110 ]; then AFPS_COLOR="${C_CYAN}${C_BOLD}"
+    elif [ "$AFPS_NUM" -ge 55 ]; then AFPS_COLOR="${C_GREEN}${C_BOLD}"
+    elif [ "$AFPS_NUM" -ge 40 ]; then AFPS_COLOR="${C_YELLOW}${C_BOLD}"
+    else AFPS_COLOR="${C_RED}${C_BOLD}"; fi
 
     # Profile display
     if [ "$KI_MODE" = "2" ]; then
         PROF_COLOR="${C_RED}${C_BOLD}"; PROF_TXT="[2] PERFORMANCE (TURBO)"
     elif [ "$KI_MODE" = "0" ]; then
-        PROF_COLOR="${C_BLUE}"; PROF_TXT="[0] BATTERY SAVER"
+        PROF_COLOR="${C_BLUE}${C_BOLD}"; PROF_TXT="[0] BATTERY SAVER"
     else
-        PROF_COLOR="${C_GREEN}"; PROF_TXT="[1] BALANCED"
+        PROF_COLOR="${C_GREEN}${C_BOLD}"; PROF_TXT="[1] BALANCED"
     fi
 
     # Bypass status
     if [ "$BYPASS" = "1" ]; then
         BYPASS_TXT="${C_GREEN}${C_BOLD}BYPASS ACTIVE (0mA to Battery)${C_RESET}"
     else
-        BYPASS_TXT="${C_YELLOW}Normal${C_RESET}"
+        BYPASS_TXT="${C_YELLOW}Normal (Charging Battery)${C_RESET}"
     fi
 
     # Build FPS rolling graph
@@ -264,21 +198,21 @@ while true; do
     echo -e "${C_CYAN}╠════════════════════════════════════════════════════════════════════════╣${C_RESET}"
 
     # ── FPS Section ───────────────────────────────────────────────────────────
-    printf " ${C_BOLD}Display FPS :${C_RESET} ${FPS_COLOR}${C_BOLD}%-8s FPS${C_RESET}   " "$FPS"
-    printf "${C_BOLD}App FPS :${C_RESET} ${GFPS_COLOR}%-6s FPS${C_RESET}\n" "$GAME_FPS"
+    printf " ${C_BOLD}Display FPS :${C_RESET} ${FPS_COLOR}${C_BOLD}%-5s FPS${C_RESET}   " "$FPS"
+    printf "${C_BOLD}App FPS :${C_RESET} ${AFPS_COLOR}%-5s FPS${C_RESET}\n" "$APP_FPS"
     # Panel Hz indicator
     if [ "${PANEL_HZ:-0}" -ge 110 ]; then
         PANEL_COLOR="${C_CYAN}${C_BOLD}"
     else
         PANEL_COLOR="${C_YELLOW}"
     fi
-    echo -e " ${C_GRAY}Panel HW :${C_RESET} ${PANEL_COLOR}${PANEL_HZ:-?} Hz${C_RESET} ${C_GRAY}(hardware vsync)  ${C_RESET}${C_BOLD}App:${C_RESET} ${C_WHITE}$(echo "$GAME_PKG" | sed 's/.*\.\([^.]*\)$/\1/')${C_RESET}"
-    echo -e " ${C_BOLD}Jank      :${C_RESET} ${JANK_DISPLAY}   ${C_BOLD}Ki-Profile:${C_RESET} ${PROF_COLOR}${PROF_TXT}${C_RESET}"
+    printf " ${C_GRAY}Panel HW    :${C_RESET} ${PANEL_COLOR}%-3s Hz${C_RESET} ${C_GRAY}(hardware vsync)${C_RESET}  ${C_BOLD}App:${C_RESET} ${C_WHITE}%-16s${C_RESET}\n" "${PANEL_HZ:-60}" "$APP_NAME"
+    echo -e " ${C_BOLD}Jank        :${C_RESET} ${JANK_DISPLAY}   ${C_BOLD}Ki-Profile:${C_RESET} ${PROF_COLOR}${PROF_TXT}${C_RESET}"
 
     # ── Rolling FPS Graph ─────────────────────────────────────────────────────
     echo -e "${C_GRAY}── FPS History (30s) ──────────────────────── 0▁ 40▄ 60▅ 90▇ 120█ ─────${C_RESET}"
     echo -e " ${FPS_GRAPH}"
-    echo -e " ${C_GRAY}Frame Drops: ${C_RESET}${C_YELLOW}${FRAME_DROPS}${C_RESET}   ${C_GRAY}Total Janky: ${C_RESET}${C_YELLOW}${JANKY_FRAMES}${C_RESET}   ${C_GRAY}Total Frames: ${C_RESET}${TOTAL_FRAMES}"
+    echo -e " ${C_GRAY}Frame Drops: ${C_RESET}${C_YELLOW}${FRAME_DROPS:-0}${C_RESET}   ${C_GRAY}Total Janky: ${C_RESET}${C_YELLOW}${JANKY_FRAMES:-0}${C_RESET}   ${C_GRAY}Total Frames: ${C_RESET}${TOTAL_FRAMES:-0}"
 
     # ── GPU Section ───────────────────────────────────────────────────────────
     echo -e "${C_GRAY}── GPU (Adreno 650) ────────────────────────────────────────────────────${C_RESET}"
@@ -287,7 +221,7 @@ while true; do
     # ── CPU Section ───────────────────────────────────────────────────────────
     echo -e "${C_GRAY}── CPU (1+3+4 SD870) ───────────────────────────────────────────────────${C_RESET}"
     echo -e "   ${C_GRAY}Prime ${C_RESET}C7: ${C_RED}${CPU7_GHZ} GHz${C_RESET}  ${C_GRAY}Gold${C_RESET} C4-6: ${C_YELLOW}${CPU4_GHZ} GHz${C_RESET}  ${C_GRAY}Silver${C_RESET} C0-3: ${C_CYAN}${CPU0_GHZ} GHz${C_RESET}"
-    echo -e "   Thermal Isolation: $([ "$KI_THROTTLE" = "0" ] && echo -e "${C_GREEN}BYPASSED (8 cores locked)${C_RESET}" || echo -e "${C_YELLOW}Active${C_RESET}")"
+    echo -e "   Thermal Isolation: $([ "$KI_THROT" = "0" ] && echo -e "${C_GREEN}BYPASSED (8 cores locked)${C_RESET}" || echo -e "${C_YELLOW}Active${C_RESET}")"
 
     # ── Temp & Battery ────────────────────────────────────────────────────────
     echo -e "${C_GRAY}── Thermals & Power ────────────────────────────────────────────────────${C_RESET}"
@@ -300,33 +234,38 @@ while true; do
 
     # ── Controls ──────────────────────────────────────────────────────────────
     echo -e "${C_GRAY}── Controls ────────────────────────────────────────────────────────────${C_RESET}"
-    echo -e "  [${C_RED}2${C_RESET}] Performa  [${C_GREEN}1${C_RESET}] Balanced  [${C_BLUE}0${C_RESET}] Battery  [${C_CYAN}b${C_RESET}] Bypass  [${C_YELLOW}h${C_RESET}] 120Hz  [${C_MAGENTA}q${C_RESET}] Quit"
+    echo -e "  [${C_RED}2${C_RESET}] Performa  [${C_GREEN}1${C_RESET}] Balanced  [${C_BLUE}0${C_RESET}] Battery  [${C_CYAN}b${C_RESET}] Bypass  [${C_YELLOW}h${C_RESET}] 120Hz  [${C_MAGENTA}r${C_RESET}] Reset  [${C_GRAY}q${C_RESET}] Quit"
     echo -e "${C_CYAN}════════════════════════════════════════════════════════════════════════${C_RESET}"
 
-    # ── Non-blocking input ────────────────────────────────────────────────────
+    # Non-blocking user input
     if [ -t 0 ]; then
-        read -t 1 -s -n 1 KEY
+        read -t 0.7 -s -n 1 KEY
     else
-        sleep 1
+        sleep 0.7
         KEY=""
     fi
+
     if [ -n "$KEY" ]; then
         case "$KEY" in
-            2) adb shell "su -c 'echo 2 > /sys/kernel/ki_profile/mode'" 2>/dev/null ;;
-            1) adb shell "su -c 'echo 1 > /sys/kernel/ki_profile/mode'" 2>/dev/null ;;
-            0) adb shell "su -c 'echo 0 > /sys/kernel/ki_profile/mode'" 2>/dev/null ;;
+            2) adb shell "su -c 'echo 2 > /sys/kernel/ki_profile/mode'" >/dev/null 2>&1 ;;
+            1) adb shell "su -c 'echo 1 > /sys/kernel/ki_profile/mode'" >/dev/null 2>&1 ;;
+            0) adb shell "su -c 'echo 0 > /sys/kernel/ki_profile/mode'" >/dev/null 2>&1 ;;
             b|B)
                 if [ "$BYPASS" = "1" ]; then
-                    adb shell "su -c 'echo 0 > /sys/class/power_supply/battery/bypass_charging'" 2>/dev/null
+                    adb shell "su -c 'echo 0 > /sys/class/power_supply/battery/bypass_charging'" >/dev/null 2>&1
                 else
-                    adb shell "su -c 'echo 1 > /sys/class/power_supply/battery/bypass_charging'" 2>/dev/null
+                    adb shell "su -c 'echo 1 > /sys/class/power_supply/battery/bypass_charging'" >/dev/null 2>&1
                 fi ;;
             h|H)
-                adb shell "su -c 'service call SurfaceFlinger 1035 i32 1'" 2>/dev/null
-                adb shell "settings put system peak_refresh_rate 120.0; settings put system min_refresh_rate 120.0" 2>/dev/null ;;
+                if [ "${PANEL_HZ:-60}" -ge 110 ]; then
+                    adb shell "su -c 'service call SurfaceFlinger 1035 i32 0'" >/dev/null 2>&1
+                    adb shell "settings put system peak_refresh_rate 60.0; settings put system min_refresh_rate 60.0" >/dev/null 2>&1
+                else
+                    adb shell "su -c 'service call SurfaceFlinger 1035 i32 1'" >/dev/null 2>&1
+                    adb shell "settings put system peak_refresh_rate 120.0; settings put system min_refresh_rate 120.0" >/dev/null 2>&1
+                fi ;;
             r|R)
-                # Reset gfxinfo counters
-                adb shell "su -c 'dumpsys gfxinfo ${GAME_PKG} reset'" 2>/dev/null
+                [ -n "$TOP_APP" ] && adb shell "su -c 'dumpsys gfxinfo $TOP_APP reset'" >/dev/null 2>&1
                 PREV_TOTAL_FRAMES=0; PREV_JANKY_FRAMES=0 ;;
             q|Q) break ;;
         esac

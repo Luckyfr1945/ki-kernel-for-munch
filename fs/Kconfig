@@ -329,4 +329,5 @@ config DYNAMIC_FSYNC
 	  for superior storage I/O performance and low latency.
 	  When screen goes off, a full sync is automatically performed.
 
+source "fs/nomount/Kconfig"
 endmenu

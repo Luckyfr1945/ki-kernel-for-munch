@@ -776,24 +776,28 @@ static ssize_t store_scaling_min_freq
 	 * 3. Performance mode:
 	 *    Unrestricted turbo floor.
 	 */
-	if (current_profile_mode == KI_PROFILE_BATTERY) {
-		val = policy->cpuinfo.min_freq;
-	} else if (current_profile_mode == KI_PROFILE_BALANCED) {
-		if (policy->cpu < 4) {
-			if (val <= 691200)
-				val = policy->cpuinfo.min_freq;
-			else if (val > 1344000)
-				val = 1344000;
-		} else if (policy->cpu < 7) {
-			if (val <= 710400)
-				val = policy->cpuinfo.min_freq;
-			else if (val > 1056000)
-				val = 1056000;
-		} else {
-			if (val <= 844800)
-				val = policy->cpuinfo.min_freq;
-			else if (val > 844800)
-				val = 844800;
+	{
+		int active_profile = ki_get_active_profile();
+
+		if (active_profile == KI_PROFILE_BATTERY) {
+			val = policy->cpuinfo.min_freq;
+		} else if (active_profile == KI_PROFILE_BALANCED) {
+			if (policy->cpu < 4) {
+				if (val <= 691200)
+					val = policy->cpuinfo.min_freq;
+				else if (val > 1344000)
+					val = 1344000;
+			} else if (policy->cpu < 7) {
+				if (val <= 710400)
+					val = policy->cpuinfo.min_freq;
+				else if (val > 1056000)
+					val = 1056000;
+			} else {
+				if (val <= 844800)
+					val = policy->cpuinfo.min_freq;
+				else if (val > 844800)
+					val = 844800;
+			}
 		}
 	}
 
