@@ -2,13 +2,27 @@
 
 **Build Date:** 2026-10-09  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI / HyperOS & AOSP (Android 14 – Android 17 ✅)
+**Variant:** MIUI / HyperOS & AOSP (Android 13 – Android 16 ✅)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
-**BPF Compatibility:** LineageOS 24 / LineageOS Base ✅ (Verified Boot on Android 17)  
 
 ---
 
-## v1.4 P5 ✅ Verified Booting on Android 17 (LineageOS 24 Base)
+## v1.4 P6
+• Gaming Performance & Frame Pacing:
+  - Forbid Unity-Based Games CPU Affinity Override: Silently ignores thread affinity manipulation from Unity engine games (e.g. Wild Rift, Genshin, MLBB), preventing games from restricting render threads to small clusters and ensuring full scheduling across Gold and Prime cores
+  - Omit Debug Names in Graphics Sync Ioctl: Eliminates string formatting overhead in `sync_file_ioctl_fence_info` (`drivers/dma-buf/sync_file.c`), cutting micro-latency on every GPU/SurfaceFlinger frame buffer sync
+• Storage & I/O Optimization:
+  - Added ADIOS (Adaptive Deadline I/O Scheduler) v3.2.0 (`CONFIG_MQ_IOSCHED_ADIOS=y`): Multi-queue I/O scheduler featuring learning-based adaptive latency control, specifically tuned for fast UFS 3.1 flash storage
+• Battery & Deep Sleep Efficiency:
+  - Reduced VM Stat Update Interval: Increased `sysctl_stat_interval` from 1s to 20s (`mm/vmstat.c`), cutting idle background wakeups during screen-off sleep
+  - Tuned Compressed Swap Readahead: Set default `page_cluster = 1` (`mm/swap.c`), eliminating wasted readahead I/O cycles on Android zRAM
+  - Optimized Alarmtimer Wakeup Safety Margin: Adjusted timeout margin to nearest timer expiration + 5ms (`kernel/time/alarmtimer.c`) instead of holding a static 2-second wake event, allowing faster deep sleep entry
+• CPU Scheduler:
+  - Skip RT Task Push Attempts: Early bailout in `push_rt_tasks()` when no pushable RT tasks are available (`kernel/sched/rt.c`), eliminating unnecessary IPI storms and bus contention across CPU clusters
+
+---
+
+## v1.4 P5
 • Resolved Sleep of Death (SoD) & Charging Black-Screen Hang:
   - Smart AC/Power Supply Aware: Prevented forced Battery Saver throttling on screen-off when plugged into charger (`power_supply_is_system_supplied() > 0`), ensuring Android idle maintenance (dexopt, fstrim) runs smoothly without starving the CPU
   - Sane Headroom & Lock Protection: Removed dynamic `setup_per_zone_wmarks()` and `ki_cpufreq_reset_idle_floors()` from rapid screen on/off workqueues to prevent memory zone lock contention and deadlocks with kswapd/zRAM
@@ -44,23 +58,20 @@
 • Live Hardware & Gaming Monitor (monitor_perf.sh) Overhaul:
   - Fixed blank RAM & zRAM metrics (`Free MB / Total MB / zRAM MB`) via atomic device helper script
   - Fixed duplicate Display FPS string formatting (`Display FPS : 42.9 FPS`)
-  - Modernized App detection via `topResumedActivity` (supports Android 14/15/16/17)
+  - Modernized App detection via `topResumedActivity` (supports Android 14/15/16)
   - SurfaceFlinger display rate synchronization (clean 60 Hz / 120 Hz)
   - Added `[r]` interactive key to reset frame/jank stats on the fly
 
 ## v1.4 P4
-• Android 17 Boot & BPF Subsystem Overhaul — **Confirmed Working** ✅:
-  - **Real-device verified:** Ki-Kernel boots cleanly and fully stable on Android 17 (LineageOS 24 base)
-  - **BPF on par with LineageOS 24:** BPF verifier, program loader, and map semantics behave identically to upstream LineageOS 4.19-based kernels
-  - Fixed fatal `reboot,bpfloader-failed` on Android 15, 16, and 17:
-    * Cherry-picked upstream LineageOS fix (`UPSTREAM: selinux: enable genfscon labeling for securityfs` with `SE_SBGENFS` in `security/selinux/hooks.c`)
-    * Enabled `CONFIG_SECURITYFS=y` in vendor & device defconfigs
+• BPF & SecurityFS Infrastructure Modernization:
+  - Enabled genfscon labeling for securityfs (`UPSTREAM: selinux: enable genfscon labeling for securityfs` with `SE_SBGENFS` in `security/selinux/hooks.c`)
+  - Enabled `CONFIG_SECURITYFS=y` in vendor & device defconfigs
   - Modernized arm64 BPF JIT & instruction set:
     * Backported BPF `JMP32` instruction set (32-bit jumps) for modern Clang `-mcpu=v3` compatibility
     * Backported 64-bit atomic operations (`BPF_ATOMIC`, atomic add, fetch_add)
     * Backported `XDP_SOCKETS` socket ops and coarse-grained ktime for Bionic bpf loader compatibility
   - Wired up `close_range()` system call (NR 436 in `fs/open.c` & `syscalls.h`) for Bionic runtime loader
-  - Purged all dirty e404 hacks & fake uname (`5.15`) — kernel cleanly identifies as native **4.19.325** to prevent BPF verifier breakage and GKI mismatch rejections
+  - Kernel cleanly identifies as native **4.19.325**
 • Native NoMount Subsystem Integration (Built-in VFS Redirection):
   - Integrated `NoMount` driver natively into kernel core (`fs/nomount/` with `CONFIG_NOMOUNT=y`)
   - Enables mountless module loading & path redirection in RAM without generating visible mounts in `/proc/mounts` or `/proc/self/mountinfo`
@@ -138,7 +149,7 @@
 ---
 
 ## v1.4 P2
-• Unified & Ported all optimizations to Astide Base (Android 14-17 AOSP & MIUI/HyperOS)
+• Unified & Ported all optimizations to Astide Base (Android 13–16 AOSP & MIUI/HyperOS)
 • Extreme Gaming Performance Mode Overhaul (WuWa / Heavy Games Edition):
   - Adreno 650 GPU floor frequency locked to 510 MHz (runs only at 510, 587, and 683 MHz OC, eliminating mid-game frame drops)
   - DDR AXI Bus locked high (`force_bus_on = 1`) to eliminate 3D texture & shader streaming hitches
