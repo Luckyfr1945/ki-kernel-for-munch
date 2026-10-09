@@ -4,7 +4,7 @@
 
 ### AnyKernel setup
 properties() { '
-kernel.string=Ki-kernel Universal SM8250 (AOSP / MIUI / HyperOS)
+kernel.string=Ki-kernel
 do.devicecheck=1
 do.modules=0
 do.systemless=1
@@ -149,7 +149,18 @@ fi;
 
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
 if [ -d /data/adb ]; then
+    mkdir -p /data/adb/service.d /data/adb/post-fs-data.d;
     rm -f /data/adb/post-fs-data.d/00_early_adb.sh;
+
+    # Early boot storage scheduler tuning (runs before zygote)
+    cat << 'EOF_MAPLE' > /data/adb/post-fs-data.d/00_maple.sh
+#!/system/bin/sh
+for q in /sys/block/sd*/queue/scheduler /sys/block/*/queue/scheduler; do
+    [ -f "$q" ] && echo maple > "$q" 2>/dev/null
+done
+EOF_MAPLE
+    chmod 755 /data/adb/post-fs-data.d/00_maple.sh
+
     cat << 'EOF' > /data/adb/service.d/00_nkm_bypass.sh
 #!/system/bin/sh
 KSUD_BIN=""
@@ -243,3 +254,4 @@ fi;
 ui_print " ";
 ui_print "- Done! Reboot to system.";
 ui_print " ";
+ui_print "- Enjoy this kernel feature.";

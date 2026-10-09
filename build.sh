@@ -323,11 +323,11 @@ cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 cd anykernel
 
 if [ "$TARGET_OS" == "aosp" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
 elif [ "$TARGET_OS" == "miui" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
 else
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
 fi
 
 zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
