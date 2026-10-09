@@ -188,6 +188,7 @@ apply_ksu_config() {
 
 echo "Cleaning build directories..."
 rm -rf out/ anykernel/
+rm -rf include/config include/generated .config 2>/dev/null || true
 rm -rf build_artifacts 2>/dev/null || true
 mkdir -p build_artifacts/aosp build_artifacts/miui
 
