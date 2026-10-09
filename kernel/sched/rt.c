@@ -2193,6 +2193,10 @@ out:
 
 static void push_rt_tasks(struct rq *rq)
 {
+	/* Skip RT push attempts if no pushable tasks exist to reduce IPI storm */
+	if (!has_pushable_tasks(rq))
+		return;
+
 	/* push_rt_task will return true if it moved an RT */
 	while (push_rt_task(rq))
 		;

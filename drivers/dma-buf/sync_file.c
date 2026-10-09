@@ -454,7 +454,8 @@ static long sync_file_ioctl_fence_info(struct sync_file *sync_file,
 	}
 
 no_fences:
-	sync_file_get_name(sync_file, info.name, sizeof(info.name));
+	/* Omit debug names in graphics sync ioctl to speed up graphics performance */
+	info.name[0] = '\0';
 	info.num_fences = num_fences;
 
 	if (copy_to_user((void __user *)arg, &info, sizeof(info)))
