@@ -1,9 +1,32 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-09  
+**Build Date:** 2026-10-10  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/Hyperos and aosp 
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+
+---
+
+## v1.4 P7
+• Display & Eye-Care (Universal DC Dimming):
+  - Fixed "Kernel Not Supported" on AOSP / Lunaris / XiaomiParts: Registered missing `/sys/class/drm/card0-DSI-1/disp_param` sysfs interface on AOSP builds, enabling native DC Dimming (Anti-flicker mode) detection in custom ROM Settings
+  - Dual-Mask Panel Compatibility: Combined `DISPPARAM_DIMMING` (0xF00) with `DISPPARAM_DC_ON` (0x40000) so both CSOT and Samsung E4 AMOLED panels activate DC Dimming seamlessly
+  - DRM IOCTL Permissive Whitelist: Integrated `drm_master_filter` in `drm_ioctl.c` allowing ROM display daemons (`displayfeature`, `displayeffect`, `disp_pcc`) to execute display configuration ioctls without `-EACCES` permission denials
+  - Dual Sysfs Nodes: Mirrored display control nodes to platform device `/sys/devices/platform/soc/soc:qcom,dsi-display-primary/` (`disp_param`, `dimming`, `dc_dimming`, `msm_fb_ea_enable`) with safe fallbacks
+
+• Storage & File System (Fsync Optimization):
+  - Universal Fsync Sysfs Toggle: Implemented `/sys/module/sync/parameters/fsync_enabled` with full `chmod 666` permissions, allowing instant on/off toggling across all kernel manager apps (NKM, Franco Kernel Manager, EXKM, SmartPack)
+  - Active Dynamic Fsync v2.0: Automatically eliminates sync writeback stalls during screen-on for zero micro-stutter in heavy games, while executing safe background flush on screen-off sleep
+
+• Performance Profile & Frame Pacing:
+  - Overhauled KI_PROFILE_PERFORMANCE: Lowered Prime hispeed frequency from 3.2GHz @ 15% load to 2.65GHz @ 65% load (scaling to 3.2GHz only under >85% extreme load), eliminating heat buildup and thermal throttling frame drops
+  - Frame-Synchronized Down-Hold: Reduced hispeed hold time from 150ms to 16–20ms, perfectly matching display frame intervals and preventing unnecessary battery drain
+  - Zero-Stutter Gaming RAM: Lowered swappiness from 150 to 60 during performance mode to prevent heavy games (MLBB, Genshin, PUBG) from stalling on zRAM compression
+  - Core Isolation Migration: Set up/down migration to 65/50 to keep gaming render threads pinned on Gold and Prime cores, isolated from background clutter
+
+• Power & Charging Safety:
+  - Safe Cold Boot Default: Defaulted `force_fast_charge` to `0` (500mA safe standard) on boot to prevent device overheating on reboot, allowing NKM to persist user preference cleanly
+  - High-Speed Fast Charge Mode: Increased level 1 fast charge current from 2A to 3A (15W @ 5V / 3,000,000 µA) when toggled ON in NKM
 
 ---
 
