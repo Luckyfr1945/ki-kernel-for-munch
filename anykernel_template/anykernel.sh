@@ -207,24 +207,15 @@ chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null
 
+# Fast charge nodes permission (allow NKM / Kernel Manager to control toggles without overriding to ON on boot)
 chmod 666 /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
-echo 1 > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
-
 chmod 666 /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
-echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
-
 chmod 666 /sys/class/power_supply/usb/pd_authentication 2>/dev/null
-echo 1 > /sys/class/power_supply/usb/pd_authentication 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
-echo 1 > /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
-echo 1 > /sys/class/power_supply/bms/authentic 2>/dev/null
 
 echo 80 > /proc/sys/vm/swappiness 2>/dev/null
 echo 80 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
