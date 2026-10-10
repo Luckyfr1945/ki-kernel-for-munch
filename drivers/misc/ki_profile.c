@@ -275,27 +275,30 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.swappiness = 80, .wmark_scale = 16, .vfs_cache_pressure = 80,
 	},
 	/*
-	 * Performance / Gaming Turbo:
-	 *  - 0us up / 150ms down hold across frame intervals (no clock bouncing)
-	 *  - Zero-lag floor: Silver 1.21G, Gold 1.61G, Prime 1.71G
-	 *  - Snap to cluster max at 15% load, RTG boost to cluster max
-	 *  - Aggressive migration 20/10 (groups 30/15), PL hints, sched_boost 1
-	 *  - WINDOW_STATS_MAX, thermal throttle bypass with auto-guard, GPU perf mode
+	 * Performance / Gaming Turbo (Optimized):
+	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (16-20ms)
+	 *    prevents clock-bouncing without wasting power during scene pauses.
+	 *  - Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate idle drain.
+	 *  - Efficient gaming hispeeds (Gold 2.15G @ 60% load, Prime 2.65G @ 65% load),
+	 *    scaling naturally to 2.42G / 3.19G (3.2GHz) on heavy sustained spikes.
+	 *  - Clean cluster separation (up_migrate 65/50) isolates game threads from background noise.
+	 *  - MAX_RECENT_AVG window stats + swappiness 60 prevents zRAM stalls & micro-stutters.
+	 *  - GPU perf mode + thermal auto-guard protection.
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ 0, 150000, 1804800, 15, 1804800, 1209600 },
-			{ 0, 150000, 2419200, 15, 2419200, 1612800 },
-			{ 0, 150000, 3187200, 15, 3187200, 1708800 },
+			{ 0, 10000, 1420800, 70, 1420800, 691200 },
+			{ 0, 16000, 2150400, 60, 2150400, 1056000 },
+			{ 0, 20000, 2649600, 65, 2649600, 1075200 },
 		},
 		.pl = true,
 		.gpu_perf = true,
 		.thermal_throttle = false,
-		.sched_boost = 1,
-		.up_migrate = 20, .down_migrate = 10,
-		.grp_up_migrate = 30, .grp_down_migrate = 15,
-		.window_stats_policy = 1,
-		.swappiness = 150, .wmark_scale = 25, .vfs_cache_pressure = 100,
+		.sched_boost = 0,
+		.up_migrate = 65, .down_migrate = 50,
+		.grp_up_migrate = 75, .grp_down_migrate = 60,
+		.window_stats_policy = 2,
+		.swappiness = 60, .wmark_scale = 16, .vfs_cache_pressure = 80,
 	},
 };
 
