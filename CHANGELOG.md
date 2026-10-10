@@ -28,6 +28,12 @@
   - Safe Cold Boot Default: Defaulted `force_fast_charge` to `0` (500mA safe standard) on boot to prevent device overheating on reboot, allowing NKM to persist user preference cleanly
   - High-Speed Fast Charge Mode: Increased level 1 fast charge current from 2A to 3A (15W @ 5V / 3,000,000 µA) when toggled ON in NKM
 
+• Linux Containers & Virtualization (Droidspaces & LXC Native Support):
+  - Full Namespace & Cgroup Isolation: Enabled `PID_NS`, `UTS_NS`, `IPC_NS`, `USER_NS`, `NET_NS`, `CGROUP_DEVICE`, and `CGROUP_PIDS`, allowing Droidspaces, LXC, and Docker to run full Linux distributions (Ubuntu, Debian, Arch, Alpine, NixOS) natively with systemd as PID 1
+  - Cgroup Prefix Compatibility: Implemented cgroup file prefix link handling in `kernel/cgroup/cgroup.c` to support systemd cgroup hierarchies inside containers
+  - NAT & Firewall Support: Enabled virtual ethernet (`veth`), network bridge (`bridge`), and full Netfilter NAT/masquerade support for isolated container networking
+  - Relaxed Paranoid Networking: Disabled `CONFIG_ANDROID_PARANOID_NETWORK` so containerized Linux environments have unrestricted socket and network access without AID restrictions
+
 ---
 
 ## v1.4 P6

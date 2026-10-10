@@ -9,7 +9,7 @@ set -e
 
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.4"
+KERNEL_VERSION="v1.4-P7"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
 
 if [ -z "$1" ]; then
@@ -186,6 +186,91 @@ apply_ksu_config() {
     fi
 }
 
+apply_droidspaces_config() {
+    echo "Enforcing Droidspaces & Containerization configs..."
+    scripts/config --file out/.config \
+        -e SYSVIPC \
+        -e POSIX_MQUEUE \
+        -e NAMESPACES \
+        -e PID_NS \
+        -e UTS_NS \
+        -e IPC_NS \
+        -e USER_NS \
+        -e SECCOMP \
+        -e SECCOMP_FILTER \
+        -e CGROUPS \
+        -e CGROUP_DEVICE \
+        -e CGROUP_SCHED \
+        -e FAIR_GROUP_SCHED \
+        -e CGROUP_FREEZER \
+        -e CGROUP_NET_PRIO \
+        -e MEMCG \
+        -e CFS_BANDWIDTH \
+        -e CGROUP_PIDS \
+        -e CGROUP_CPUACCT \
+        -e DEVTMPFS \
+        -e OVERLAY_FS \
+        -e TMPFS_POSIX_ACL \
+        -e TMPFS_XATTR \
+        -e FW_LOADER \
+        -e FW_LOADER_USER_HELPER \
+        -e NET_NS \
+        -e VETH \
+        -e BRIDGE \
+        -e NETFILTER \
+        -e BRIDGE_NETFILTER \
+        -e NETFILTER_ADVANCED \
+        -e NF_CONNTRACK \
+        -e IP_NF_IPTABLES \
+        -e IP_NF_FILTER \
+        -e NF_NAT \
+        -e NF_TABLES \
+        -e IP_NF_TARGET_MASQUERADE \
+        -e NETFILTER_XT_TARGET_MASQUERADE \
+        -e NETFILTER_XT_TARGET_TCPMSS \
+        -e NETFILTER_XT_MATCH_ADDRTYPE \
+        -e NF_CONNTRACK_NETLINK \
+        -e NF_NAT_REDIRECT \
+        -e IP_ADVANCED_ROUTER \
+        -e IP_MULTIPLE_TABLES \
+        -e NF_CONNTRACK_IPV4 \
+        -e NF_NAT_IPV4 \
+        -e IP_NF_NAT \
+        -e IPV6 \
+        -e IPV6_MULTIPLE_TABLES \
+        -e IP6_NF_IPTABLES \
+        -e IP6_NF_FILTER \
+        -e IP6_NF_MANGLE \
+        -e IP6_NF_NAT \
+        -e IP6_NF_TARGET_MASQUERADE \
+        -e NF_CONNTRACK_IPV6 \
+        -e NF_NAT_IPV6 \
+        -e NETFILTER_XT_MATCH_COMMENT \
+        -e NETFILTER_XT_MATCH_STATE \
+        -e NETFILTER_XT_MATCH_CONNTRACK \
+        -e NETFILTER_XT_MATCH_MULTIPORT \
+        -e NETFILTER_XT_MATCH_HL \
+        -e NETFILTER_XT_TARGET_REJECT \
+        -e IP_NF_TARGET_REJECT \
+        -e NETFILTER_XT_TARGET_LOG \
+        -e IP_NF_TARGET_ULOG \
+        -e NETFILTER_XT_MATCH_RECENT \
+        -e NETFILTER_XT_MATCH_LIMIT \
+        -e NETFILTER_XT_MATCH_HASHLIMIT \
+        -e NETFILTER_XT_MATCH_OWNER \
+        -e NETFILTER_XT_MATCH_PKTTYPE \
+        -e NETFILTER_XT_MATCH_MARK \
+        -e NETFILTER_XT_TARGET_MARK \
+        -e IP_SET \
+        -e IP_SET_HASH_IP \
+        -e IP_SET_HASH_NET \
+        -e NETFILTER_XT_SET \
+        -e NETFILTER_NETLINK_QUEUE \
+        -e NETFILTER_NETLINK_LOG \
+        -e NETFILTER_XT_TARGET_NFLOG \
+        -d ANDROID_PARANOID_NETWORK
+}
+
 echo "Cleaning build directories..."
 rm -rf out/ anykernel/
 rm -rf include/config include/generated .config 2>/dev/null || true
@@ -214,6 +299,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     rm -rf out/
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     apply_ksu_config
+    apply_droidspaces_config
     make $MAKE_ARGS olddefconfig
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
@@ -246,6 +332,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     rm -rf out/
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     apply_ksu_config
+    apply_droidspaces_config
 
     # Enable MIUI hardware drivers, disable obsolete/hanging daemons
     scripts/config --file out/.config \
