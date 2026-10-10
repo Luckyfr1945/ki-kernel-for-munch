@@ -253,9 +253,9 @@ static ssize_t disp_param_store(struct device *device,
 
 	/* Support simple 1 / 0 / on / off for DC dimming */
 	if (!strcmp(input_copy, "1") || !strcasecmp(input_copy, "on")) {
-		param = DISPPARAM_DIMMING;
+		param = DISPPARAM_DIMMING | DISPPARAM_DC_ON;
 	} else if (!strcmp(input_copy, "0") || !strcasecmp(input_copy, "off")) {
-		param = DISPPARAM_DIMMING_OFF;
+		param = DISPPARAM_DIMMING_OFF | DISPPARAM_DC_OFF;
 	} else {
 		ret = kstrtouint(input_copy, 16, &param);
 		if (ret) {
