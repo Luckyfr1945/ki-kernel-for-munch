@@ -146,21 +146,21 @@ int dsi_display_get_dimming(struct drm_connector *connector,
 
 	p = atomic64_read(&g_param);
 	if (!connector || !connector->encoder || !connector->encoder->bridge) {
-		*enabled = ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
-		           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
+		*enabled = ((p & 0xF00) == DISPPARAM_DIMMING) ||
+		           ((p & 0xF0000) == DISPPARAM_DC_ON);
 		return 0;
 	}
 
 	c_bridge = to_dsi_bridge(connector->encoder->bridge);
 	display = c_bridge->display;
 	if (!display || !display->panel) {
-		*enabled = ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
-		           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
+		*enabled = ((p & 0xF00) == DISPPARAM_DIMMING) ||
+		           ((p & 0xF0000) == DISPPARAM_DC_ON);
 		return 0;
 	}
 
 	*enabled = display->panel->mi_cfg.dc_enable ||
-	           ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
-	           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
+	           ((p & 0xF00) == DISPPARAM_DIMMING) ||
+	           ((p & 0xF0000) == DISPPARAM_DC_ON);
 	return 0;
 }

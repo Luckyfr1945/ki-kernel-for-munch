@@ -5178,9 +5178,45 @@ static ssize_t sysfs_dimming_write(struct device *dev,
 	return ret ? ret : count;
 }
 
+static ssize_t sysfs_hbm_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	u32 param = 0;
+
+	if (display && display->drm_conn)
+		dsi_display_get_disp_param(display->drm_conn, &param);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		((param & 0xF0000) == DISPPARAM_HBM_ON || (param & 0xF0000) == DISPPARAM_HBM_FOD_ON) ? 1 : 0);
+}
+
+static ssize_t sysfs_hbm_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	bool enable;
+	int ret = 0;
+
+	if (!display || !display->drm_conn)
+		return -EINVAL;
+
+	if (strtobool(buf, &enable) < 0) {
+		int val;
+		if (kstrtoint(buf, 0, &val))
+			return -EINVAL;
+		enable = (val != 0);
+	}
+
+	ret = dsi_display_set_disp_param(display->drm_conn, enable ? DISPPARAM_HBM_ON : DISPPARAM_HBM_OFF);
+	return ret ? ret : count;
+}
+
 static DEVICE_ATTR(disp_param, 0664, sysfs_disp_param_read, sysfs_disp_param_write);
 static DEVICE_ATTR(dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
 static DEVICE_ATTR(dc_dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
+static DEVICE_ATTR(dimlayer_exposure, 0664, sysfs_dimming_read, sysfs_dimming_write);
+static DEVICE_ATTR(hbm, 0664, sysfs_hbm_read, sysfs_hbm_write);
 static DEVICE_ATTR(msm_fb_ea_enable, 0664, sysfs_dimming_read, sysfs_dimming_write);
 
 static struct attribute *display_fs_attrs[] = {
@@ -5188,6 +5224,8 @@ static struct attribute *display_fs_attrs[] = {
 	&dev_attr_disp_param.attr,
 	&dev_attr_dimming.attr,
 	&dev_attr_dc_dimming.attr,
+	&dev_attr_dimlayer_exposure.attr,
+	&dev_attr_hbm.attr,
 	&dev_attr_msm_fb_ea_enable.attr,
 	NULL,
 };

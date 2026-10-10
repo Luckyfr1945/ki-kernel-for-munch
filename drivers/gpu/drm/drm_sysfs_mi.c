@@ -577,7 +577,8 @@ static DEVICE_ATTR_RO(dpms);
 static DEVICE_ATTR_RO(modes);
 static DEVICE_ATTR_RW(disp_param);
 static DEVICE_ATTR_RW(dimming);
-static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0644, dimming_show, dimming_store);
+static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0664, dimming_show, dimming_store);
+static struct device_attribute dev_attr_dimlayer_exposure = __ATTR(dimlayer_exposure, 0664, dimming_show, dimming_store);
 static DEVICE_ATTR_RW(mipi_reg);
 static DEVICE_ATTR_RO(oled_pmic_id);
 static DEVICE_ATTR_RO(panel_info);
@@ -600,6 +601,7 @@ static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_disp_param.attr,
 	&dev_attr_dimming.attr,
 	&dev_attr_dc_dimming.attr,
+	&dev_attr_dimlayer_exposure.attr,
 	&dev_attr_mipi_reg.attr,
 	&dev_attr_oled_pmic_id.attr,
 	&dev_attr_panel_info.attr,

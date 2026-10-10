@@ -322,7 +322,8 @@ static ssize_t dimming_show(struct device *device,
 }
 
 static DEVICE_ATTR_RW(dimming);
-static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0644, dimming_show, dimming_store);
+static struct device_attribute dev_attr_dc_dimming = __ATTR(dc_dimming, 0664, dimming_show, dimming_store);
+static struct device_attribute dev_attr_dimlayer_exposure = __ATTR(dimlayer_exposure, 0664, dimming_show, dimming_store);
 
 static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_status.attr,
@@ -332,6 +333,7 @@ static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_disp_param.attr,
 	&dev_attr_dimming.attr,
 	&dev_attr_dc_dimming.attr,
+	&dev_attr_dimlayer_exposure.attr,
 	NULL
 };
 
