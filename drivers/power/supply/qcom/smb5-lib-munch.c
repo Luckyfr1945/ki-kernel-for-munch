@@ -3663,8 +3663,6 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 		chg->force_fast_charge_ua = 500000;
 		break;
 	case 1:
-		chg->force_fast_charge_ua = 2000000;
-		break;
 	case 2:
 		chg->force_fast_charge_ua = 3000000;
 		break;
@@ -3677,7 +3675,7 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 		else if (val > 3500000)
 			chg->force_fast_charge_ua = 3500000;
 		else
-			chg->force_fast_charge_ua = 2000000;
+			chg->force_fast_charge_ua = 3000000;
 		break;
 	}
 
