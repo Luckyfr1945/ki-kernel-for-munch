@@ -234,8 +234,62 @@ static DEVICE_ATTR_RO(enabled);
 static DEVICE_ATTR_RO(dpms);
 static DEVICE_ATTR_RO(modes);
 
-int dsi_display_set_dimming(struct drm_connector *connector, bool enable);
-int dsi_display_get_dimming(struct drm_connector *connector, bool *enabled);
+#include "drm_internal_mi.h"
+
+static ssize_t disp_param_store(struct device *device,
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	char *input_copy, *input_dup = NULL;
+	u32 param;
+	int ret;
+
+	input_copy = kstrdup(buf, GFP_KERNEL);
+	if (!input_copy) {
+		DRM_ERROR("can not allocate memory\n");
+		ret = -ENOMEM;
+		goto exit;
+	}
+	input_dup = input_copy;
+	/* removes leading and trailing whitespace from input_copy */
+	input_copy = strim(input_copy);
+
+	/* Support simple 1 / 0 / on / off for DC dimming */
+	if (!strcmp(input_copy, "1") || !strcasecmp(input_copy, "on")) {
+		param = DISPPARAM_DIMMING | DISPPARAM_DC_ON;
+	} else if (!strcmp(input_copy, "0") || !strcasecmp(input_copy, "off")) {
+		param = DISPPARAM_DIMMING_OFF | DISPPARAM_DC_OFF;
+	} else {
+		ret = kstrtouint(input_copy, 16, &param);
+		if (ret) {
+			DRM_ERROR("input buffer conversion failed\n");
+			ret = -EAGAIN;
+			goto exit_free;
+		}
+	}
+
+	ret = dsi_display_set_disp_param(connector, param);
+
+exit_free:
+	kfree(input_dup);
+exit:
+	return ret ? ret : count;
+}
+
+static ssize_t disp_param_show(struct device *device,
+			   struct device_attribute *attr,
+			   char *buf)
+{
+	struct drm_connector *connector = to_drm_connector(device);
+	u32 param = 0;
+
+	dsi_display_get_disp_param(connector, &param);
+
+	return snprintf(buf, PAGE_SIZE, "0x%08X\n", param);
+}
+
+static DEVICE_ATTR_RW(disp_param);
 
 static ssize_t dimming_store(struct device *device,
 			   struct device_attribute *attr,
@@ -275,6 +329,7 @@ static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_enabled.attr,
 	&dev_attr_dpms.attr,
 	&dev_attr_modes.attr,
+	&dev_attr_disp_param.attr,
 	&dev_attr_dimming.attr,
 	&dev_attr_dc_dimming.attr,
 	NULL

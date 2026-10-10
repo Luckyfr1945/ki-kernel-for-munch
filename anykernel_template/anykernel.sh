@@ -197,12 +197,14 @@ chmod 666 /sys/kernel/ki_profile/spoof_version 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/active_profile 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
+chmod 666 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
 chmod 666 /sys/kernel/gpu/* 2>/dev/null
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null
 chmod 666 /sys/touchpanel/reversed_keys 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/dc_dimming 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/disp_param 2>/dev/null
+chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/* 2>/dev/null
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/dev/null
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null

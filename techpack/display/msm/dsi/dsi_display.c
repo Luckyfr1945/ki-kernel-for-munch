@@ -5093,8 +5093,101 @@ static DEVICE_ATTR(fod_ui, 0444,
 			sysfs_fod_ui_read,
 			NULL);
 
+int dsi_display_set_disp_param(struct drm_connector *connector, u32 param_type);
+int dsi_display_get_disp_param(struct drm_connector *connector, u32 *param_type);
+int dsi_display_set_dimming(struct drm_connector *connector, bool enable);
+int dsi_display_get_dimming(struct drm_connector *connector, bool *enabled);
+
+static ssize_t sysfs_disp_param_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	u32 param = DISPPARAM_DIMMING_OFF;
+
+	if (display && display->drm_conn)
+		dsi_display_get_disp_param(display->drm_conn, &param);
+
+	return snprintf(buf, PAGE_SIZE, "0x%08X\n", param);
+}
+
+static ssize_t sysfs_disp_param_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	char *input_copy, *input_dup = NULL;
+	u32 param;
+	int ret = 0;
+
+	if (!display || !display->drm_conn)
+		return -EINVAL;
+
+	input_copy = kstrdup(buf, GFP_KERNEL);
+	if (!input_copy)
+		return -ENOMEM;
+	input_dup = input_copy;
+	input_copy = strim(input_copy);
+
+	if (!strcmp(input_copy, "1") || !strcasecmp(input_copy, "on")) {
+		param = DISPPARAM_DIMMING | DISPPARAM_DC_ON;
+	} else if (!strcmp(input_copy, "0") || !strcasecmp(input_copy, "off")) {
+		param = DISPPARAM_DIMMING_OFF | DISPPARAM_DC_OFF;
+	} else {
+		ret = kstrtouint(input_copy, 16, &param);
+		if (ret) {
+			kfree(input_dup);
+			return -EAGAIN;
+		}
+	}
+
+	ret = dsi_display_set_disp_param(display->drm_conn, param);
+	kfree(input_dup);
+	return ret ? ret : count;
+}
+
+static ssize_t sysfs_dimming_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	bool enabled = false;
+
+	if (display && display->drm_conn)
+		dsi_display_get_dimming(display->drm_conn, &enabled);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", enabled ? 1 : 0);
+}
+
+static ssize_t sysfs_dimming_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	bool enable;
+	int ret;
+
+	if (!display || !display->drm_conn)
+		return -EINVAL;
+
+	if (strtobool(buf, &enable) < 0) {
+		int val;
+		if (kstrtoint(buf, 0, &val))
+			return -EINVAL;
+		enable = (val != 0);
+	}
+
+	ret = dsi_display_set_dimming(display->drm_conn, enable);
+	return ret ? ret : count;
+}
+
+static DEVICE_ATTR(disp_param, 0664, sysfs_disp_param_read, sysfs_disp_param_write);
+static DEVICE_ATTR(dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
+static DEVICE_ATTR(dc_dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
+static DEVICE_ATTR(msm_fb_ea_enable, 0664, sysfs_dimming_read, sysfs_dimming_write);
+
 static struct attribute *display_fs_attrs[] = {
 	&dev_attr_fod_ui.attr,
+	&dev_attr_disp_param.attr,
+	&dev_attr_dimming.attr,
+	&dev_attr_dc_dimming.attr,
+	&dev_attr_msm_fb_ea_enable.attr,
 	NULL,
 };
 

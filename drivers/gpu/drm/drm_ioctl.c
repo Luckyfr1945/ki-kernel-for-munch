@@ -526,6 +526,28 @@ int drm_version(struct drm_device *dev, void *data,
  * Returns:
  * Zero if allowed, -EACCES otherwise.
  */
+static const char *drm_master_whitelist[] = {
+	"displayfeature",
+	"DisplayFeature",
+	"disp_pcc",
+	"displayeffect",
+	"factoryreset",
+	"recovery",
+	NULL
+};
+
+static bool drm_master_filter(char *task_name)
+{
+	unsigned int i = 0;
+
+	for (i = 0; drm_master_whitelist[i] != NULL; i++) {
+		if (!strncmp(task_name, drm_master_whitelist[i], strlen(drm_master_whitelist[i])))
+			return true;
+	}
+
+	return false;
+}
+
 int drm_ioctl_permit(u32 flags, struct drm_file *file_priv)
 {
 	/* ROOT_ONLY is only for CAP_SYS_ADMIN */
@@ -539,8 +561,10 @@ int drm_ioctl_permit(u32 flags, struct drm_file *file_priv)
 
 	/* MASTER is only for master or control clients */
 	if (unlikely((flags & DRM_MASTER) &&
-		     !drm_is_current_master(file_priv)))
-		return -EACCES;
+		     !drm_is_current_master(file_priv))) {
+		if (!drm_master_filter(current->comm))
+			return -EACCES;
+	}
 
 	/* Render clients must be explicitly allowed */
 	if (unlikely(!(flags & DRM_RENDER_ALLOW) &&

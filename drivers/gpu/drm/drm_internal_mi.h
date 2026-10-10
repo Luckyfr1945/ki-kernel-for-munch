@@ -19,6 +19,8 @@
 #ifndef DISPPARAM_DIMMING
 #define DISPPARAM_DIMMING_OFF 0xE00
 #define DISPPARAM_DIMMING     0xF00
+#define DISPPARAM_DC_ON       0x40000
+#define DISPPARAM_DC_OFF      0x50000
 #endif
 
 /* dsi_display_mi.c */

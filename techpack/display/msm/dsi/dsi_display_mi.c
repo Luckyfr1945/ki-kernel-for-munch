@@ -37,7 +37,7 @@
 
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 
-static atomic64_t g_param = ATOMIC64_INIT(0);
+static atomic64_t g_param = ATOMIC64_INIT(DISPPARAM_DIMMING_OFF);
 
 int dsi_display_set_disp_param(struct drm_connector *connector,
 			u32 param_type)
@@ -120,7 +120,18 @@ int dsi_display_set_dimming(struct drm_connector *connector,
 		bool enable)
 {
 	return dsi_display_set_disp_param(connector,
-			enable ? DISPPARAM_DIMMING : DISPPARAM_DIMMING_OFF);
+			enable ? (DISPPARAM_DIMMING | DISPPARAM_DC_ON)
+			       : (DISPPARAM_DIMMING_OFF | DISPPARAM_DC_OFF));
+}
+
+int dsi_display_get_disp_param(struct drm_connector *connector,
+			u32 *param_type)
+{
+	if (!param_type)
+		return -EINVAL;
+
+	*param_type = (u32)atomic64_read(&g_param);
+	return 0;
 }
 
 int dsi_display_get_dimming(struct drm_connector *connector,
@@ -128,19 +139,28 @@ int dsi_display_get_dimming(struct drm_connector *connector,
 {
 	struct dsi_display *display = NULL;
 	struct dsi_bridge *c_bridge = NULL;
+	u64 p;
 
-	if (!connector || !connector->encoder || !connector->encoder->bridge) {
-		pr_err("Invalid connector/encoder/bridge ptr\n");
+	if (!enabled)
 		return -EINVAL;
+
+	p = atomic64_read(&g_param);
+	if (!connector || !connector->encoder || !connector->encoder->bridge) {
+		*enabled = ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
+		           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
+		return 0;
 	}
 
 	c_bridge = to_dsi_bridge(connector->encoder->bridge);
 	display = c_bridge->display;
 	if (!display || !display->panel) {
-		pr_err("Invalid display/panel ptr\n");
-		return -EINVAL;
+		*enabled = ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
+		           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
+		return 0;
 	}
 
-	*enabled = display->panel->mi_cfg.dc_enable;
+	*enabled = display->panel->mi_cfg.dc_enable ||
+	           ((p & DISPPARAM_DIMMING) == DISPPARAM_DIMMING) ||
+	           ((p & DISPPARAM_DC_ON) == DISPPARAM_DC_ON);
 	return 0;
 }

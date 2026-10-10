@@ -17,7 +17,12 @@
 #include <linux/quotaops.h>
 #include <linux/backing-dev.h>
 #include <linux/dyn_fsync.h>
+#include <linux/moduleparam.h>
 #include "internal.h"
+
+static bool fsync_enabled = true;
+module_param(fsync_enabled, bool, 0664);
+MODULE_PARM_DESC(fsync_enabled, "Enable or disable fsync syscalls");
 
 #define VALID_FLAGS (SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE| \
 			SYNC_FILE_RANGE_WAIT_AFTER)
@@ -193,6 +198,9 @@ SYSCALL_DEFINE1(syncfs, int, fd)
 int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct inode *inode = file->f_mapping->host;
+
+	if (unlikely(!fsync_enabled))
+		return 0;
 
 	if (dyn_fsync_should_skip())
 		return 0;
