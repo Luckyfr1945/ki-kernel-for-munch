@@ -2832,7 +2832,6 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 	if (write && !err && left)
 		proc_skip_spaces(&p, &left);
 	if (write) {
-		kfree(kbuf);
 		if (first)
 			return err ? : -EINVAL;
 	}
@@ -2875,11 +2874,7 @@ static int do_proc_douintvec_w(unsigned int *tbl_data,
 	if (left > PAGE_SIZE - 1)
 		left = PAGE_SIZE - 1;
 
-	p = kbuf = memdup_user_nul(buffer, left);
-	if (IS_ERR(kbuf))
-		return -EINVAL;
-
-	proc_skip_spaces(&p, &left);
+	left -= proc_skip_spaces(&p);
 	if (!left) {
 		err = -EINVAL;
 		goto out_free;
@@ -2888,7 +2883,10 @@ static int do_proc_douintvec_w(unsigned int *tbl_data,
 	err = proc_get_long(&p, &left, &lval, &neg,
 			     proc_wspace_sep,
 			     sizeof(proc_wspace_sep), NULL);
-	if (err || neg) {
+	if (err)
+		goto out_free;
+
+	if (neg) {
 		err = -EINVAL;
 		goto out_free;
 	}
@@ -2899,7 +2897,7 @@ static int do_proc_douintvec_w(unsigned int *tbl_data,
 	}
 
 	if (!err && left)
-		proc_skip_spaces(&p, &left);
+		left -= proc_skip_spaces(&p);
 
 out_free:
 	if (err)
@@ -3360,7 +3358,6 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int 
 	if (write && !err)
 		proc_skip_spaces(&p, &left);
 	if (write) {
-		kfree(kbuf);
 		if (first)
 			return err ? : -EINVAL;
 	}
