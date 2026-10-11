@@ -2797,6 +2797,9 @@ static int selinux_sb_remount(struct super_block *sb,
 	if (!(sbsec->flags & SE_SBINITIALIZED))
 		return 0;
 
+	if (!opts)
+		return 0;
+
 	mount_options = opts->mnt_opts;
 	flags = opts->mnt_opts_flags;
 
