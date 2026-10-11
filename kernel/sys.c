@@ -1265,12 +1265,16 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	if (static_branch_likely(&susfs_is_uname_spoof_buffer_set))
 		susfs_spoof_uname(&tmp);
 #endif
-	if (cur_uid == 0 &&
-		(!strncmp(current->comm, "bpfloader", 9) ||
-		!strncmp(current->comm, "netbpfload", 10) ||
-		!strncmp(current->comm, "uprobestats", 11) ||
-		!strncmp(current->comm, "netd", 4))) {
+	if (!strncasecmp(current->comm, "bpfloader", 9) ||
+		!strncasecmp(current->comm, "netbpfload", 10) ||
+		!strncasecmp(current->comm, "uprobestats", 11) ||
+		!strncasecmp(current->comm, "netd", 4)) {
 		strcpy(tmp.release, "5.15.404");
+		pr_info("fake uname: %s/%d release=%s\n",
+			 current->comm, current->pid, tmp.release);
+	} else if (cur_uid >= 1000 ||
+		!strcmp(current->comm, "main")) {
+		strlcpy(tmp.release, "5.10.404R", sizeof(tmp.release));
 	}
 	up_read(&uts_sem);
 #ifdef CONFIG_SPOOF_KERNEL_VERSION
