@@ -104,6 +104,9 @@
 #define A64_STADD(sf, Rn, Rs) \
 	aarch64_insn_gen_stadd(Rn, Rs, A64_SIZE(sf))
 
+/* dmb ish (data memory barrier, inner shareable) */
+#define A64_DMB_ISH	0xD5033BBF
+
 /* Add/subtract (immediate) */
 #define A64_ADDSUB_IMM(sf, Rd, Rn, imm12, type) \
 	aarch64_insn_gen_add_sub_imm(Rd, Rn, imm12, \
@@ -182,6 +185,9 @@
 /* Rd = Ra + Rn * Rm */
 #define A64_MADD(sf, Rd, Ra, Rn, Rm) aarch64_insn_gen_data3(Rd, Ra, Rn, Rm, \
 	A64_VARIANT(sf), AARCH64_INSN_DATA3_MADD)
+/* Rd = Ra - Rn * Rm */
+#define A64_MSUB(sf, Rd, Ra, Rn, Rm) aarch64_insn_gen_data3(Rd, Ra, Rn, Rm, \
+	A64_VARIANT(sf), AARCH64_INSN_DATA3_MSUB)
 /* Rd = Rn * Rm */
 #define A64_MUL(sf, Rd, Rn, Rm) A64_MADD(sf, Rd, A64_ZR, Rn, Rm)
 

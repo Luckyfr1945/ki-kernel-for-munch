@@ -1341,8 +1341,8 @@ EXPORT_SYMBOL_GPL(__bpf_call_base);
 	INSN_3(STX, MEM,  H),			\
 	INSN_3(STX, MEM,  W),			\
 	INSN_3(STX, MEM,  DW),			\
-	INSN_3(STX, XADD, W),			\
-	INSN_3(STX, XADD, DW),			\
+	INSN_3(STX, ATOMIC, W),		\
+	INSN_3(STX, ATOMIC, DW),	\
 	/*   Immediate based. */		\
 	INSN_3(ST, MEM, B),			\
 	INSN_3(ST, MEM, H),			\
@@ -1684,13 +1684,41 @@ out:
 	LDST(DW, u64)
 #undef LDST
 
-	STX_XADD_W: /* lock xadd *(u32 *)(dst_reg + off16) += src_reg */
-		atomic_add((u32) SRC, (atomic_t *)(unsigned long)
-			   (DST + insn->off));
-		CONT;
-	STX_XADD_DW: /* lock xadd *(u64 *)(dst_reg + off16) += src_reg */
-		atomic64_add((u64) SRC, (atomic64_t *)(unsigned long)
-			     (DST + insn->off));
+#define ATOMIC_ALU_OP(BOP, KOP)								case BOP:									if (BPF_SIZE(insn->code) == BPF_W)						atomic_##KOP((u32) SRC, (atomic_t *)(unsigned long) 					     (DST + insn->off));				else										atomic64_##KOP((u64) SRC, (atomic64_t *)(unsigned long) 					       (DST + insn->off));				break;								case BOP | BPF_FETCH:								if (BPF_SIZE(insn->code) == BPF_W)						SRC = (u32) atomic_fetch_##KOP(							(u32) SRC,								(atomic_t *)(unsigned long) (DST + insn->off)); 			else										SRC = (u64) atomic64_fetch_##KOP(						(u64) SRC,								(atomic64_t *)(unsigned long) (DST + insn->off)); 			break;
+
+	STX_ATOMIC_DW:
+	STX_ATOMIC_W:
+		switch (IMM) {
+		ATOMIC_ALU_OP(BPF_ADD, add)
+		ATOMIC_ALU_OP(BPF_AND, and)
+		ATOMIC_ALU_OP(BPF_OR, or)
+		ATOMIC_ALU_OP(BPF_XOR, xor)
+#undef ATOMIC_ALU_OP
+
+		case BPF_XCHG:
+			if (BPF_SIZE(insn->code) == BPF_W)
+				SRC = (u32) atomic_xchg(
+					(atomic_t *)(unsigned long) (DST + insn->off),
+					(u32) SRC);
+			else
+				SRC = (u64) atomic64_xchg(
+					(atomic64_t *)(unsigned long) (DST + insn->off),
+					(u64) SRC);
+			break;
+		case BPF_CMPXCHG:
+			if (BPF_SIZE(insn->code) == BPF_W)
+				BPF_R0 = (u32) atomic_cmpxchg(
+					(atomic_t *)(unsigned long) (DST + insn->off),
+					(u32) BPF_R0, (u32) SRC);
+			else
+				BPF_R0 = (u64) atomic64_cmpxchg(
+					(atomic64_t *)(unsigned long) (DST + insn->off),
+					(u64) BPF_R0, (u64) SRC);
+			break;
+
+		default:
+			goto default_label;
+		}
 		CONT;
 
 	default_label:
@@ -2292,9 +2320,23 @@ const struct bpf_func_proto bpf_get_ns_current_pid_tgid_proto __weak;
 const struct bpf_func_proto bpf_snprintf_btf_proto __weak;
 const struct bpf_func_proto bpf_seq_printf_btf_proto __weak;
 
+BPF_CALL_5(bpf_trace_printk_dummy, char *, fmt, u32, fmt_size, u64, arg1,
+	   u64, arg2, u64, arg3)
+{
+	return 0;
+}
+
+static const struct bpf_func_proto bpf_trace_printk_dummy_proto = {
+	.func		= bpf_trace_printk_dummy,
+	.gpl_only	= true,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_MEM,
+	.arg2_type	= ARG_CONST_SIZE,
+};
+
 const struct bpf_func_proto * __weak bpf_get_trace_printk_proto(void)
 {
-	return NULL;
+	return &bpf_trace_printk_dummy_proto;
 }
 
 u64 __weak
