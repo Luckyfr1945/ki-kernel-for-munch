@@ -1758,6 +1758,7 @@ void sk_common_release(struct sock *sk);
  */
 
 /* Initialise core socket variables */
+void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid);
 void sock_init_data(struct socket *sock, struct sock *sk);
 
 /*

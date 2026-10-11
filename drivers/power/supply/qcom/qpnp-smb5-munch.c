@@ -3449,8 +3449,8 @@ static ssize_t bypass_proc_read(struct file *file, char __user *buf,
 	int len;
 	bool active = false;
 
-	if (g_smb_chg)
-		active = g_smb_chg->bypass_active;
+	if (__smbchg)
+		active = __smbchg->bypass_active;
 
 	len = snprintf(kbuf, sizeof(kbuf), "%d\n", active ? 1 : 0);
 	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
@@ -3463,7 +3463,7 @@ static ssize_t bypass_proc_write(struct file *file, const char __user *buf,
 	size_t copy_len = min(count, sizeof(kbuf) - 1);
 	int val, rc;
 
-	if (!g_smb_chg)
+	if (!__smbchg)
 		return -ENODEV;
 
 	if (copy_from_user(kbuf, buf, copy_len))
@@ -3473,7 +3473,7 @@ static ssize_t bypass_proc_write(struct file *file, const char __user *buf,
 	if (kstrtoint(strim(kbuf), 10, &val))
 		return -EINVAL;
 
-	rc = smblib_set_bypass(g_smb_chg, !!val);
+	rc = smblib_set_bypass(__smbchg, !!val);
 	if (rc < 0)
 		return rc;
 
