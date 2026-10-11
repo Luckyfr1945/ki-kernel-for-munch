@@ -21,6 +21,7 @@
 #include <linux/pmic-voter.h>
 #include <linux/usb/typec.h>
 #include <linux/kobject.h>
+#include <linux/proc_fs.h>
 #include <drm/drm_notifier_mi.h>
 #include "smb5-reg.h"
 #include "smb5-lib-munch.h"
@@ -3422,16 +3423,9 @@ static ssize_t bypass_charging_store(struct device *dev,
 	struct power_supply *psy = to_power_supply(dev);
 	struct smb_charger *chg = power_supply_get_drvdata(psy);
 	int val, rc;
-	uid_t uid = from_kuid(&init_user_ns, current_uid());
 
 	if (!chg)
 		return -ENODEV;
-
-	if (uid != 0) {
-		pr_warn_ratelimited("SMB5: non-root access denied for bypass_charging (uid=%u comm=%s)\n",
-			uid, current->comm);
-		return -EPERM;
-	}
 
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
@@ -3443,6 +3437,55 @@ static ssize_t bypass_charging_store(struct device *dev,
 	return count;
 }
 static DEVICE_ATTR_RW(bypass_charging);
+
+/*
+ * Non-root userspace control interface via /proc/bypass_charging
+ * Allows Termux, Tasker, shell scripts, and unprivileged apps to toggle bypass mode.
+ */
+static ssize_t bypass_proc_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[8];
+	int len;
+	bool active = false;
+
+	if (g_smb_chg)
+		active = g_smb_chg->bypass_active;
+
+	len = snprintf(kbuf, sizeof(kbuf), "%d\n", active ? 1 : 0);
+	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
+}
+
+static ssize_t bypass_proc_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[16];
+	size_t copy_len = min(count, sizeof(kbuf) - 1);
+	int val, rc;
+
+	if (!g_smb_chg)
+		return -ENODEV;
+
+	if (copy_from_user(kbuf, buf, copy_len))
+		return -EFAULT;
+	kbuf[copy_len] = '\0';
+
+	if (kstrtoint(strim(kbuf), 10, &val))
+		return -EINVAL;
+
+	rc = smblib_set_bypass(g_smb_chg, !!val);
+	if (rc < 0)
+		return rc;
+
+	return count;
+}
+
+static const struct file_operations bypass_proc_fops = {
+	.owner = THIS_MODULE,
+	.read = bypass_proc_read,
+	.write = bypass_proc_write,
+	.llseek = default_llseek,
+};
 
 #define KI_CHARGING_LIMIT_VOTER "KI_CHARGING_LIMIT_VOTER"
 
@@ -3678,6 +3721,8 @@ static int smb5_init_batt_psy(struct smb5 *chip)
 	}
 
 	g_smb_chg = chg;
+
+	proc_create("bypass_charging", 0666, NULL, &bypass_proc_fops);
 
 	chg->screen_nb.notifier_call = smblib_screen_notifier_cb;
 	rc = mi_drm_register_client(&chg->screen_nb);

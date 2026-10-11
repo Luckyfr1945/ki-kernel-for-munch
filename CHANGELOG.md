@@ -1,9 +1,20 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-10  
+**Build Date:** 2026-10-11  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/Hyperos and aosp 
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+
+---
+
+## v1.4 P8
+• Non-Root & Unprivileged Userspace Control (Bypass Charging):
+  - Dedicated `/proc/bypass_charging` Interface: Created a new procfs node allowing non-root users, Termux, Tasker, and unprivileged apps to toggle bypass mode directly (`echo 1 > /proc/bypass_charging`) and query state (`cat /proc/bypass_charging`)
+  - SELinux Inode Exemption (`S_PRIVATE`): Tagged the proc inode with `S_PRIVATE` and `0666` permissions in `fs/proc/inode.c`, ensuring Android SELinux completely ignores access checks and never blocks untrusted apps (`untrusted_app`) from toggling bypass charging
+  - Relaxed Sysfs Root Restriction: Removed restrictive `uid != 0` check in `/sys/class/power_supply/battery/bypass_charging`, enabling ADB Shell (UID 2000) and userspace utilities to control charging bypass without `-EPERM` denials
+• Display Subsystem Refinements:
+  - Added `dimlayer_exposure` and `hbm` sysfs nodes for complete AOSP / MIUI DC dimming detection
+  - Aligned dual-mask DC dimming values in `drm_sysfs_mi.c` for MIUI
 
 ---
 
