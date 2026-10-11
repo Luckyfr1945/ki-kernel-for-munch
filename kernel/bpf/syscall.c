@@ -1024,7 +1024,6 @@ static int map_lookup_elem(union bpf_attr *attr)
 	int ufd = attr->map_fd;
 	struct bpf_map *map;
         void *key, *value;
-	char value_onstack[32];
 	u32 value_size;
 	struct fd f;
 	int err;
