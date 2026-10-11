@@ -966,13 +966,24 @@ void emergency_remount(void)
 
 static void do_thaw_all_callback(struct super_block *sb)
 {
+	bool active = false;
+
 	down_write(&sb->s_umount);
-	if (sb->s_root && sb->s_flags & SB_BORN) {
-		emergency_thaw_bdev(sb);
+	if (sb->s_root && sb->s_flags & SB_BORN)
+		active = atomic_inc_not_zero(&sb->s_active);
+	up_write(&sb->s_umount);
+	if (!active)
+		return;
+
+	/* thaw_bdev() acquires s_umount so it must not be held here */
+	emergency_thaw_bdev(sb);
+
+	down_write(&sb->s_umount);
+	if (sb->s_root && sb->s_flags & SB_BORN)
 		thaw_super_locked(sb);
-	} else {
+	else
 		up_write(&sb->s_umount);
-	}
+	deactivate_super(sb);
 }
 
 static void do_thaw_all(struct work_struct *work)
@@ -1262,17 +1273,15 @@ mount_fs(struct file_system_type *type, int flags, const char *name, struct vfsm
 {
 	struct dentry *root;
 	struct super_block *sb;
-	char *secdata = NULL;
 	int error = -ENOMEM;
+	struct security_mnt_opts opts;
+
+	security_init_mnt_opts(&opts);
 
 	if (data && !(type->fs_flags & FS_BINARY_MOUNTDATA)) {
-		secdata = alloc_secdata();
-		if (!secdata)
-			goto out;
-
-		error = security_sb_copy_data(data, secdata);
+		error = security_sb_eat_lsm_opts(data, &opts);
 		if (error)
-			goto out_free_secdata;
+			return ERR_PTR(error);
 	}
 
 	if (type->mount2)
@@ -1296,7 +1305,7 @@ mount_fs(struct file_system_type *type, int flags, const char *name, struct vfsm
 	smp_wmb();
 	sb->s_flags |= SB_BORN;
 
-	error = security_sb_kern_mount(sb, flags, secdata);
+	error = security_sb_kern_mount(sb, flags, &opts);
 	if (error)
 		goto out_sb;
 
@@ -1310,14 +1319,13 @@ mount_fs(struct file_system_type *type, int flags, const char *name, struct vfsm
 		"negative value (%lld)\n", type->name, sb->s_maxbytes);
 
 	up_write(&sb->s_umount);
-	free_secdata(secdata);
+	security_free_mnt_opts(&opts);
 	return root;
 out_sb:
 	dput(root);
 	deactivate_locked_super(sb);
 out_free_secdata:
-	free_secdata(secdata);
-out:
+	security_free_mnt_opts(&opts);
 	return ERR_PTR(error);
 }
 
