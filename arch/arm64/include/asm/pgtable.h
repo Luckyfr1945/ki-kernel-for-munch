@@ -788,6 +788,7 @@ extern pgd_t tramp_pg_dir[PTRS_PER_PGD];
 
 extern int kern_addr_valid(unsigned long addr);
 
+#include <asm/cpufeature.h>
 #define arch_has_hw_pte_young	cpu_has_hw_af
 
 #include <asm-generic/pgtable.h>
