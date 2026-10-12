@@ -446,7 +446,10 @@ int kgsl_devfreq_get_cur_freq(struct device *dev, unsigned long *freq)
 		return -EINVAL;
 
 	mutex_lock(&device->mutex);
-	*freq = kgsl_pwrctrl_active_freq(&device->pwrctrl);
+	if (device->state != KGSL_STATE_ACTIVE)
+		*freq = 0;
+	else
+		*freq = kgsl_pwrctrl_active_freq(&device->pwrctrl);
 	mutex_unlock(&device->mutex);
 
 	return 0;

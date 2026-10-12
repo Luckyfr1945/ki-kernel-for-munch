@@ -12835,8 +12835,8 @@ int smblib_init(struct smb_charger *chg)
 	chg->screen_is_on = true;
 	chg->screen_on_fast_charge = 1;
 	chg->raw_system_temp_level = 0;
-	chg->force_fast_charge = 0;
-	chg->force_fast_charge_ua = 500000;
+	chg->force_fast_charge = 1;
+	chg->force_fast_charge_ua = 3000000;
 	chg->pd_verifed = true;
 #if (!defined CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH) && (!defined CONFIG_DUAL_FUEL_GAUGE_BQ27Z561)
 	chg->esr_work_status = ESR_CHECK_FCC_NOLIMIT;

@@ -378,8 +378,10 @@ static int input_get_disposition(struct input_dev *dev,
 	return disposition;
 }
 
-#ifdef CONFIG_KSU
+#ifdef CONFIG_KSU_SUSFS
 extern struct static_key_true ksu_is_input_hook_enabled;
+extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
 extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
 #endif
 
@@ -390,6 +392,8 @@ static void input_handle_event(struct input_dev *dev,
 #ifdef CONFIG_KSU_SUSFS
 	if (static_branch_unlikely(&ksu_is_input_hook_enabled))
 		ksu_handle_input_handle_event(&type, &code, &value);
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
+	ksu_handle_input_handle_event(&type, &code, &value);
 #endif
 
 

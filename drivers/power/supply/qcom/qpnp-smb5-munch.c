@@ -3487,6 +3487,64 @@ static const struct file_operations bypass_proc_fops = {
 	.llseek = default_llseek,
 };
 
+/*
+ * Non-root userspace control interface via /proc/fast_charge
+ * Allows Termux, Tasker, shell scripts, and unprivileged apps to toggle fast charge mode.
+ */
+static ssize_t fast_charge_proc_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[16];
+	int len;
+	int val = 0;
+
+	if (*ppos != 0)
+		return 0;
+
+	if (__smbchg)
+		val = smblib_get_force_fast_charge(__smbchg);
+
+	len = scnprintf(kbuf, sizeof(kbuf), "%d\n", val);
+	if (copy_to_user(buf, kbuf, len))
+		return -EFAULT;
+
+	*ppos += len;
+	return len;
+}
+
+static ssize_t fast_charge_proc_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[16];
+	int val, rc;
+
+	if (count >= sizeof(kbuf))
+		return -EINVAL;
+
+	if (copy_from_user(kbuf, buf, count))
+		return -EFAULT;
+
+	kbuf[count] = '\0';
+	if (kstrtoint(strim(kbuf), 10, &val))
+		return -EINVAL;
+
+	if (!__smbchg)
+		return -ENODEV;
+
+	rc = smblib_set_force_fast_charge(__smbchg, val);
+	if (rc < 0)
+		return rc;
+
+	return count;
+}
+
+static const struct file_operations fast_charge_proc_fops = {
+	.owner = THIS_MODULE,
+	.read = fast_charge_proc_read,
+	.write = fast_charge_proc_write,
+	.llseek = default_llseek,
+};
+
 #define KI_CHARGING_LIMIT_VOTER "KI_CHARGING_LIMIT_VOTER"
 
 static ssize_t battery_health_show(struct device *dev,
@@ -3723,6 +3781,7 @@ static int smb5_init_batt_psy(struct smb5 *chip)
 	g_smb_chg = chg;
 
 	proc_create("bypass_charging", 0666, NULL, &bypass_proc_fops);
+	proc_create("fast_charge", 0666, NULL, &fast_charge_proc_fops);
 
 	chg->screen_nb.notifier_call = smblib_screen_notifier_cb;
 	rc = mi_drm_register_client(&chg->screen_nb);

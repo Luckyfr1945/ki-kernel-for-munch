@@ -22,6 +22,8 @@
 #include <linux/power_supply.h>
 #include <linux/notifier.h>
 #include <drm/drm_notifier_mi.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
 #include <linux/ki_profile.h>
 
 /* Profile chosen by the user (sysfs "mode") */
@@ -536,6 +538,76 @@ static struct kobj_attribute thermal_throttle_attr = __ATTR_RO(thermal_throttle)
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 
+/*
+ * Non-root userspace control interface via /proc/ki_profile
+ * Allows Termux, Tasker, shell scripts, and unprivileged apps to switch profiles.
+ */
+static ssize_t ki_profile_proc_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[32];
+	int len;
+	int mode = READ_ONCE(current_profile_mode);
+	const char *name = "unknown";
+
+	if (*ppos != 0)
+		return 0;
+
+	if (mode >= 0 && mode < KI_PROFILE_MAX)
+		name = profile_names[mode];
+
+	len = scnprintf(kbuf, sizeof(kbuf), "%d (%s)\n", mode, name);
+	if (copy_to_user(buf, kbuf, len))
+		return -EFAULT;
+
+	*ppos += len;
+	return len;
+}
+
+static ssize_t ki_profile_proc_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[32];
+	int val = -1;
+	char *trimmed;
+
+	if (count == 0 || count >= sizeof(kbuf))
+		return -EINVAL;
+
+	if (copy_from_user(kbuf, buf, count))
+		return -EFAULT;
+
+	kbuf[count] = '\0';
+	trimmed = strim(kbuf);
+
+	if (!strcmp(trimmed, "0") || !strcasecmp(trimmed, "battery"))
+		val = KI_PROFILE_BATTERY;
+	else if (!strcmp(trimmed, "1") || !strcasecmp(trimmed, "balanced"))
+		val = KI_PROFILE_BALANCED;
+	else if (!strcmp(trimmed, "2") || !strcasecmp(trimmed, "performance"))
+		val = KI_PROFILE_PERFORMANCE;
+	else if (!kstrtoint(trimmed, 10, &val)) {
+		if (val < 0 || val >= KI_PROFILE_MAX)
+			return -EINVAL;
+	} else {
+		return -EINVAL;
+	}
+
+	mutex_lock(&ki_profile_mutex);
+	WRITE_ONCE(current_profile_mode, val);
+	ki_apply_effective(true);
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
+}
+
+static const struct file_operations ki_profile_proc_fops = {
+	.owner = THIS_MODULE,
+	.read = ki_profile_proc_read,
+	.write = ki_profile_proc_write,
+	.llseek = default_llseek,
+};
+
 static struct attribute *ki_profile_attrs[] = {
 	&mode_attr.attr,
 	&current_profile_attr.attr,
@@ -604,6 +676,9 @@ static int __init ki_profile_init(void)
 		kobject_put(ki_profile_kobj);
 		return rc;
 	}
+
+	/* Non-root unprivileged interface */
+	proc_create("ki_profile", 0666, NULL, &ki_profile_proc_fops);
 
 	/* 3. Apply default profile */
 	mutex_lock(&ki_profile_mutex);

@@ -1274,7 +1274,7 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 			 current->comm, current->pid, tmp.release);
 	} else if (cur_uid >= 1000 ||
 		!strcmp(current->comm, "main")) {
-		strlcpy(tmp.release, "5.10.404R", sizeof(tmp.release));
+		strlcpy(tmp.release, "5.10.325-ki-kernel+", sizeof(tmp.release));
 	}
 	up_read(&uts_sem);
 #ifdef CONFIG_SPOOF_KERNEL_VERSION

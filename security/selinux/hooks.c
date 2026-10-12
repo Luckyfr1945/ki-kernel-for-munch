@@ -2033,6 +2033,8 @@ static int superblock_has_perm(const struct cred *cred,
 	u32 sid = cred_sid(cred);
 
 	sbsec = sb->s_security;
+	if (!sbsec)
+		return 0;
 	return avc_has_perm(&selinux_state,
 			    sid, sbsec->sid, SECCLASS_FILESYSTEM, perms, ad);
 }
@@ -2794,7 +2796,7 @@ static int selinux_sb_remount(struct super_block *sb,
 	char **mount_options;
 	struct superblock_security_struct *sbsec = sb->s_security;
 
-	if (!(sbsec->flags & SE_SBINITIALIZED))
+	if (!sbsec || !(sbsec->flags & SE_SBINITIALIZED))
 		return 0;
 
 	if (!opts)

@@ -1,9 +1,43 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-11  
+**Build Date:** 2026-10-12  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI/Hyperos and aosp 
+**Variant:** MIUI/HyperOS and AOSP  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+
+---
+
+## v1.4 (Official Release - The Android 17 & Gaming Update)
+• Android 16 & Android 17 (Vanilla Ice Cream / Baklava) Full eBPF Stack:
+  - Massive eBPF Core Backport: Backported upstream ~70k lines of modern Linux 5.10 eBPF architecture into Linux 4.19, providing native support for modern Android 16 & 17 network and security subsystems
+  - Modern BPF Primitives: Added BPF atomic operations (`BPF_ATOMIC`, `BPF_FETCH`), BPF iterators, bind hooks, task local storage, ring buffer, sock_ops, and task work callbacks
+  - Fixed NetBpfLoad Loop & Boot Crashes: Completely eliminated NetBpfLoad / bpfloader bootloops on Android 16/17 (HyperOS 4 / AOSP) with proper map-in-map and RCU trace fallbacks
+  - Intelligent Dynamic Uname Spoofing: Dynamically returns Linux `5.15` to system BPF loaders (`bpfloader`, `netd`, `system_server`) while cleanly reporting custom release (`5.10.325-ki-kernel+`) to user applications
+
+• Adreno 650 GPU 0 MHz Idle Mode & Frequency Scaling:
+  - Real-Time Hardware Idle Reflection: Implemented dynamic state verification (`device->state != KGSL_STATE_ACTIVE`) in `gpuclk_show` (`/sys/class/kgsl/kgsl-3d0/gpuclk`) and `kgsl_devfreq_get_cur_freq` (`/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq`)
+  - Accurate 0 MHz Display: Real-time monitors (Scene, DevCheck, FKM) now accurately report 0 MHz when the GPU enters hardware power-collapse (slumber/sleep) during idle or stationary frames
+  - Retained Extreme UV + OC Performance Profile: Fully preserves the custom 150 MHz – 683 MHz GPU OPP frequency table and undervolt stepping when rendering active workloads
+
+• Turbo Fast Charge & Thermal Relaxation:
+  - Default Force Fast Charge: Initialized `force_fast_charge = 1` and `force_fast_charge_ua = 3000000` (3.0A) on boot, unlocking high-speed charging even on non-OEM chargers and standard USB ports
+  - Screen-On Fast Charge Unthrottled: Bypasses aggressive Xiaomi thermal throttling that reduces charging speed to 10W-15W when screen is awake. Maintains full 67W / PPS turbo speeds while gaming or using the phone up to 45°C–49°C hardware safety limits
+
+• Non-Root Userspace Control Suite (/proc Interface with SELinux Exemption):
+  - Dedicated `/proc/ki_profile` Interface: Allows non-root apps, Termux, Tasker, and shell scripts to switch performance profiles on the fly (`echo 0 > /proc/ki_profile` or `echo battery`, `echo 1` or `echo balanced`, `echo 2` or `echo performance`) and inspect current mode (`cat /proc/ki_profile`)
+  - Dedicated `/proc/fast_charge` Interface: Allows toggling Force Fast Charge directly without root (`echo 1 > /proc/fast_charge` / `echo 0 > /proc/fast_charge`)
+  - Dedicated `/proc/bypass_charging` Interface: Direct non-root bypass charging control (`echo 1 > /proc/bypass_charging`)
+  - SELinux `S_PRIVATE` & `0666` Mode: Tagged all three procfs nodes with `S_PRIVATE` and `0666` permissions in `fs/proc/inode.c`, ensuring Android SELinux completely exempts them from security checks so untrusted apps can toggle them effortlessly
+
+• Root Subsystem Synchronization (ReSukiSU / BakaSU):
+  - Upstream Engine Sync: Updated KernelSU core to latest BakaSU (v4.2.0-rc3, versionCode 35226)
+  - Stability & Stealth Fixes: Defer throne tracker to `task_work` (`8450dd28`), fix permission check sequence (`969de3d0`), fix sidtab detection (`ba8cfa50`), and fix avtab removal length (`f397410c`)
+  - Boot Script Timeout Protection: Integrated ksud script timeout handling (`80c0e190`) to prevent rogue modules from hanging boot stages
+  - 100% SuSFS v2.3.0 Compatibility: Maintained full inline hooking compatibility with SuSFS root hiding
+
+• Kernel Identity & Cleanup:
+  - Removed `-P7` development suffix, unifying release name to `4.19.325-Ki-kernel-v1.4`
+  - Customized userspace app kernel release spoofing to `5.10.325-ki-kernel+`
 
 ---
 

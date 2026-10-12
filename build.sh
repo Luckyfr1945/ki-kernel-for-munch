@@ -9,7 +9,7 @@ set -e
 
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.4-P7"
+KERNEL_VERSION="v1.4"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
 
 if [ -z "$1" ]; then
@@ -89,29 +89,29 @@ clang --version
 # Parse Variant (Root / SuSFS)
 KSU_ENABLE=1
 SUSFS_ENABLE=1
-VARIANT_TAG="ReSukiSU+SUSFS"
+VARIANT_TAG="KSU+SUSFS"
 
 case "$2" in
     ksu|ksu-susfs|susfs|"")
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="ReSukiSU+SUSFS"
+        VARIANT_TAG="KSU+SUSFS"
         ;;
     ksu-nosusfs|nosusfs|plain)
         KSU_ENABLE=1
         SUSFS_ENABLE=0
-        VARIANT_TAG="ReSukiSU"
+        VARIANT_TAG="KSU"
         ;;
     noksu|vanilla|none)
         KSU_ENABLE=0
         SUSFS_ENABLE=0
-        VARIANT_TAG="NoKSU"
+        VARIANT_TAG="NOKSU"
         ;;
     *)
-        echo "Unknown variant: $2. Defaulting to ReSukiSU+SUSFS."
+        echo "Unknown variant: $2. Defaulting to KSU+SUSFS."
         KSU_ENABLE=1
         SUSFS_ENABLE=1
-        VARIANT_TAG="ReSukiSU+SUSFS"
+        VARIANT_TAG="KSU+SUSFS"
         ;;
 esac
 
@@ -141,11 +141,13 @@ apply_ksu_config() {
             -d KSU_ALLOWLIST_WORKAROUND \
             -e KSU_LSM_SECURITY_HOOKS \
             -d KSU_MANUAL_HOOK \
-            -e KSU_MULTI_MANAGER_SUPPORT \
-            -e KSU_SUSFS
+            -e KSU_MULTI_MANAGER_SUPPORT
 
         if [ $SUSFS_ENABLE -eq 1 ]; then
             scripts/config --file out/.config \
+                -e KSU_SUSFS \
+                -d KSU_MANUAL_HOOK \
+                -d KSU_TRACEPOINT_HOOK \
                 -e KSU_SUSFS_SUS_PATH \
                 -e KSU_SUSFS_SUS_MAP \
                 -e KSU_SUSFS_SUS_NETLINK \
@@ -162,6 +164,9 @@ apply_ksu_config() {
                 -e KSU_SUSFS_SUS_OVERLAYFS
         else
             scripts/config --file out/.config \
+                -e KSU_MANUAL_HOOK \
+                -d KSU_TRACEPOINT_HOOK \
+                -d KSU_SUSFS \
                 -d KSU_SUSFS_SUS_PATH \
                 -d KSU_SUSFS_SUS_MAP \
                 -d KSU_SUSFS_SUS_NETLINK \
@@ -182,7 +187,21 @@ apply_ksu_config() {
             -d KSU \
             -d KSU_MANUAL_HOOK \
             -d KSU_TRACEPOINT_HOOK \
-            -d KSU_SUSFS
+            -d KSU_SUSFS \
+            -d KSU_SUSFS_SUS_PATH \
+            -d KSU_SUSFS_SUS_MAP \
+            -d KSU_SUSFS_SUS_NETLINK \
+            -d KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
+            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -d KSU_SUSFS_SUS_SU \
+            -d KSU_SUSFS_SUS_MOUNT \
+            -d KSU_SUSFS_SUS_KSTAT \
+            -d KSU_SUSFS_SPOOF_UNAME \
+            -d KSU_SUSFS_ENABLE_LOG \
+            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -d KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SUS_OVERLAYFS
     fi
 }
 
@@ -411,14 +430,18 @@ cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
 cd anykernel
 
 if [ "$TARGET_OS" == "aosp" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 elif [ "$TARGET_OS" == "miui" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 else
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}_$(date +'%Y%m%d_%H%M%S').zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 fi
 
 zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
+mkdir -p ../release
+cp -f "$ZIP_FILENAME" ../release/
+mkdir -p ../../release 2>/dev/null || true
+cp -f "$ZIP_FILENAME" ../../release/ 2>/dev/null || true
 mv "$ZIP_FILENAME" ../
 cd ..
 

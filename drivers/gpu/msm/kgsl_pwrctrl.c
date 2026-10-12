@@ -1047,6 +1047,9 @@ static ssize_t gpuclk_show(struct device *dev,
 {
 	struct kgsl_device *device = dev_get_drvdata(dev);
 
+	if (device->state != KGSL_STATE_ACTIVE)
+		return scnprintf(buf, PAGE_SIZE, "0\n");
+
 	return scnprintf(buf, PAGE_SIZE, "%ld\n",
 		kgsl_pwrctrl_active_freq(&device->pwrctrl));
 }

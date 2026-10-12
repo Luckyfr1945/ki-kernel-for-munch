@@ -1766,6 +1766,11 @@ extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 				void *envp, int *flags);
 extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
 			void *envp, int *flags, int *retval);
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
+extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags, int *retval);
 #endif
 static int __do_execve_file(int fd, struct filename *filename,
 			    struct user_arg_ptr argv,
@@ -1777,9 +1782,9 @@ static int __do_execve_file(int fd, struct filename *filename,
 	struct files_struct *displaced;
 	int retval;
 
-#ifdef CONFIG_KSU_SUSFS
+#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)
 	bool is_su_session = false;
-#endif // #ifdef CONFIG_KSU_SUSFS
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1793,6 +1798,8 @@ static int __do_execve_file(int fd, struct filename *filename,
 			is_su_session = !ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
 	}
 orig_flow:
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
+	is_su_session = !ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 #endif
 
 	/*
@@ -1939,7 +1946,10 @@ out_unmark:
 #ifdef CONFIG_KSU_SUSFS
 	if (unlikely(is_su_session))
 		(void)ksu_handle_post_execveat_sucompat(&fd, &filename, &argv, &envp, &flags, &retval);
-#endif // #ifdef CONFIG_KSU_SUSFS
+#elif defined(CONFIG_KSU_MANUAL_HOOK)
+	if (unlikely(is_su_session))
+		(void)ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);
+#endif
 
 out_free:
 	free_bprm(bprm);
