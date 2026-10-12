@@ -469,7 +469,8 @@ struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 		}
 		if (de->name && (!strcmp(de->name, "bypass_charging") ||
 				 !strcmp(de->name, "ki_profile") ||
-				 !strcmp(de->name, "fast_charge"))) {
+				 !strcmp(de->name, "fast_charge") ||
+				 !strcmp(de->name, "mglru"))) {
 			inode->i_flags |= S_PRIVATE;
 			inode->i_mode = 0666;
 		}

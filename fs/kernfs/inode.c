@@ -210,9 +210,9 @@ static void kernfs_init_inode(struct kernfs_node *kn, struct inode *inode)
 	set_default_inode_attr(inode, kn->mode);
 	kernfs_refresh_inode(kn, inode);
 
-	/* Exempt ki_profile nodes from SELinux MAC to allow unprivileged / non-root control */
-	if (unlikely((kn->name && !strcmp(kn->name, "ki_profile")) ||
-		     (kn->parent && kn->parent->name && !strcmp(kn->parent->name, "ki_profile")))) {
+	/* Exempt ki_profile and lru_gen nodes from SELinux MAC to allow unprivileged / non-root control */
+	if (unlikely((kn->name && (!strcmp(kn->name, "ki_profile") || !strcmp(kn->name, "lru_gen"))) ||
+		     (kn->parent && kn->parent->name && (!strcmp(kn->parent->name, "ki_profile") || !strcmp(kn->parent->name, "lru_gen"))))) {
 		inode->i_flags |= S_PRIVATE;
 	}
 

@@ -196,6 +196,8 @@ chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/spoof_version 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/active_profile 2>/dev/null
+chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
+chmod 666 /proc/mglru 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
 chmod 666 /sys/kernel/gpu/* 2>/dev/null

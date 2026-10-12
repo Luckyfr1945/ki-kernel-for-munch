@@ -55,6 +55,8 @@
 #include <linux/shmem_fs.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -5322,6 +5324,98 @@ void lru_gen_exit_memcg(struct mem_cgroup *memcg)
 }
 #endif
 
+#ifdef CONFIG_PROC_FS
+static ssize_t mglru_proc_read(struct file *file, char __user *buf,
+				size_t count, loff_t *ppos)
+{
+	char page[512];
+	int len = 0;
+	unsigned int caps = 0;
+	bool enabled = lru_gen_enabled();
+
+	if (get_cap(LRU_GEN_CORE))
+		caps |= BIT(LRU_GEN_CORE);
+	if (arch_has_hw_pte_young() && get_cap(LRU_GEN_MM_WALK))
+		caps |= BIT(LRU_GEN_MM_WALK);
+	if (IS_ENABLED(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG) && get_cap(LRU_GEN_NONLEAF_YOUNG))
+		caps |= BIT(LRU_GEN_NONLEAF_YOUNG);
+
+	len = scnprintf(page, sizeof(page),
+		"MGLRU State: %s (caps: 0x%04x)\n"
+		"Features:\n"
+		"  [bit 0] Core LRU generation : %s\n"
+		"  [bit 1] Page table walk     : %s\n"
+		"  [bit 2] Non-leaf PMD walk   : %s\n"
+		"\n"
+		"Usage (non-root accessible):\n"
+		"  echo 1 > /proc/mglru       -> Enable (0x0007 / max performance)\n"
+		"  echo 0 > /proc/mglru       -> Disable (0x0000 / traditional 2-list LRU)\n"
+		"  echo <hex> > /proc/mglru   -> Custom caps bitmask (e.g. 0x0007)\n",
+		enabled ? "ENABLED" : "DISABLED",
+		caps,
+		(caps & BIT(LRU_GEN_CORE)) ? "ON" : "OFF",
+		(caps & BIT(LRU_GEN_MM_WALK)) ? "ON" : "OFF",
+		(caps & BIT(LRU_GEN_NONLEAF_YOUNG)) ? "ON" : "OFF");
+
+	return simple_read_from_buffer(buf, count, ppos, page, len);
+}
+
+static ssize_t mglru_proc_write(struct file *file, const char __user *buf,
+				 size_t count, loff_t *ppos)
+{
+	char kbuf[32];
+	size_t len = min(count, sizeof(kbuf) - 1);
+	int i;
+	unsigned int caps = 0;
+
+	if (copy_from_user(kbuf, buf, len))
+		return -EFAULT;
+	kbuf[len] = '\0';
+
+	if (kbuf[0] == '1' && (kbuf[1] == '\0' || kbuf[1] == '\n' || kbuf[1] == ' ')) {
+		caps = 0x0007;
+	} else if (tolower(kbuf[0]) == 'y') {
+		caps = 0x0007;
+	} else if (!strncasecmp(kbuf, "on", 2)) {
+		caps = 0x0007;
+	} else if (!strncasecmp(kbuf, "enable", 6)) {
+		caps = 0x0007;
+	} else if (kbuf[0] == '0' && (kbuf[1] == '\0' || kbuf[1] == '\n' || kbuf[1] == ' ')) {
+		caps = 0;
+	} else if (tolower(kbuf[0]) == 'n') {
+		caps = 0;
+	} else if (!strncasecmp(kbuf, "off", 3)) {
+		caps = 0;
+	} else if (!strncasecmp(kbuf, "disable", 7)) {
+		caps = 0;
+	} else if (kstrtouint(strim(kbuf), 0, &caps)) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < NR_LRU_GEN_CAPS; i++) {
+		bool enable = caps & BIT(i);
+
+		if (i == LRU_GEN_CORE)
+			lru_gen_change_state(enable);
+		else if (enable)
+			static_branch_enable(&lru_gen_caps[i]);
+		else
+			static_branch_disable(&lru_gen_caps[i]);
+	}
+
+	pr_info("mglru: state toggled to caps 0x%04x by pid %d (%s)\n",
+		caps, current->pid, current->comm);
+
+	return count;
+}
+
+static const struct file_operations mglru_proc_fops = {
+	.owner = THIS_MODULE,
+	.read = mglru_proc_read,
+	.write = mglru_proc_write,
+};
+#endif
+
 static int __init init_lru_gen(void)
 {
 	BUILD_BUG_ON(MIN_NR_GENS + 1 >= MAX_NR_GENS);
@@ -5331,6 +5425,10 @@ static int __init init_lru_gen(void)
 
 	debugfs_create_file("lru_gen", 0644, NULL, NULL, &lru_gen_rw_fops);
 	debugfs_create_file("lru_gen_full", 0444, NULL, NULL, &lru_gen_ro_fops);
+
+#ifdef CONFIG_PROC_FS
+	proc_create("mglru", 0666, NULL, &mglru_proc_fops);
+#endif
 
 	return 0;
 };
