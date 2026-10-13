@@ -238,10 +238,8 @@ for q in /sys/block/*/queue/scheduler; do
     fi
 done
 
-# Ensure CPU idle floors allow full hardware scaling (Silver 300MHz, Gold 710MHz, Prime 845MHz)
+# Ensure CPU idle floors allow full power saving when idle
 echo 300000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/null
-echo 710400 > /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq 2>/dev/null
-echo 844800 > /sys/devices/system/cpu/cpufreq/policy7/scaling_min_freq 2>/dev/null
 
 # Auto-enable MGLRU (override ROM init.rc 0 disable)
 echo 1 > /proc/mglru 2>/dev/null
