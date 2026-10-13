@@ -1,244 +1,64 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-12  
+**Build Date:** 2026-10-13  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS and AOSP  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## v1.4 (Official Release - The Android 17 & Gaming Update)
-• Android 16 & Android 17 (Vanilla Ice Cream / Baklava) Full eBPF Stack:
-  - Massive eBPF Core Backport: Backported upstream ~70k lines of modern Linux 5.10 eBPF architecture into Linux 4.19, providing native support for modern Android 16 & 17 network and security subsystems
-  - Modern BPF Primitives: Added BPF atomic operations (`BPF_ATOMIC`, `BPF_FETCH`), BPF iterators, bind hooks, task local storage, ring buffer, sock_ops, and task work callbacks
-  - Fixed NetBpfLoad Loop & Boot Crashes: Completely eliminated NetBpfLoad / bpfloader bootloops on Android 16/17 (HyperOS 4 / AOSP) with proper map-in-map and RCU trace fallbacks
-  - Intelligent Dynamic Uname Spoofing: Dynamically returns Linux `5.15` to system BPF loaders (`bpfloader`, `netd`, `system_server`) while cleanly reporting custom release (`5.10.325-ki-kernel+`) to user applications
+## Ki-kernel v1.4.1
 
-• Adreno 650 GPU 0 MHz Idle Mode & Frequency Scaling:
-  - Real-Time Hardware Idle Reflection: Implemented dynamic state verification (`device->state != KGSL_STATE_ACTIVE`) in `gpuclk_show` (`/sys/class/kgsl/kgsl-3d0/gpuclk`) and `kgsl_devfreq_get_cur_freq` (`/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq`)
-  - Accurate 0 MHz Display: Real-time monitors (Scene, DevCheck, FKM) now accurately report 0 MHz when the GPU enters hardware power-collapse (slumber/sleep) during idle or stationary frames
-  - Retained Extreme UV + OC Performance Profile: Fully preserves the custom 150 MHz – 683 MHz GPU OPP frequency table and undervolt stepping when rendering active workloads
-
-• Turbo Fast Charge & Thermal Relaxation:
-  - Default Force Fast Charge: Initialized `force_fast_charge = 1` and `force_fast_charge_ua = 3000000` (3.0A) on boot, unlocking high-speed charging even on non-OEM chargers and standard USB ports
-  - Screen-On Fast Charge Unthrottled: Bypasses aggressive Xiaomi thermal throttling that reduces charging speed to 10W-15W when screen is awake. Maintains full 67W / PPS turbo speeds while gaming or using the phone up to 45°C–49°C hardware safety limits
-
-• Non-Root Userspace Control Suite (/proc Interface with SELinux Exemption):
-  - Dedicated `/proc/ki_profile` Interface: Allows non-root apps, Termux, Tasker, and shell scripts to switch performance profiles on the fly (`echo 0 > /proc/ki_profile` or `echo battery`, `echo 1` or `echo balanced`, `echo 2` or `echo performance`) and inspect current mode (`cat /proc/ki_profile`)
-  - Dedicated `/proc/fast_charge` Interface: Allows toggling Force Fast Charge directly without root (`echo 1 > /proc/fast_charge` / `echo 0 > /proc/fast_charge`)
-  - Dedicated `/proc/bypass_charging` Interface: Direct non-root bypass charging control (`echo 1 > /proc/bypass_charging`)
-  - SELinux `S_PRIVATE` & `0666` Mode: Tagged all three procfs nodes with `S_PRIVATE` and `0666` permissions in `fs/proc/inode.c`, ensuring Android SELinux completely exempts them from security checks so untrusted apps can toggle them effortlessly
-
-• Root Subsystem Synchronization (ReSukiSU / BakaSU):
-  - Upstream Engine Sync: Updated KernelSU core to latest BakaSU (v4.2.0-rc3, versionCode 35226)
-  - Stability & Stealth Fixes: Defer throne tracker to `task_work` (`8450dd28`), fix permission check sequence (`969de3d0`), fix sidtab detection (`ba8cfa50`), and fix avtab removal length (`f397410c`)
-  - Boot Script Timeout Protection: Integrated ksud script timeout handling (`80c0e190`) to prevent rogue modules from hanging boot stages
-  - 100% SuSFS v2.3.0 Compatibility: Maintained full inline hooking compatibility with SuSFS root hiding
-
-• Kernel Identity & Cleanup:
-  - Removed `-P7` development suffix, unifying release name to `4.19.325-Ki-kernel-v1.4`
-  - Customized userspace app kernel release spoofing to `5.10.325-ki-kernel+`
+Changelog:
+• Fixed schedutil clock bouncing and micro-stutters by restoring 20ms down-hold delay
+• Removed idle floor frequency clamps, allowing CPU to rest at 300 MHz idle
+• Tuned hispeed frequencies and loads for smooth 120 Hz scrolling and gaming
+• Increased bypass charging thermal threshold to 48°C for extended gaming sessions
+• Fixed bypass charging cutting off after 30 minutes of heavy gaming
+• Added 3-mode Multi-Gen LRU (MGLRU) switcher: Off, Core, and Gaming Turbo (PTE Walk)
+• Fixed aggressive LMKD kills and game crashes during memory pressure / zRAM saturation
+• Updated Ki-Optimizer WebUI, CLI (`ki`), and config with MGLRU mode selection
+• Added manual `newfstat` and `fstat64` hooks in `fs/stat.c` for reliable KSU init.rc injection
+• Disabled LSM AUTO_INITRC_HOOK in favor of native sys_read manual hooks
+• Fixed KernelSU modules not updating or deleting across system reboots
+• Preserved netd in dynamic uname spoofing to prevent Android 16/17 bootloops
+• Fixed Wi-Fi hotspot and tethering packet forwarding
 
 ---
 
-## v1.4 P8
-• Non-Root & Unprivileged Userspace Control (Bypass Charging):
-  - Dedicated `/proc/bypass_charging` Interface: Created a new procfs node allowing non-root users, Termux, Tasker, and unprivileged apps to toggle bypass mode directly (`echo 1 > /proc/bypass_charging`) and query state (`cat /proc/bypass_charging`)
-  - SELinux Inode Exemption (`S_PRIVATE`): Tagged the proc inode with `S_PRIVATE` and `0666` permissions in `fs/proc/inode.c`, ensuring Android SELinux completely ignores access checks and never blocks untrusted apps (`untrusted_app`) from toggling bypass charging
-  - Relaxed Sysfs Root Restriction: Removed restrictive `uid != 0` check in `/sys/class/power_supply/battery/bypass_charging`, enabling ADB Shell (UID 2000) and userspace utilities to control charging bypass without `-EPERM` denials
-• Display Subsystem Refinements:
-  - Added `dimlayer_exposure` and `hbm` sysfs nodes for complete AOSP / MIUI DC dimming detection
-  - Aligned dual-mask DC dimming values in `drm_sysfs_mi.c` for MIUI
+## Ki-kernel v1.4
 
----
-
-## v1.4 P7
-• Display & Eye-Care (Universal DC Dimming):
-  - Fixed "Kernel Not Supported" on AOSP / Lunaris / XiaomiParts: Registered missing `/sys/class/drm/card0-DSI-1/disp_param` sysfs interface on AOSP builds, enabling native DC Dimming (Anti-flicker mode) detection in custom ROM Settings
-  - Dual-Mask Panel Compatibility: Combined `DISPPARAM_DIMMING` (0xF00) with `DISPPARAM_DC_ON` (0x40000) so both CSOT and Samsung E4 AMOLED panels activate DC Dimming seamlessly
-  - DRM IOCTL Permissive Whitelist: Integrated `drm_master_filter` in `drm_ioctl.c` allowing ROM display daemons (`displayfeature`, `displayeffect`, `disp_pcc`) to execute display configuration ioctls without `-EACCES` permission denials
-  - Dual Sysfs Nodes: Mirrored display control nodes to platform device `/sys/devices/platform/soc/soc:qcom,dsi-display-primary/` (`disp_param`, `dimming`, `dc_dimming`, `msm_fb_ea_enable`) with safe fallbacks
-
-• Storage & File System (Fsync Optimization):
-  - Universal Fsync Sysfs Toggle: Implemented `/sys/module/sync/parameters/fsync_enabled` with full `chmod 666` permissions, allowing instant on/off toggling across all kernel manager apps (NKM, Franco Kernel Manager, EXKM, SmartPack)
-  - Active Dynamic Fsync v2.0: Automatically eliminates sync writeback stalls during screen-on for zero micro-stutter in heavy games, while executing safe background flush on screen-off sleep
-
-• Performance Profile & Frame Pacing:
-  - Overhauled KI_PROFILE_PERFORMANCE: Lowered Prime hispeed frequency from 3.2GHz @ 15% load to 2.65GHz @ 65% load (scaling to 3.2GHz only under >85% extreme load), eliminating heat buildup and thermal throttling frame drops
-  - Frame-Synchronized Down-Hold: Reduced hispeed hold time from 150ms to 16–20ms, perfectly matching display frame intervals and preventing unnecessary battery drain
-  - Zero-Stutter Gaming RAM: Lowered swappiness from 150 to 60 during performance mode to prevent heavy games (MLBB, Genshin, PUBG) from stalling on zRAM compression
-  - Core Isolation Migration: Set up/down migration to 65/50 to keep gaming render threads pinned on Gold and Prime cores, isolated from background clutter
-
-• Power & Charging Safety:
-  - Safe Cold Boot Default: Defaulted `force_fast_charge` to `0` (500mA safe standard) on boot to prevent device overheating on reboot, allowing NKM to persist user preference cleanly
-  - High-Speed Fast Charge Mode: Increased level 1 fast charge current from 2A to 3A (15W @ 5V / 3,000,000 µA) when toggled ON in NKM
-
-• Linux Containers & Virtualization (Droidspaces & LXC Native Support):
-  - Full Namespace & Cgroup Isolation: Enabled `PID_NS`, `UTS_NS`, `IPC_NS`, `USER_NS`, `NET_NS`, `CGROUP_DEVICE`, and `CGROUP_PIDS`, allowing Droidspaces, LXC, and Docker to run full Linux distributions (Ubuntu, Debian, Arch, Alpine, NixOS) natively with systemd as PID 1
-  - Cgroup Prefix Compatibility: Implemented cgroup file prefix link handling in `kernel/cgroup/cgroup.c` to support systemd cgroup hierarchies inside containers
-  - NAT & Firewall Support: Enabled virtual ethernet (`veth`), network bridge (`bridge`), and full Netfilter NAT/masquerade support for isolated container networking
-  - Relaxed Paranoid Networking: Disabled `CONFIG_ANDROID_PARANOID_NETWORK` so containerized Linux environments have unrestricted socket and network access without AID restrictions
-
----
-
-## v1.4 P6
-• Gaming Performance & Frame Pacing:
-  - Forbid Unity-Based Games CPU Affinity Override: Silently ignores thread affinity manipulation from Unity engine games (e.g. Wild Rift, Genshin, MLBB), preventing games from restricting render threads to small clusters and ensuring full scheduling across Gold and Prime cores
-  - Omit Debug Names in Graphics Sync Ioctl: Eliminates string formatting overhead in `sync_file_ioctl_fence_info` (`drivers/dma-buf/sync_file.c`), cutting micro-latency on every GPU/SurfaceFlinger frame buffer sync
-• Storage & I/O Optimization:
-  - Added ADIOS (Adaptive Deadline I/O Scheduler) v3.2.0 (`CONFIG_MQ_IOSCHED_ADIOS=y`): Multi-queue I/O scheduler featuring learning-based adaptive latency control, specifically tuned for fast UFS 3.1 flash storage
-• Battery & Deep Sleep Efficiency:
-  - Reduced VM Stat Update Interval: Increased `sysctl_stat_interval` from 1s to 20s (`mm/vmstat.c`), cutting idle background wakeups during screen-off sleep
-  - Tuned Compressed Swap Readahead: Set default `page_cluster = 1` (`mm/swap.c`), eliminating wasted readahead I/O cycles on Android zRAM
-  - Optimized Alarmtimer Wakeup Safety Margin: Adjusted timeout margin to nearest timer expiration + 5ms (`kernel/time/alarmtimer.c`) instead of holding a static 2-second wake event, allowing faster deep sleep entry
-• CPU Scheduler:
-  - Skip RT Task Push Attempts: Early bailout in `push_rt_tasks()` when no pushable RT tasks are available (`kernel/sched/rt.c`), eliminating unnecessary IPI storms and bus contention across CPU clusters
-
----
-
-## v1.4 P5
-• Resolved Sleep of Death (SoD) & Charging Black-Screen Hang:
-  - Smart AC/Power Supply Aware: Prevented forced Battery Saver throttling on screen-off when plugged into charger (`power_supply_is_system_supplied() > 0`), ensuring Android idle maintenance (dexopt, fstrim) runs smoothly without starving the CPU
-  - Sane Headroom & Lock Protection: Removed dynamic `setup_per_zone_wmarks()` and `ki_cpufreq_reset_idle_floors()` from rapid screen on/off workqueues to prevent memory zone lock contention and deadlocks with kswapd/zRAM
-  - Active Screen-Off Profile Sync: Added `ki_get_active_profile()` in [include/linux/ki_profile.h](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/include/linux/ki_profile.h) and [drivers/cpufreq/cpufreq.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/drivers/cpufreq/cpufreq.c) so CPU idle floor clamp (300 MHz) is enforced against background daemons during standby
-• Native Baseband-Guard LSM Integration (Anti-Format / Partition Shield):
-  - Integrated `Baseband-guard` Linux Security Module (`security/baseband-guard/` with `CONFIG_BBG=y`)
-  - Hardens and write-protects critical partitions against malicious root scripts, bad flashers, and wipe commands:
-    * Protected: `modemst1`, `modemst2`, `fsg`, `fsc` (IMEI & Baseband RF calibration)
-    * Protected: `xbl`, `xbl_config`, `abl`, `tz`, `hyp`, `dsp`, `devinfo` (Bootloader & TrustZone)
-    * Enforces strict allowlist (`boot`, `userdata`, `metadata`, `misc`, `dtbo`, `vbmeta`, `recovery`)
-• Multi-Manager Root Support (ReSukiSU + KSU Multi-Manager):
-  - Enabled `CONFIG_KSU_MULTI_MANAGER_SUPPORT=y` in kernel and build system
-  - Built-in recognition for APK signatures of 6 top manager implementations:
-    * ReSukiSU Manager (Official)
-    * KSUN / RKSU (KernelSU-Next)
-    * KOWSU (KOWX712/KernelSU)
-    * SukiSU-Ultra
-    * MKSU (5ec1cff/KernelSU)
-    * Official KernelSU (tiann/KernelSU)
-  - Retained Dynamic Manager feature for custom/self-compiled APK signatures
-• Fixed Background Media & Music Streaming Stopping on Screen-Off:
-  - Removed `wlan_wow_wl` (Wake-on-WLAN) and `netmgr_wl` from Boeffla Wakelock Blocker default list in [boeffla_wl_blocker.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/drivers/base/power/boeffla_wl_blocker.c) and [anykernel.sh](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/anykernel_template/anykernel.sh)
-  - Added strict in-kernel exemption in `is_critical_wakelock()` for audio/sound/media and network streaming wakelocks so YouTube (ReVanced/Premium), Spotify, and browser music continue smoothly without pausing when the screen is locked
-• Fixed Aggressive App Kills & Multitasking Eviction (2x TikTok & Instagram No-Reload):
-  - Fixed erroneous LMKD props in [anykernel.sh](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/anykernel_template/anykernel.sh): set `kill_heaviest_task = true` (preventing brute-force serial purging of cached apps)
-  - Relaxed `ro.lmk.psi_partial_stall_ms` to 250ms and `ro.lmk.thrashing_limit` to 100, preventing false-positive kills during heavy video segment caching (TikTok / IG reels)
-  - Lowered `vm_swappiness` from 150 to 80 and set `vfs_cache_pressure = 80` across Balanced & Battery profiles to keep app dentry/inode caches in RAM
-• Clear Differentiation Between Balanced and Battery Saver:
-  - Balanced: Smooth 120Hz scrolling, fast 500us touch ramp, shortened 4ms down-hold (down from 20ms for battery savings), Silver 1.21G / Gold 1.38G / Prime 1.51G, migration 85/75
-  - Battery Saver: True power-saver ("Irit Pol"), 98% pinned to Silver (migration 98/90), down-hold 2ms (instant drop to 300MHz), swappiness 60 (minimal zRAM churn), Silver 1.05G / Gold 1.17G / Prime 1.27G
-• Cleaned Schedutil Governor Locking:
-  - Removed redundant spinlock in `sugov_set_cluster_floor()` in [cpufreq_schedutil.c](file:///home/kiki/kernel/kernel_xiaomi_sm8250_mod/kernel/sched/cpufreq_schedutil.c)
-• Live Hardware & Gaming Monitor (monitor_perf.sh) Overhaul:
-  - Fixed blank RAM & zRAM metrics (`Free MB / Total MB / zRAM MB`) via atomic device helper script
-  - Fixed duplicate Display FPS string formatting (`Display FPS : 42.9 FPS`)
-  - Modernized App detection via `topResumedActivity` (supports Android 14/15/16)
-  - SurfaceFlinger display rate synchronization (clean 60 Hz / 120 Hz)
-  - Added `[r]` interactive key to reset frame/jank stats on the fly
-
-## v1.4 P4
-• BPF & SecurityFS Infrastructure Modernization:
-  - Enabled genfscon labeling for securityfs (`UPSTREAM: selinux: enable genfscon labeling for securityfs` with `SE_SBGENFS` in `security/selinux/hooks.c`)
-  - Enabled `CONFIG_SECURITYFS=y` in vendor & device defconfigs
-  - Modernized arm64 BPF JIT & instruction set:
-    * Backported BPF `JMP32` instruction set (32-bit jumps) for modern Clang `-mcpu=v3` compatibility
-    * Backported 64-bit atomic operations (`BPF_ATOMIC`, atomic add, fetch_add)
-    * Backported `XDP_SOCKETS` socket ops and coarse-grained ktime for Bionic bpf loader compatibility
-  - Wired up `close_range()` system call (NR 436 in `fs/open.c` & `syscalls.h`) for Bionic runtime loader
-  - Kernel cleanly identifies as native **4.19.325**
-• Native NoMount Subsystem Integration (Built-in VFS Redirection):
-  - Integrated `NoMount` driver natively into kernel core (`fs/nomount/` with `CONFIG_NOMOUNT=y`)
-  - Enables mountless module loading & path redirection in RAM without generating visible mounts in `/proc/mounts` or `/proc/self/mountinfo`
-  - Integrated Linux Keyring communication (`add_key`) for userspace `nm` tool and WebUI
-  - Supports UID app exclusion/isolation for banking apps and root detectors
-  - Seamlessly paired with ReSukiSU and SUSFS v1.5.x
-• Smart Bypass Charging UI Polish:
-  - Hidden lightning/charging icon during bypass charging mode for clean static battery status bar indication
-
-## v1.4 P3
-• Extreme Gaming & Anti-Drop FPS Overhaul (Locked 60 / 120 FPS Pacing):
-  - Added Zero-Lag CPU Floor Frequency (`sugov_set_cluster_floor`):
-    * Silver (CPU 0–3): 1.21 GHz minimum floor (eliminates 300 MHz drops)
-    * Gold (CPU 4–6): 1.61 GHz minimum floor (eliminates 710 MHz drops)
-    * Prime (CPU 7): 1.71 GHz minimum floor (eliminates 844 MHz drops)
-    * Completely eliminates DVFS ramp-up and clock synthesizer relock delay
-  - Instant Snap Hispeed threshold lowered to 15% load (immediate jump to 1.80 / 2.42 / 3.19 GHz on any render activity)
-  - Extended cpufreq down-rate delay (`down_rate_limit_us`) to 150ms (holds peak turbo across ~9 frames without clock bouncing)
-  - Enabled WALT Performance Level (PL) Hinting (`sugov_set_cluster_pl`) for foreground game threads
-  - Ultra-aggressive task & group migration:
-    * `sched_set_updown_migrate(20, 10)` — tasks migrate to Gold at only 20% load
-    * `sched_set_group_updown_migrate(30, 15)` — render thread groups pinned to Gold/Prime
-  - Adreno 650 GPU Turbo Enhancements:
-    * Floor frequency raised to 587 MHz (operates exclusively at 587 MHz & 683 MHz OC)
-    * Instant jump to 683 MHz max turbo upon activating Performance mode
-    * Forced `CLK_ON = 1` (GPU clocks stay awake, eliminating slumber/wake-up stalls)
-    * Extended GPU idle timeout to 2000ms
-  - Tuned VM Swappiness to 150 across profiles with LZ4 zRAM (frees up physical RAM for game assets and hot page cache, eliminates direct reclaim freezes)
-  - Integrated Konabess Extreme UV v2 + OC 683 MHz DTB into AnyKernel3 vendor_boot flashing
-• Stability, Thermal Safety & Multitasking Upgrades:
-  - Added In-Kernel Thermal Auto-Guard (`ki_profile`):
-    * Bypasses thermal throttle during Performance gaming for maximum FPS, but monitors die and skin thermals every 2s
-    * Automatically re-arms throttling if CPU/GPU die >= 85°C or body (quiet_therm) >= 46°C for hardware protection
-    * Automatically releases throttle when cooled to die <= 75°C and body <= 42°C with hysteresis
-  - Added Screen-off Auto Battery Profile (`ki_profile`):
-    * Hooks into Xiaomi DRM display notifier (`mi_drm_register_client`)
-    * Automatically switches to Battery profile after 3s of screen off to maximize deep sleep battery life
-    * Instantly (0ms) restores user's active profile (Balanced/Performance) upon screen on
-    * Sysfs controls: `/sys/kernel/ki_profile/screen_off_battery` and `/sys/kernel/ki_profile/active_profile`
-  - Added LMKD & PSI Anti-Kill Multitasking Tuning:
-    * Disabled `sys.lmk.kill_heaviest_task` to prevent sudden app closures during memory spikes
-    * Extended `ro.lmk.psi_partial_stall_ms` to 180ms to allow zRAM compression before killing apps
-    * Tuned `ro.lmk.thrashing_limit` to 50 for smooth foreground app retention
-  - Refactored Ki-Profile core into a clean, lightweight, table-driven engine
-• Networking & Controller Upgrades:
-  - Enabled CAKE Smart Queue Management Qdisc (`CONFIG_NET_SCH_CAKE=y`):
-    * Advanced bufferbloat elimination paired with native BBRv3 congestion control
-    * Keeps online gaming ping ultra-low and jitter-free even under heavy background downloads or hotspot tethering
-  - Enabled Sony PlayStation 5 DualSense Controller Driver (`CONFIG_HID_PLAYSTATION=y` & `CONFIG_PLAYSTATION_FF=y`):
-    * Full native plug-and-play support for PS5 DualSense controllers via USB and Bluetooth
-    * Force feedback vibration, lightbar, and motion sensor controls fully supported
-• Hardened Bypass Charging v2 Architecture Overhaul (No-Drain Gaming Edition):
-  - Decoupled bypass charging completely from `POWER_SUPPLY_PROP_INPUT_SUSPEND` to prevent breaking internal kernel suspend operations (connector thermal protection >= 70°C & BMS I2C error recovery)
-  - Enforced 3.0A USB Input Current Limit override (`vote_override` 3000000 uA) during bypass: guarantees chargers (including laptop USB-PD 65W/100W) deliver full 15W–27W to the motherboard (`VSYS`), completely eliminating battery supplement drain (-1400 mA) during heavy gaming loads
-  - Added anti-choke guard in `smblib_set_prop_battery_charging_enabled`: prevents Android battery HAL from throttling input current to 50mA (`MAIN_CHG_SUSPEND_ICL`) when charging is disabled
-  - Automatically unvotes Charge Pump (`cp_disable_votable`) so fast charging pump does not feed battery
-  - Added automatic cable-disconnect cleanup: resets bypass state and restores normal charging when the charger is unplugged
-  - Integrated Automatic Failsafe Guard: monitors battery state during bypass and automatically disengages bypass if SOC drops <= 15% or battery temperature exceeds 43°C
-  - Hardened sysfs node `/sys/class/power_supply/battery/bypass_charging` with root permission enforcement (`-EPERM` for non-root) and strict error handling
-• Deep Idle Frequency Unlocking & Userspace Boost Defense (`cpufreq` & `ki_profile`):
-  - Solved Little cluster stuck at 691.2 MHz caused by vendor ROM `post_boot.sh` and `powerhint.json` hardcoded baseline
-  - In-kernel sysfs intercept in `store_scaling_min_freq`: maps userspace idle hint reset (`val <= 691200`) directly to true hardware minimum (300 MHz)
-  - Preserved silky touch/interaction boost response while guaranteeing instant drop back to 300 MHz idle
-  - Added programmatic floor enforcement (`ki_cpufreq_reset_idle_floors`) across all clusters on boot and profile switch
-  - Locked minimum frequency to hardware baseline in Battery mode (Silver 300M, Gold 710M, Prime 845M), preventing runaway userspace apps from inflating idle floor
-  - Added baseline frequency initialization in AnyKernel3 `00_nkm_bypass.sh` service
-• Universal 67W Turbo Charge & PPS Optimization Across All ROMs (AOSP & MIUI/HyperOS):
-  - Completely unlocked 67W direct flash charging on AOSP / Custom ROMs by bypassing MIUI-proprietary userspace digest checks
-  - Eliminated BQ27Z561 fuel gauge 2A charging current clamp (`CURRENT_MAX`) and unvoted `BMS_FG_VERIFY` / `BMS_VERIFY_VOTER` limits
-  - Automated PPS verification in USB-PD Policy Manager (`pd_policy_manager_munch`): promotes all qualified PPS adapters to `POWER_SUPPLY_PPS_VERIFIED` immediately without requiring proprietary `pd_authentication`
-  - Unvoted `NON_PPS_PD_FCC_VOTER` 3000 mA restriction and eliminated 5-second PPS negotiation delay
-  - Automatically unvoted `PD_VERIFED_VOTER` in `smb5-lib-munch` and mapped all USB-PD / PPS charging to `QUICK_CHARGE_TURBE` for full turbo speeds and UI animation support
-  - Integrated AnyKernel3 service.d triggers for `pd_authentication`, `fastcharge_mode`, and `authentic` sysfs nodes
-
----
-
-## v1.4 P2
-• Unified & Ported all optimizations to Astide Base (Android 13–16 AOSP & MIUI/HyperOS)
-• Extreme Gaming Performance Mode Overhaul (WuWa / Heavy Games Edition):
-  - Adreno 650 GPU floor frequency locked to 510 MHz (runs only at 510, 587, and 683 MHz OC, eliminating mid-game frame drops)
-  - DDR AXI Bus locked high (`force_bus_on = 1`) to eliminate 3D texture & shader streaming hitches
-  - Disabled internal Adreno cycle-skipping clock throttling in Performance mode
-  - Extended GPU idle timeout to 1000ms for stable inter-frame clock pacing
-  - Added CPU Instant Snap Hispeed (`sugov_set_cluster_hispeed`) — snaps to max turbo (1.80/2.42/3.19 GHz) at 35-40% load without relying on Android WALT RTG classification
-  - Extended cpufreq down-rate delay to 25ms to maintain peak clock speeds across 60, 90, and 120 FPS frame intervals
-  - Bypassed Qualcomm thermal CPU core isolation (`cpu_isolate`) and GPU devfreq throttling in Performance mode — all 8 cores stay active
-  - Auto-revive all isolated cores (`sched_unisolate_cpu`) upon activating Performance mode
-  - Optimized VFS cache pressure and memory headroom for heavy 4GB+ games
-• Added Maple I/O Scheduler (Android flash/UFS 3.1 optimized FIFO scheduler)
-• Added KCAL Color Calibration driver (/sys/devices/platform/kcal_ctrl.0)
-• Auto-populated Boeffla Wakelock Blocker on boot (wlan_pno_wl, wlan_extscan_wl, wlan_wow_wl, netmgr_wl)
-• Fixed Focaltech 3658u Touchscreen sleep EIO and CRC abnormal logs on screen off/on
-• Fixed Aftermarket / KW LCD DC dimming DCS commands and smart FPS fallback
+Changelog:
+• Backported modern eBPF support for Android 16 and 17
+• Fixed BPF loader boot issues on newer Android ROMs
+• Added dynamic kernel version reporting for BPF loaders
+• Added Adreno 650 GPU idle frequency reporting
+• Retained custom GPU undervolt and overclock profiles
+• Updated BakaSU and ReSukiSU integration
+• Fixed KernelSU Manager root detection
+• Synced SuSFS v2.3.0 inline hooks
+• Added non-root Ki-Profile controls
+• Added non-root bypass charging controls
+• Added Force Fast Charge controls
+• Added universal DC Dimming support
+• Added KCAL hardware color calibration
+• Added Dynamic Fsync controls
+• Tuned CPU scheduling and gaming frame pacing
+• Improved RAM reclaim and multitasking behavior
+• Improved Deep Sleep and background power consumption
+• Fixed screen-off charging freezes and Sleep of Death
+• Fixed AOSP boot freezes and kernel panic issues
+• Fixed lockscreen and display refresh-rate issues
+• Improved battery protection and bypass charging handling
+• Added native Linux container support
+• Added NoMount kernel integration
+• Added ADIOS I/O scheduler
+• Added CAKE queue management support
+• Added PS5 DualSense controller support
+• Improved touchscreen and haptic driver handling
+• Fixed background music playback during screen-off
+• Improved AnyKernel3 flashing and DTB handling
+• Unified support for Android 13–17 ROM builds
 
 ---
 
