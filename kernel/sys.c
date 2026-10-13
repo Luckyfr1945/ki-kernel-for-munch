@@ -1267,8 +1267,7 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 #endif
 	if (!strncasecmp(current->comm, "bpfloader", 9) ||
 		!strncasecmp(current->comm, "netbpfload", 10) ||
-		!strncasecmp(current->comm, "uprobestats", 11) ||
-		!strncasecmp(current->comm, "netd", 4)) {
+		!strncasecmp(current->comm, "uprobestats", 11)) {
 		strcpy(tmp.release, "5.15.404");
 		pr_info("fake uname: %s/%d release=%s\n",
 			 current->comm, current->pid, tmp.release);

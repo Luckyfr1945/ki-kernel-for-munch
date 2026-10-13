@@ -4150,8 +4150,8 @@ static void smblib_reg_work(struct work_struct *work)
 					b_temp = bval.intval;
 			}
 
-			/* Safety failsafe: disable bypass if SOC <= 15% or battery temp > 43°C (430) */
-			if ((b_soc >= 0 && b_soc <= 15) || (b_temp > 430)) {
+			/* Safety failsafe: disable bypass if SOC <= 15% or battery temp > 48°C (480) */
+			if ((b_soc >= 0 && b_soc <= 15) || (b_temp > 480)) {
 				pr_warn("SMB5: safety guard tripped! Disabling bypass (SOC=%d%%, Temp=%d.%dC)\n",
 					b_soc, b_temp / 10, b_temp % 10);
 				smblib_set_bypass(chg, false);
