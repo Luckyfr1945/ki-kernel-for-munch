@@ -15,14 +15,10 @@ Changelog:
 • Tuned hispeed frequencies and loads for smooth 120 Hz scrolling and gaming
 • Increased bypass charging thermal threshold to 48°C for extended gaming sessions
 • Fixed bypass charging cutting off after 30 minutes of heavy gaming
-• Added 3-mode Multi-Gen LRU (MGLRU) switcher: Off, Core, and Gaming Turbo (PTE Walk)
+• Tuned Multi-Gen LRU (MGLRU) with hardware PTE walk for heavy gaming and multitasking
 • Fixed aggressive LMKD kills and game crashes during memory pressure / zRAM saturation
-• Updated Ki-Optimizer WebUI, CLI (`ki`), and config with MGLRU mode selection
 • Added manual `newfstat` and `fstat64` hooks in `fs/stat.c` for reliable KSU init.rc injection
 • Disabled LSM AUTO_INITRC_HOOK in favor of native sys_read manual hooks
-• Fixed KernelSU modules not updating or deleting across system reboots
-• Preserved netd in dynamic uname spoofing to prevent Android 16/17 bootloops
-• Fixed Wi-Fi hotspot and tethering packet forwarding
 
 ---
 

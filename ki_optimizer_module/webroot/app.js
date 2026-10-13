@@ -201,12 +201,12 @@ async function refreshState() {
     mglru_sup=0; ([ -e /sys/kernel/mm/lru_gen/enabled ] || [ -e /proc/mglru ]) && mglru_sup=1
     mglru_raw=\$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo 0)
     mglru_mode=0
-    if [ "\$mglru_raw" = "0x0007" ] || [ "\$mglru_raw" = "7" ]; then
+    if [ "\$mglru_raw" = "0x0007" ] || [ "\$mglru_raw" = "0x0003" ] || [ "\$mglru_raw" = "7" ] || [ "\$mglru_raw" = "3" ]; then
       mglru_mode=7
     elif [ "\$mglru_raw" = "0x0001" ] || [ "\$mglru_raw" = "1" ]; then
       mglru_mode=1
-    elif [ "\$mglru_raw" != "0x0000" ] && [ "\$mglru_raw" != "0" ]; then
-      mglru_mode=1
+    else
+      mglru_mode=0
     fi
 
     bypass_sup=0; ([ -e /proc/bypass_charging ] || [ -e /sys/class/power_supply/battery/bypass_charging ]) && bypass_sup=1
@@ -396,6 +396,7 @@ async function applyChanges(silent = false) {
     CONF="/sdcard/ki_optimizer.conf"
     if [ -f "$CONF" ]; then
       sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${prof}/" "$CONF" 2>/dev/null
+      sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=${mglru}/" "$CONF" 2>/dev/null
       sed -i -E "s/^MGLRU_ENABLED=.*/MGLRU_ENABLED=${mglru}/" "$CONF" 2>/dev/null
       sed -i -E "s/^BYPASS_CHARGING=.*/BYPASS_CHARGING=${bypass}/" "$CONF" 2>/dev/null
       sed -i -E "s/^SCREEN_ON_FAST_CHARGE=.*/SCREEN_ON_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
@@ -425,17 +426,14 @@ async function applyChanges(silent = false) {
 // Event Listeners
 cardProf0.addEventListener("click", () => {
   setActiveProfileUI(0);
-  applyChanges(false);
 });
 
 cardProf1.addEventListener("click", () => {
   setActiveProfileUI(1);
-  applyChanges(false);
 });
 
 cardProf2.addEventListener("click", () => {
   setActiveProfileUI(2);
-  applyChanges(false);
 });
 
 mglruBtns.forEach(btn => {
@@ -443,7 +441,6 @@ mglruBtns.forEach(btn => {
     btn.addEventListener("click", () => {
       const mode = parseInt(btn.dataset.mode, 10);
       setMglruUI(mode, true);
-      applyChanges(false);
     });
   }
 });
