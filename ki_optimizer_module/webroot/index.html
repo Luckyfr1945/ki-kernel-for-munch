@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2f1eb">
+  <title>Ki Optimizer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Incompatible Kernel Modal (Shown only if non-Ki-Kernel is running) -->
+  <div id="unsupported-modal" class="modal-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-icon-cross">❌</div>
+      <h2 id="modal-title">Incompatible Kernel Detected!</h2>
+      <div class="modal-kernel-badge" id="modal-kernel-ver">Unknown Kernel</div>
+      <p class="modal-desc">
+        This module strictly requires <b>Ki-Kernel</b>.<br>
+        Your current kernel is not supported.
+      </p>
+      <p class="modal-sub">
+        All kernel tuning controls, MGLRU, and power profiles have been deactivated to prevent system instability. Please flash Ki-Kernel to re-enable this module.
+      </p>
+    </div>
+  </div>
+
+  <main class="app-shell">
+    <header class="page-header">
+      <div class="heading-copy">
+        <h1>Ki Optimizer</h1>
+        <p class="device-name" id="device-model">POCO F4 (munch)</p>
+      </div>
+    </header>
+
+    <section class="device-summary" aria-label="Device status">
+      <div class="summary-item">
+        <span class="summary-label">Active Profile</span>
+        <strong class="summary-value" id="cur-profile">BALANCED</strong>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Battery Level</span>
+        <strong class="summary-value" id="cur-battery">--%</strong>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Battery Temp</span>
+        <strong class="summary-value" id="cur-temp">--°C</strong>
+      </div>
+    </section>
+
+    <!-- Power Profiles Section -->
+    <section class="settings-section" aria-labelledby="profile-heading">
+      <div class="section-heading">
+        <h2 id="profile-heading">Power Profiles</h2>
+        <p>Choose device performance and energy efficiency priorities.</p>
+      </div>
+      <div class="profile-container" role="group" aria-label="Choose power profile">
+        <button type="button" class="profile-card bat" id="card-prof-0" data-profile="0" aria-pressed="false">
+          <span class="profile-name">Battery Saver</span>
+          <span class="profile-desc">Energy priority</span>
+        </button>
+        <button type="button" class="profile-card bal active" id="card-prof-1" data-profile="1" aria-pressed="true">
+          <span class="profile-name">Balanced</span>
+          <span class="profile-desc">General daily use</span>
+        </button>
+        <button type="button" class="profile-card perf" id="card-prof-2" data-profile="2" aria-pressed="false">
+          <span class="profile-name">Turbo Gaming</span>
+          <span class="profile-desc">Max performance</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Memory Tuning Section -->
+    <section class="settings-section" aria-labelledby="memory-heading">
+      <div class="section-heading">
+        <h2 id="memory-heading">Memory Tuning</h2>
+      </div>
+      <div class="settings-list">
+        <!-- MGLRU -->
+        <div class="setting-row setting-row-stack" id="row-mglru">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Multi-Gen LRU (MGLRU)</h3>
+              <span class="setting-status" id="badge-mglru">Checking...</span>
+            </div>
+            <p>Modern memory page reclaiming algorithm. Controls page table scanning depth.</p>
+          </div>
+          <div class="mglru-segmented" id="mglru-group">
+            <button type="button" class="mglru-btn" data-mode="0" id="btn-mglru-0">Off (0x0)</button>
+            <button type="button" class="mglru-btn" data-mode="1" id="btn-mglru-1">Standard (0x1)</button>
+            <button type="button" class="mglru-btn" data-mode="7" id="btn-mglru-7">Gaming (0x7)</button>
+          </div>
+        </div>
+
+        <!-- Swappiness Slider -->
+        <div class="setting-row setting-row-stack" id="row-swappiness">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>zRAM Swappiness</h3>
+              <span class="setting-status" id="badge-swappiness">Supported</span>
+            </div>
+            <p>Controls kernel aggressiveness in paging inactive memory pages into compressed zRAM.</p>
+          </div>
+          <div class="range-container">
+            <div class="range-header">
+              <label for="range-swappiness">Swappiness Level</label>
+              <output class="range-val" id="val-swappiness" for="range-swappiness">130</output>
+            </div>
+            <input type="range" id="range-swappiness" min="0" max="200" step="5" value="130">
+            <div class="range-scale"><span>0 (Low)</span><span>100 (Default)</span><span>200 (Aggressive)</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Power & Charging Section -->
+    <section class="settings-section" aria-labelledby="power-heading">
+      <div class="section-heading">
+        <h2 id="power-heading">Power & Charging</h2>
+      </div>
+      <div class="settings-list">
+        <!-- Bypass Charging -->
+        <div class="setting-row" id="row-bypass">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Bypass Charging (Direct Wall Power)</h3>
+              <span class="setting-status" id="badge-bypass">Checking...</span>
+            </div>
+            <p>Powers the hardware directly from the charger without routing through the battery. Keeps temperature cool during heavy gaming.</p>
+          </div>
+          <label class="switch" aria-label="Toggle bypass charging">
+            <input type="checkbox" id="toggle-bypass">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <!-- Fast Charge -->
+        <div class="setting-row" id="row-fastcharge">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Screen-On Fast Charge</h3>
+              <span class="setting-status" id="badge-fastcharge">Checking...</span>
+            </div>
+            <p>Forces maximum charging input current even while the display screen is turned on.</p>
+          </div>
+          <label class="switch" aria-label="Toggle screen-on fast charge">
+            <input type="checkbox" id="toggle-fastcharge">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <!-- Screen-Off Deep Eco -->
+        <div class="setting-row" id="row-screenoff">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Screen-Off Deep Eco</h3>
+              <span class="setting-status" id="badge-screenoff">Checking...</span>
+            </div>
+            <p>Reduces standby power drain and throttles idle background clock frequencies when screen is off.</p>
+          </div>
+          <label class="switch" aria-label="Toggle screen-off deep eco">
+            <input type="checkbox" id="toggle-screenoff">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- System & Storage Section -->
+    <section class="settings-section" aria-labelledby="system-heading">
+      <div class="section-heading">
+        <h2 id="system-heading">Storage & System</h2>
+      </div>
+      <div class="settings-list">
+        <!-- Dynamic Fsync -->
+        <div class="setting-row" id="row-dynfsync">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Dynamic Fsync</h3>
+              <span class="setting-status" id="badge-dynfsync">Checking...</span>
+            </div>
+            <p>Disables synchronous filesystem sync while screen is active for instant UFS 3.1 storage I/O and zero stutter.</p>
+          </div>
+          <label class="switch" aria-label="Toggle dynamic fsync">
+            <input type="checkbox" id="toggle-dynfsync">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <!-- Dynamic Thermal Guard -->
+        <div class="setting-row" id="row-thermal">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>Dynamic Thermal Guard</h3>
+              <span class="setting-status" id="badge-thermal">Checking...</span>
+            </div>
+            <p>Adaptive kernel thermal throttling governor to prevent sudden FPS frame drops during extended gameplay.</p>
+          </div>
+          <label class="switch" aria-label="Toggle thermal guard">
+            <input type="checkbox" id="toggle-thermal">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <!-- TCP Congestion Control -->
+        <div class="setting-row setting-row-select" id="row-tcp">
+          <div class="setting-copy">
+            <div class="setting-title-line">
+              <h3>TCP Congestion Algorithm</h3>
+              <span class="setting-status" id="badge-tcp">Checking...</span>
+            </div>
+            <p>Select TCP transmission algorithm for stable gaming ping and optimal download speeds.</p>
+          </div>
+          <label class="select-wrap" for="select-tcp">
+            <select class="custom-select" id="select-tcp">
+              <option value="bbr">bbr (Google BBR)</option>
+              <option value="westwood">westwood (Loss-Tolerant)</option>
+              <option value="cubic">cubic (Standard)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <footer class="page-note">
+      Features are dynamically verified and enabled according to Ki-Kernel capability nodes.
+    </footer>
+  </main>
+
+  <!-- Floating Apply Bar -->
+  <div class="bottom-bar">
+    <button class="btn-apply" id="btn-apply" type="button">Apply & Save Settings</button>
+  </div>
+
+  <!-- Toast Notice -->
+  <div class="toast-notice" id="toast" role="status" aria-live="polite">
+    <span class="toast-mark" aria-hidden="true"></span>
+    <span id="toast-text">Settings applied.</span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

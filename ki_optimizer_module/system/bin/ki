@@ -1,0 +1,322 @@
+#!/system/bin/sh
+# Ki-Kernel Controller & Optimizer CLI Tool
+
+CONF_PATH="/sdcard/ki_optimizer.conf"
+MOD_CONF="/data/adb/modules/ki_optimizer/ki_optimizer.conf"
+KERNEL_VER="$(uname -r)"
+
+# ANSI Colors
+R="\033[1;31m"
+G="\033[1;32m"
+Y="\033[1;33m"
+B="\033[1;36m"
+W="\033[1;37m"
+C="\033[0;36m"
+X="\033[0m"
+
+# Verify Ki-Kernel Compatibility
+verify_kernel() {
+    if ! echo "$KERNEL_VER" | grep -qi "ki-kernel" && [ ! -f /proc/ki_profile ] && [ ! -d /sys/kernel/ki_profile ]; then
+        echo -e "${R}╔════════════════════════════════════════════════════════╗${X}"
+        echo -e "${R}║         ❌ INCOMPATIBLE KERNEL DETECTED!               ║${X}"
+        echo -e "${R}╚════════════════════════════════════════════════════════╝${X}"
+        echo -e " Current Kernel: ${W}$KERNEL_VER${X}"
+        echo -e " ${R}This module strictly requires Ki-Kernel.${X}"
+        echo -e " Tweaks and profile controls have been deactivated."
+        echo ""
+        return 1
+    fi
+    return 0
+}
+
+apply_config() {
+    if ! verify_kernel; then return 1; fi
+
+    local conf=""
+    if [ -f "$CONF_PATH" ]; then
+        conf="$CONF_PATH"
+    elif [ -f "$MOD_CONF" ]; then
+        conf="$MOD_CONF"
+    fi
+
+    if [ -n "$conf" ]; then
+        local ki_p=$(grep -E "^KI_PROFILE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local mglru=$(grep -E "^MGLRU_MODE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        [ -z "$mglru" ] && mglru=$(grep -E "^MGLRU_ENABLED=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local bypass=$(grep -E "^BYPASS_CHARGING=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local s_fc=$(grep -E "^SCREEN_ON_FAST_CHARGE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local f_fc=$(grep -E "^FORCE_FAST_CHARGE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local s_bat=$(grep -E "^SCREEN_OFF_BATTERY=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local throt=$(grep -E "^THERMAL_THROTTLE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local dyn_fsync=$(grep -E "^DYNAMIC_FSYNC=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local tcp=$(grep -E "^TCP_CONGESTION=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local swap=$(grep -E "^SWAPPINESS=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local vfs=$(grep -E "^VFS_CACHE_PRESSURE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local sched=$(grep -E "^IO_SCHEDULER=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+
+        [ -n "$ki_p" ] && set_profile "$ki_p" silent
+        [ -n "$mglru" ] && set_mglru "$mglru" silent
+        [ -n "$bypass" ] && set_bypass "$bypass" silent
+        [ -n "$s_fc" ] && echo "$s_fc" > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
+        [ -n "$f_fc" ] && echo "$f_fc" > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+        [ -n "$s_bat" ] && echo "$s_bat" > /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
+        [ -n "$throt" ] && echo "$throt" > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
+        if [ -n "$dyn_fsync" ]; then
+            echo "$dyn_fsync" > /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null
+            echo "$dyn_fsync" > /sys/kernel/dyn_fsync/dyn_fsync_active 2>/dev/null
+        fi
+        [ -n "$tcp" ] && echo "$tcp" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+        [ -n "$swap" ] && echo "$swap" > /proc/sys/vm/swappiness 2>/dev/null
+        [ -n "$vfs" ] && echo "$vfs" > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+        if [ -n "$sched" ]; then
+            for q in /sys/block/*/queue/scheduler; do
+                [ -f "$q" ] && echo "$sched" > "$q" 2>/dev/null
+            done
+        fi
+        echo -e "${G}✔ Ki-Optimizer configuration successfully applied!${X}"
+    else
+        echo -e "${R}✖ Configuration file not found!${X}"
+    fi
+}
+
+set_profile() {
+    if ! verify_kernel; then return 1; fi
+    local val="$1"
+    local silent="$2"
+    case "$val" in
+        0|battery|bat)
+            echo 0 > /proc/ki_profile 2>/dev/null || echo 0 > /sys/kernel/ki_profile/mode 2>/dev/null
+            [ -z "$silent" ] && echo -e "${G}✔ CPU Profile set to: [0] BATTERY SAVER${X}"
+            ;;
+        1|balanced|bal)
+            echo 1 > /proc/ki_profile 2>/dev/null || echo 1 > /sys/kernel/ki_profile/mode 2>/dev/null
+            [ -z "$silent" ] && echo -e "${B}✔ CPU Profile set to: [1] BALANCED${X}"
+            ;;
+        2|perf|performance|turbo)
+            echo 2 > /proc/ki_profile 2>/dev/null || echo 2 > /sys/kernel/ki_profile/mode 2>/dev/null
+            [ -z "$silent" ] && echo -e "${Y}✔ CPU Profile set to: [2] TURBO PERFORMANCE${X}"
+            ;;
+        *)
+            [ -z "$silent" ] && echo -e "${R}Usage: ki [0|1|2|battery|balanced|perf]${X}"
+            ;;
+    esac
+}
+
+set_mglru() {
+    if ! verify_kernel; then return 1; fi
+    local val="$1"
+    local silent="$2"
+    if [ "$val" = "7" ] || [ "$val" = "turbo" ] || [ "$val" = "gaming" ] || [ "$val" = "max" ]; then
+        echo 1 > /proc/mglru 2>/dev/null
+        echo 0x0007 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+        [ -z "$silent" ] && echo -e "${G}✔ MGLRU: GAMING TURBO MODE (0x0007 - Core + Page Table Walk + PMD)!${X}"
+    elif [ "$val" = "1" ] || [ "$val" = "on" ] || [ "$val" = "enable" ] || [ "$val" = "standard" ] || [ "$val" = "core" ]; then
+        echo 0x0001 > /proc/mglru 2>/dev/null
+        echo 0x0001 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+        [ -z "$silent" ] && echo -e "${G}✔ MGLRU: STANDARD MODE (0x0001 - Core generation)!${X}"
+    else
+        echo 0 > /proc/mglru 2>/dev/null
+        echo 0x0000 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+        [ -z "$silent" ] && echo -e "${Y}✔ MGLRU: DISABLED (Traditional 2-list LRU)${X}"
+    fi
+}
+
+set_bypass() {
+    if ! verify_kernel; then return 1; fi
+    local val="$1"
+    local silent="$2"
+    if [ "$val" = "1" ] || [ "$val" = "on" ] || [ "$val" = "enable" ]; then
+        echo 1 > /proc/bypass_charging 2>/dev/null
+        echo 1 > /sys/class/power_supply/battery/bypass_charging 2>/dev/null
+        [ -z "$silent" ] && echo -e "${G}✔ Bypass Charging: ACTIVATED (Direct wall power, safety intact)!${X}"
+    else
+        echo 0 > /proc/bypass_charging 2>/dev/null
+        echo 0 > /sys/class/power_supply/battery/bypass_charging 2>/dev/null
+        [ -z "$silent" ] && echo -e "${Y}✔ Bypass Charging: DEACTIVATED (Normal Charging)${X}"
+    fi
+}
+
+set_fastcharge() {
+    if ! verify_kernel; then return 1; fi
+    local val="$1"
+    local silent="$2"
+    if [ "$val" = "1" ] || [ "$val" = "on" ] || [ "$val" = "enable" ]; then
+        echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+        echo 1 > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
+        [ -z "$silent" ] && echo -e "${G}✔ Fast Charge Overdrive: ON!${X}"
+    else
+        echo 0 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+        echo 0 > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
+        [ -z "$silent" ] && echo -e "${Y}✔ Fast Charge Overdrive: OFF${X}"
+    fi
+}
+
+show_status() {
+    local cur_p=$(cat /sys/kernel/ki_profile/mode 2>/dev/null || cut -d' ' -f1 /proc/ki_profile 2>/dev/null || echo "?")
+    local cur_mglru=$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo "0")
+    local cur_bypass=$(cat /proc/bypass_charging 2>/dev/null || cat /sys/class/power_supply/battery/bypass_charging 2>/dev/null || echo "0")
+    local cur_sfc=$(cat /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null || echo "0")
+    local cur_ffc=$(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo "0")
+    local cur_throt=$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo "1")
+    local cur_sbat=$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo "1")
+    local cur_fsync=$(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo "0")
+    local cur_tcp=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "cubic")
+    local cur_swap=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "80")
+
+    local p_str="${B}Balanced [1]${X}"
+    [ "$cur_p" = "0" ] && p_str="${G}Battery Saver [0]${X}"
+    [ "$cur_p" = "2" ] && p_str="${Y}Turbo Performance [2]${X}"
+
+    local mglru_str="${R}DISABLED${X}"
+    [ "$cur_mglru" != "0x0000" ] && [ "$cur_mglru" != "0" ] && mglru_str="${G}ENABLED ($cur_mglru)${X}"
+
+    local bypass_str="${W}OFF${X}"
+    [ "$cur_bypass" = "1" ] && bypass_str="${G}ON (Direct Power)${X}"
+
+    local ffc_str="${W}OFF${X}"
+    [ "$cur_ffc" = "1" ] && ffc_str="${G}ON${X}"
+
+    local sbat_str="${W}OFF${X}"
+    [ "$cur_sbat" = "1" ] && sbat_str="${G}ON${X}"
+
+    local fsync_str="${W}OFF${X}"
+    [ "$cur_fsync" = "1" ] && fsync_str="${G}ON${X}"
+
+    echo -e "${C}╔════════════════════════════════════════════════════════╗${X}"
+    echo -e "${C}║         ${W}KI-KERNEL CONTROLLER & OPTIMIZER${C}               ║${X}"
+    echo -e "${C}╚════════════════════════════════════════════════════════╝${X}"
+    echo -e " Device : ${W}$(getprop ro.product.model 2>/dev/null || echo "Poco F4") (${W}$(getprop ro.product.device 2>/dev/null || echo "munch")${X})"
+    echo -e " Kernel : ${W}$KERNEL_VER${X}"
+    echo -e "${C}────────────────────────────────────────────────────────${X}"
+    echo -e " • CPU Profile         : $p_str"
+    echo -e " • Multi-Gen LRU       : $mglru_str"
+    echo -e " • Bypass Charging     : $bypass_str"
+    echo -e " • Fast Charge Max     : $ffc_str"
+    echo -e " • Screen-Off Battery  : $sbat_str"
+    echo -e " • Dynamic Fsync       : $fsync_str"
+    echo -e " • TCP Algorithm       : ${W}$cur_tcp${X}"
+    echo -e " • zRAM Swappiness     : ${W}$cur_swap${X}"
+    echo -e "${C}────────────────────────────────────────────────────────${X}"
+}
+
+interactive_menu() {
+    while true; do
+        clear
+        show_status
+        echo -e "${W}Quick Commands Menu:${X}"
+        echo -e "  [${G}0${X}] Set Battery Saver Profile"
+        echo -e "  [${B}1${X}] Set Balanced Profile"
+        echo -e "  [${Y}2${X}] Set Turbo Performance Profile"
+        echo -e "  [${C}m${X}] Toggle MGLRU (On/Off)"
+        echo -e "  [${C}b${X}] Toggle Bypass Charging (On/Off)"
+        echo -e "  [${C}f${X}] Toggle Fast Charge Overdrive (On/Off)"
+        echo -e "  [${C}r${X}] Reload from /sdcard/ki_optimizer.conf"
+        echo -e "  [${R}q${X}] Exit"
+        echo ""
+        echo -n -e "${Y}Select option [0/1/2/m/b/f/r/q]: ${X}"
+        read opt
+        case "$opt" in
+            0) set_profile 0 ;;
+            1) set_profile 1 ;;
+            2) set_profile 2 ;;
+            m|M)
+                cur_m=$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo "0")
+                if [ "$cur_m" = "0x0000" ] || [ "$cur_m" = "0" ]; then
+                    set_mglru 1
+                elif [ "$cur_m" = "0x0001" ] || [ "$cur_m" = "1" ]; then
+                    set_mglru 7
+                else
+                    set_mglru 0
+                fi
+                ;;
+            b|B)
+                cur_b=$(cat /proc/bypass_charging 2>/dev/null || echo "0")
+                if [ "$cur_b" = "1" ]; then
+                    set_bypass 0
+                else
+                    set_bypass 1
+                fi
+                ;;
+            f|F)
+                cur_f=$(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo "0")
+                if [ "$cur_f" = "1" ]; then
+                    set_fastcharge 0
+                else
+                    set_fastcharge 1
+                fi
+                ;;
+            r|R) apply_config ;;
+            q|Q) break ;;
+            *) echo -e "${R}Invalid option!${X}" ;;
+        esac
+        echo -e "${W}Press Enter to continue...${X}"
+        read dummy
+    done
+}
+
+# Entrypoint routing
+case "$1" in
+    ""|menu)
+        interactive_menu
+        ;;
+    status)
+        show_status
+        ;;
+    json)
+        cat <<EOF
+{
+  "is_ki_kernel": $(verify_kernel >/dev/null 2>&1 && echo true || echo false),
+  "profile": $(cat /sys/kernel/ki_profile/mode 2>/dev/null || cut -d' ' -f1 /proc/ki_profile 2>/dev/null || echo 1),
+  "mglru": "$([ "$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null)" != "0x0000" ] && [ "$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null)" != "0" ] && echo 1 || echo 0)",
+  "mglru_raw": "$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo 0)",
+  "bypass": $(cat /proc/bypass_charging 2>/dev/null || cat /sys/class/power_supply/battery/bypass_charging 2>/dev/null || echo 0),
+  "fast_charge": $(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo 0),
+  "dyn_fsync": $(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo 0),
+  "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
+  "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 1),
+  "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
+  "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),
+  "battery_pct": $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0),
+  "battery_temp": $(echo $(( $(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 300) / 10 ))),
+  "kernel": "$(uname -r)",
+  "model": "$(getprop ro.product.model 2>/dev/null || echo munch)"
+}
+EOF
+        ;;
+    0|bat|battery)
+        set_profile 0
+        ;;
+    1|bal|balanced)
+        set_profile 1
+        ;;
+    2|perf|performance|turbo)
+        set_profile 2
+        ;;
+    mglru)
+        set_mglru "$2"
+        ;;
+    bypass)
+        set_bypass "$2"
+        ;;
+    fastcharge|fc)
+        set_fastcharge "$2"
+        ;;
+    reload|apply)
+        apply_config
+        ;;
+    help|--help|-h)
+        echo "Ki-Kernel Optimizer CLI Help:"
+        echo "  ki             : Open Interactive TUI Dashboard"
+        echo "  ki status      : Display current kernel tuning status"
+        echo "  ki 0 / battery : Set Battery Saver profile"
+        echo "  ki 1 / balanced: Set Balanced profile"
+        echo "  ki 2 / perf    : Set Turbo Performance profile"
+        echo "  ki mglru [0|1|7]: MGLRU Mode (0=Off, 1=Standard, 7=Gaming Turbo)"
+        echo "  ki bypass [1|0]: Enable/Disable Bypass Charging"
+        echo "  ki fc [1|0]    : Enable/Disable Fast Charge Overdrive"
+        echo "  ki reload      : Apply settings from /sdcard/ki_optimizer.conf"
+        ;;
+    *)
+        echo "Unknown command '$1'. Run 'ki help' for instructions."
+        ;;
+esac

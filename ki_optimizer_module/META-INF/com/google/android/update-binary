@@ -1,0 +1,21 @@
+#!/sbin/sh
+##########################################################################################
+# Magisk / KernelSU Module Package
+##########################################################################################
+umask 022
+
+# OUTFD and ZIPFILE are passed by recovery or manager
+OUTFD=$2
+ZIPFILE=$3
+
+# Recovery or Magisk/KernelSU execution
+if [ -f /data/adb/ksu/bin/busybox ]; then
+    export ASH_STANDALONE=1
+    exec /data/adb/ksu/bin/busybox sh -c ". /data/adb/ksu/bin/installer.sh; install_module"
+elif [ -f /data/adb/magisk/busybox ]; then
+    export ASH_STANDALONE=1
+    exec /data/adb/magisk/busybox sh -c ". /data/adb/magisk/util_functions.sh; install_module"
+else
+    # In-app installation fallback
+    exit 0
+fi

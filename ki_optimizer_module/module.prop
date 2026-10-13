@@ -1,0 +1,6 @@
+id=ki_optimizer
+name=Ki-Kernel Settings
+version=v1.0
+versionCode=100
+author=kiki
+description=WebUI Controller for Ki-Kernel: Profile switcher, MGLRU, Bypass Charging, Fast Charge, Dynamic Fsync, Thermal Guard & TCP BBR via KernelSU WebUI.
