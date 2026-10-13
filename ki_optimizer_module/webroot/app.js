@@ -177,13 +177,13 @@ function setMglruUI(mode, isSupported = true) {
   if (badgeMglru) {
     badgeMglru.classList.remove("is-unsupported");
     if (currentMglruMode === 0) {
-      badgeMglru.textContent = "Disabled (0x0)";
+      badgeMglru.textContent = "Disabled";
       badgeMglru.classList.add("is-off");
     } else if (currentMglruMode === 1) {
-      badgeMglru.textContent = "Standard (0x1)";
+      badgeMglru.textContent = "Standard";
       badgeMglru.classList.remove("is-off");
     } else if (currentMglruMode === 7) {
-      badgeMglru.textContent = "Gaming Turbo (0x7)";
+      badgeMglru.textContent = "Gaming Turbo";
       badgeMglru.classList.remove("is-off");
     }
   }
