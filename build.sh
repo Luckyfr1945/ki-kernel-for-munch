@@ -165,6 +165,7 @@ apply_ksu_config() {
         else
             scripts/config --file out/.config \
                 -e KSU_MANUAL_HOOK \
+                -d KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
                 -d KSU_TRACEPOINT_HOOK \
                 -d KSU_SUSFS \
                 -d KSU_SUSFS_SUS_PATH \
