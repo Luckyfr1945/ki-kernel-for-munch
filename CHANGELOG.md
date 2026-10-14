@@ -36,6 +36,9 @@ Changelog:
 • Fixed LIRC signal trailing space truncation in `lirc_dev.c` for accurate IR protocol packet transmission
 • Fine-tuned Balanced profile with 500µs schedutil ramp-up and 80/70 migration threshold to eliminate micro-janks
 • Added dynamic per-cluster `iowait_boost_max` control in `cpufreq_schedutil.c` and `ki_profile`: 0% on Battery (zero phantom drain), tiered clamp on Balanced (70/55/35%), and 100% on Performance (instant texture streaming)
+• Backported Linux 5.16 Futex2 `futex_waitv` (syscall 449) with 32-bit compat for Winlator/Wine/Proton low-latency multi-wait fsync
+• Optimized block I/O path (`block/bio.c`, `linux/bvec.h`, `linux/bio.h`) with single-segment iterator (`bio_advance_iter_single`), asynchronous `submit_bio_nowait()`, and compound page lock avoidance
+• Integrated lockless per-CPU Blake2s CSPRNG rewrite for instant boot entropy and zero-lock cryptographic operations
 
 ---
 
