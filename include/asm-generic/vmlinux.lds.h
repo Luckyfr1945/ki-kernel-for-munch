@@ -67,12 +67,12 @@
  * sections to be brought in with rodata.
  */
 #if defined(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION) || defined(CONFIG_LTO_CLANG)
-#define TEXT_MAIN .text .text.[0-9a-zA-Z_]*
+#define TEXT_MAIN .text .text.[0-9a-zA-Z_]* .text..L*
 #define TEXT_CFI_MAIN .text.[0-9a-zA-Z_]*.cfi
 #define DATA_MAIN .data .data.[0-9a-zA-Z_]* .data..L* .data..compoundliteral*
 #define SDATA_MAIN .sdata .sdata.[0-9a-zA-Z_]*
 #define RODATA_MAIN .rodata .rodata.[0-9a-zA-Z_]* .rodata..L*
-#define BSS_MAIN .bss .bss.[0-9a-zA-Z_]* .bss..compoundliteral*
+#define BSS_MAIN .bss .bss.[0-9a-zA-Z_]* .bss..L* .bss..compoundliteral*
 #define SBSS_MAIN .sbss .sbss.[0-9a-zA-Z_]*
 #else
 #define TEXT_MAIN .text
@@ -208,7 +208,7 @@
 #ifdef CONFIG_SECURITY
 #define LSM_TABLE()	. = ALIGN(8);					\
 			__start_lsm_info = .;				\
-			KEEP(*(.lsm_info.init))				\
+			KEEP(*(.lsm_info.init*))			\
 			__end_lsm_info = .;
 #else
 #define LSM_TABLE()
@@ -297,6 +297,7 @@
 #define READ_MOSTLY_DATA(align)						\
 	. = ALIGN(align);						\
 	*(.data..read_mostly)						\
+	*(.data..read_mostly.*)						\
 	. = ALIGN(align);
 
 #define CACHELINE_ALIGNED_DATA(align)					\
@@ -322,6 +323,8 @@
 	. = ALIGN(8);							\
 	__start_ro_after_init = .;					\
 	*(.data..ro_after_init)						\
+	*(.data..ro_after_init.*)					\
+	*(.data..ro_after_init..*)					\
 	__end_ro_after_init = .;
 #endif
 
@@ -516,10 +519,11 @@
 #define TEXT_TEXT							\
 		ALIGN_FUNCTION();					\
 		*(.text.hot .text.hot.*)				\
-		*(TEXT_MAIN .text.fixup)				\
 		*(.text.unlikely .text.unlikely.*)			\
 		*(.text.unknown .text.unknown.*)			\
+		*(.text.split .text.split.*)				\
 		*(TEXT_CFI_MAIN) 					\
+		*(TEXT_MAIN .text.fixup)				\
 		NOINSTR_TEXT						\
 		*(.text..refcount)					\
 		*(.text..ftrace)					\
@@ -824,17 +828,17 @@
 #define INIT_SETUP(initsetup_align)					\
 		. = ALIGN(initsetup_align);				\
 		__setup_start = .;					\
-		KEEP(*(.init.setup))					\
+		KEEP(*(.init.setup*))					\
 		__setup_end = .;
 
 #define INIT_CALLS_LEVEL(level)						\
 		__initcall##level##_start = .;				\
-		KEEP(*(.initcall##level##.init))			\
-		KEEP(*(.initcall##level##s.init))			\
+		KEEP(*(.initcall##level##.init*))			\
+		KEEP(*(.initcall##level##s.init*))			\
 
 #define INIT_CALLS							\
 		__initcall_start = .;					\
-		KEEP(*(.initcallearly.init))				\
+		KEEP(*(.initcallearly.init*))				\
 		INIT_CALLS_LEVEL(0)					\
 		INIT_CALLS_LEVEL(1)					\
 		INIT_CALLS_LEVEL(2)					\
@@ -848,12 +852,12 @@
 
 #define CON_INITCALL							\
 		__con_initcall_start = .;				\
-		KEEP(*(.con_initcall.init))				\
+		KEEP(*(.con_initcall.init*))				\
 		__con_initcall_end = .;
 
 #define SECURITY_INITCALL						\
 		__security_initcall_start = .;				\
-		KEEP(*(.security_initcall.init))			\
+		KEEP(*(.security_initcall.init*))			\
 		__security_initcall_end = .;
 
 #ifdef CONFIG_BLK_DEV_INITRD
