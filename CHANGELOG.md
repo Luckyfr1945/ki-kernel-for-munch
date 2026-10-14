@@ -19,6 +19,16 @@ Changelog:
 • Fixed aggressive LMKD kills and game crashes during memory pressure / zRAM saturation
 • Added manual `newfstat` and `fstat64` hooks in `fs/stat.c` for reliable KSU init.rc injection
 • Disabled LSM AUTO_INITRC_HOOK in favor of native sys_read manual hooks
+• Fixed race condition in Thermal Auto-Guard (`ki_profile`) during Performance profile switch
+• Added Power Supply notifier to dynamically adjust screen-off profile on charger connect/disconnect
+• Improved thermal sensor resolution in `ki_profile` with asynchronous retry for late-probing sensors
+• Fixed boot settlement log reporting true active profile during screen-off boot
+• Fixed AOSP boot hangs across custom ROMs with multi-format ramdisk decompressors (LZ4, XZ, LZO, GZIP)
+• Added EROFS compression & security xattr configs (`CONFIG_EROFS_FS_SECURITY`, `CONFIG_EROFS_FS_ZIP`)
+• Added `CONFIG_FHANDLE` for modern Android init and Apexd container compatibility
+• Modernized Clang ThinLTO linker script with upstream wildcards (`..L*`, `ro_after_init`, initcall tables)
+• Restricted `-fsplit-lto-unit` to CFI configurations to eliminate ThinLTO driver symbol misplacements
+• Disabled `CONFIG_MODVERSIONS` to prevent symbol CRC mismatch on vendor modules with Clang LTO
 
 ---
 

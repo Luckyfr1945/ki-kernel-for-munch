@@ -100,20 +100,26 @@ static void ki_guard_resolve_zones(void)
 {
 	struct thermal_zone_device *tz;
 	int i, valid_count = 0;
+	const int total_zones = ARRAY_SIZE(ki_guard_die_zones) + 1;
 
 	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
-		tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
-		ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
+		if (!ki_guard_die_tz[i]) {
+			tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
+			ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
+		}
 		if (ki_guard_die_tz[i])
 			valid_count++;
 	}
-	tz = thermal_zone_get_zone_by_name("quiet_therm");
-	ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
+
+	if (!ki_guard_skin_tz) {
+		tz = thermal_zone_get_zone_by_name("quiet_therm");
+		ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
+	}
 	if (ki_guard_skin_tz)
 		valid_count++;
 
-	/* Only mark resolved if at least one thermal zone is valid */
-	if (valid_count > 0)
+	/* Only mark resolved if all expected thermal zones are found */
+	if (valid_count == total_zones)
 		ki_guard_resolved = true;
 }
 
@@ -341,8 +347,9 @@ static int apply_ki_profile(int mode, bool force)
 
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
 
-	/* Atomic thermal state switch under spinlock */
+	/* Atomic thermal & active mode state switch under spinlock */
 	spin_lock_irqsave(&ki_guard_lock, flags);
+	WRITE_ONCE(ki_active_mode, mode);
 	ki_thermal_throttle_enabled = t->thermal_throttle;
 	ki_guard_tripped = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
@@ -351,7 +358,7 @@ static int apply_ki_profile(int mode, bool force)
 	if (!t->thermal_throttle)
 		mod_delayed_work(system_power_efficient_wq, &ki_guard_work, 0);
 	else
-		cancel_delayed_work(&ki_guard_work);
+		cancel_delayed_work_sync(&ki_guard_work);
 
 	/*
 	 * Update VM watermarks only on explicit force switch (boot or user sysfs),
@@ -366,7 +373,6 @@ static int apply_ki_profile(int mode, bool force)
 		setup_per_zone_wmarks();
 	}
 
-	WRITE_ONCE(ki_active_mode, mode);
 	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
 	return err;
 }
@@ -454,6 +460,27 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 
 static struct notifier_block ki_display_nb = {
 	.notifier_call = ki_display_notifier_cb,
+};
+
+static int ki_psy_notifier_cb(struct notifier_block *nb,
+			      unsigned long event, void *data)
+{
+	struct power_supply *psy = data;
+
+	if (event != PSY_EVENT_PROP_CHANGED || !psy || !psy->desc || !psy->desc->name)
+		return NOTIFY_OK;
+
+	if (!strcmp(psy->desc->name, "battery") || !strcmp(psy->desc->name, "usb")) {
+		if (!READ_ONCE(ki_screen_on)) {
+			mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
+					 msecs_to_jiffies(1000));
+		}
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block ki_psy_nb = {
+	.notifier_call = ki_psy_notifier_cb,
 };
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -651,8 +678,14 @@ static void ki_profile_delayed_work_fn(struct work_struct *work)
 		return;
 	}
 
-	pr_info("ki_profile: Boot settlement complete, profile %d (%s) active\n",
-		READ_ONCE(current_profile_mode), profile_names[READ_ONCE(current_profile_mode)]);
+	{
+		int active = ki_get_active_profile();
+		const char *active_name = (active >= 0 && active < KI_PROFILE_MAX) ?
+					  profile_names[active] : "unknown";
+
+		pr_info("ki_profile: Boot settlement complete, profile %d (%s) active\n",
+			active, active_name);
+	}
 }
 
 static int __init ki_profile_init(void)
@@ -691,6 +724,11 @@ static int __init ki_profile_init(void)
 	if (rc)
 		pr_warn("ki_profile: display notifier register failed (%d), screen-off battery disabled\n",
 			rc);
+
+	/* 5. Register Power Supply notifier for charging state changes while screen off */
+	rc = power_supply_reg_notifier(&ki_psy_nb);
+	if (rc)
+		pr_warn("ki_profile: power supply notifier register failed (%d)\n", rc);
 
 	/*
 	 * Schedule delayed enforcement after 25 seconds so userspace post_boot
