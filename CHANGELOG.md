@@ -34,6 +34,7 @@ Changelog:
 • Fixed broken process comm check (`service_is_ir`) that rejected `/dev/ir_spi` access with `-ENODEV` on MIUI/HyperOS
 • Added dummy regulator (`irda_regulator`) to SM8250 device tree and bound power supply to SPI SE2
 • Fixed LIRC signal trailing space truncation in `lirc_dev.c` for accurate IR protocol packet transmission
+• Fine-tuned Balanced profile with 500µs schedutil ramp-up and 80/70 migration threshold to eliminate micro-janks
 
 ---
 

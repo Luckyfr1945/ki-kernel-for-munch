@@ -264,22 +264,22 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
 	 * Balanced:
 	 * Nyaman, super smooth, dan adem untuk harian & gaming santai (sosmed, chat, UI responsif).
-	 * Schedutil up-rate cepat (up_us: 500us, 1000us, 1500us) saat interaksi sentuhan.
+	 * Schedutil up-rate instan 500us di semua cluster untuk merespons burst render tanpa micro-jank.
 	 * Down-rate hold time diset stabil ke 20ms (20000us) sinkron dengan ritme frame display,
 	 * mencegah clock bouncing / frequency thrashing yang memicu panas & micro-stutter (nyendat).
-	 * Hispeed responsif: Silver 1.21GHz, Gold 1.57GHz, Prime 1.76GHz pada load 75-80%.
-	 * Migrasi seimbang (up_migrate = 85, down_migrate = 75) agar app berat dibantu Gold tanpa lag.
+	 * Hispeed responsif: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz pada load 70-80%.
+	 * Migrasi seimbang (up_migrate = 80, down_migrate = 70) agar game/app berat dibantu Gold tanpa lag.
 	 * Swappiness = 80, Wmark = 16, vfs_cache_pressure = 80 (anti-kill multitasking).
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500,  .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80 },
-			{ .up_us = 1000, .down_us = 20000, .hispeed_freq = 1574400, .hispeed_load = 75 },
-			{ .up_us = 1500, .down_us = 20000, .hispeed_freq = 1766400, .hispeed_load = 75 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1651200, .hispeed_load = 70 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1804800, .hispeed_load = 70 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 85, .down_migrate = 75,
-		.grp_up_migrate = 95, .grp_down_migrate = 85,
+		.up_migrate = 80, .down_migrate = 70,
+		.grp_up_migrate = 90, .grp_down_migrate = 80,
 		.window_stats_policy = 2,
 		.swappiness = 80, .wmark_scale = 16, .vfs_cache_pressure = 80,
 	},
