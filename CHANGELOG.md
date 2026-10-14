@@ -29,6 +29,11 @@ Changelog:
 • Modernized Clang ThinLTO linker script with upstream wildcards (`..L*`, `ro_after_init`, initcall tables)
 • Restricted `-fsplit-lto-unit` to CFI configurations to eliminate ThinLTO driver symbol misplacements
 • Disabled `CONFIG_MODVERSIONS` to prevent symbol CRC mismatch on vendor modules with Clang LTO
+• Replaced single-node IR driver with clean Hybrid Dual-Interface driver (`/dev/lirc0` for AOSP and `/dev/ir_spi` for MIUI)
+• Fixed IR transmission failure on AOSP custom ROMs by restoring rc-core LIRC device node and pulse-space modulation
+• Fixed broken process comm check (`service_is_ir`) that rejected `/dev/ir_spi` access with `-ENODEV` on MIUI/HyperOS
+• Added dummy regulator (`irda_regulator`) to SM8250 device tree and bound power supply to SPI SE2
+• Fixed LIRC signal trailing space truncation in `lirc_dev.c` for accurate IR protocol packet transmission
 
 ---
 
