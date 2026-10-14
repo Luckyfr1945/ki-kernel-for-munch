@@ -14,6 +14,7 @@ int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz);
 int sugov_set_cluster_hispeed(unsigned int cpu, unsigned int freq_hz, unsigned int load);
 int sugov_set_cluster_floor(unsigned int cpu, unsigned int freq_hz);
 int sugov_set_cluster_pl(unsigned int cpu, bool enable);
+int sugov_set_cluster_iowait_boost(unsigned int cpu, unsigned int max_pct);
 void kgsl_set_performance_mode(bool enable);
 void sched_set_updown_migrate(unsigned int up, unsigned int down);
 void sched_set_group_updown_migrate(unsigned int up_pct, unsigned int down_pct);

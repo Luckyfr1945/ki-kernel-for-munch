@@ -35,6 +35,7 @@ Changelog:
 • Added dummy regulator (`irda_regulator`) to SM8250 device tree and bound power supply to SPI SE2
 • Fixed LIRC signal trailing space truncation in `lirc_dev.c` for accurate IR protocol packet transmission
 • Fine-tuned Balanced profile with 500µs schedutil ramp-up and 80/70 migration threshold to eliminate micro-janks
+• Added dynamic per-cluster `iowait_boost_max` control in `cpufreq_schedutil.c` and `ki_profile`: 0% on Battery (zero phantom drain), tiered clamp on Balanced (70/55/35%), and 100% on Performance (instant texture streaming)
 
 ---
 

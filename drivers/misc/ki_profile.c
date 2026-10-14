@@ -224,6 +224,7 @@ struct ki_cluster_tune {
 	unsigned int hispeed_load;	/* % */
 	unsigned int rtg_boost_freq;	/* kHz, 0 = disabled */
 	unsigned int floor_freq;	/* kHz, 0 = disabled */
+	unsigned int iowait_boost_max;	/* % (0 = disabled, 100 = full) */
 };
 
 struct ki_profile_tune {
@@ -251,9 +252,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 2000,  .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 95 },
-			{ .up_us = 4000,  .down_us = 2000, .hispeed_freq = 1171200, .hispeed_load = 95 },
-			{ .up_us = 8000,  .down_us = 2000, .hispeed_freq = 1267200, .hispeed_load = 95 },
+			{ .up_us = 2000,  .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 95, .iowait_boost_max = 0 },
+			{ .up_us = 4000,  .down_us = 2000, .hispeed_freq = 1171200, .hispeed_load = 95, .iowait_boost_max = 0 },
+			{ .up_us = 8000,  .down_us = 2000, .hispeed_freq = 1267200, .hispeed_load = 95, .iowait_boost_max = 0 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 98, .down_migrate = 90,
@@ -273,9 +274,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80 },
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1651200, .hispeed_load = 70 },
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1804800, .hispeed_load = 70 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80, .iowait_boost_max = 70 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1651200, .hispeed_load = 70, .iowait_boost_max = 55 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1804800, .hispeed_load = 70, .iowait_boost_max = 35 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 80, .down_migrate = 70,
@@ -296,9 +297,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ 0, 10000, 1420800, 70, 1420800, 691200 },
-			{ 0, 16000, 2150400, 60, 2150400, 1056000 },
-			{ 0, 20000, 2649600, 65, 2649600, 1075200 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 16000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100 },
 		},
 		.pl = true,
 		.gpu_perf = true,
@@ -334,6 +335,7 @@ static int apply_ki_profile(int mode, bool force)
 		sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq);
 		sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load);
 		sugov_set_cluster_floor(cpu, c->floor_freq);
+		sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max);
 		sugov_set_cluster_pl(cpu, t->pl);
 	}
 

@@ -25,6 +25,7 @@ struct sugov_tunables {
 	unsigned int		hispeed_freq;
 	unsigned int		rtg_boost_freq;
 	unsigned int		floor_freq;
+	unsigned int		iowait_boost_max;
 	bool			pl;
 };
 
@@ -530,6 +531,13 @@ static void sugov_iowait_boost(struct sugov_cpu *sg_cpu, u64 time,
 {
 	bool set_iowait_boost = flags & SCHED_CPUFREQ_IOWAIT;
 
+	if (sg_cpu->sg_policy && sg_cpu->sg_policy->tunables &&
+	    !READ_ONCE(sg_cpu->sg_policy->tunables->iowait_boost_max)) {
+		sg_cpu->iowait_boost = 0;
+		sg_cpu->iowait_boost_pending = false;
+		return;
+	}
+
 	/* Reset boost if the CPU appears to have been idle enough */
 	if (sg_cpu->iowait_boost &&
 	    sugov_iowait_reset(sg_cpu, time, set_iowait_boost))
@@ -600,23 +608,20 @@ static unsigned long sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
 
 	sg_cpu->iowait_boost_pending = false;
 
-	/*
-	 * @util is already in capacity scale; convert iowait_boost
-	 * into the same scale so we can compare.
-	 * Tiered I/O Wait Boost Limiter:
-	 * Cap iowait_boost across clusters to prevent max-frequency
-	 * spikes during video streaming/buffering (TikTok, IG, YouTube):
-	 * Little cores (CPU 0-3): Cap 70%
-	 * Gold cores   (CPU 4-6): Cap 55%
-	 * Prime core   (CPU 7):   Cap 35%
-	 */
-	boost = (sg_cpu->iowait_boost * max) >> SCHED_CAPACITY_SHIFT;
-	if (sg_cpu->cpu < 4)
-		boost = min(boost, (max * 70) / 100);
-	else if (sg_cpu->cpu < 7)
-		boost = min(boost, (max * 55) / 100);
-	else
-		boost = min(boost, (max * 35) / 100);
+	if (sg_cpu->sg_policy && sg_cpu->sg_policy->tunables) {
+		unsigned int pct = READ_ONCE(sg_cpu->sg_policy->tunables->iowait_boost_max);
+
+		if (!pct) {
+			sg_cpu->iowait_boost = 0;
+			return util;
+		}
+
+		boost = (sg_cpu->iowait_boost * max) >> SCHED_CAPACITY_SHIFT;
+		if (pct < 100)
+			boost = min(boost, (max * pct) / 100);
+	} else {
+		boost = (sg_cpu->iowait_boost * max) >> SCHED_CAPACITY_SHIFT;
+	}
 
 	return max(boost, util);
 }
@@ -1126,6 +1131,28 @@ static ssize_t pl_store(struct gov_attr_set *attr_set, const char *buf,
 	return count;
 }
 
+static ssize_t iowait_boost_max_show(struct gov_attr_set *attr_set, char *buf)
+{
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", tunables->iowait_boost_max);
+}
+
+static ssize_t iowait_boost_max_store(struct gov_attr_set *attr_set, const char *buf,
+				      size_t count)
+{
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
+	unsigned int val;
+
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	tunables->iowait_boost_max = min(100U, val);
+
+	return count;
+}
+
+static struct governor_attr iowait_boost_max = __ATTR_RW(iowait_boost_max);
 static struct governor_attr hispeed_load = __ATTR_RW(hispeed_load);
 static struct governor_attr hispeed_freq = __ATTR_RW(hispeed_freq);
 static struct governor_attr rtg_boost_freq = __ATTR_RW(rtg_boost_freq);
@@ -1139,6 +1166,7 @@ static struct attribute *sugov_attributes[] = {
 	&hispeed_freq.attr,
 	&rtg_boost_freq.attr,
 	&floor_freq.attr,
+	&iowait_boost_max.attr,
 	&pl.attr,
 	NULL
 };
@@ -1263,6 +1291,7 @@ static void sugov_tunables_save(struct cpufreq_policy *policy,
 	cached->rtg_boost_freq = tunables->rtg_boost_freq;
 	cached->hispeed_freq = tunables->hispeed_freq;
 	cached->floor_freq = tunables->floor_freq;
+	cached->iowait_boost_max = tunables->iowait_boost_max;
 	cached->up_rate_limit_us = tunables->up_rate_limit_us;
 	cached->down_rate_limit_us = tunables->down_rate_limit_us;
 }
@@ -1287,6 +1316,7 @@ static void sugov_tunables_restore(struct cpufreq_policy *policy)
 	tunables->rtg_boost_freq = cached->rtg_boost_freq;
 	tunables->hispeed_freq = cached->hispeed_freq;
 	tunables->floor_freq = cached->floor_freq;
+	tunables->iowait_boost_max = cached->iowait_boost_max;
 	tunables->up_rate_limit_us = cached->up_rate_limit_us;
 	tunables->down_rate_limit_us = cached->down_rate_limit_us;
 }
@@ -1339,6 +1369,7 @@ static int sugov_init(struct cpufreq_policy *policy)
 	tunables->hispeed_load = DEFAULT_HISPEED_LOAD;
 	tunables->hispeed_freq = 0;
 	tunables->floor_freq = 0;
+	tunables->iowait_boost_max = 100;
 
 	switch (policy->cpu) {
 	default:
@@ -1676,6 +1707,31 @@ int sugov_set_cluster_pl(unsigned int cpu, bool enable)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_pl);
+
+/**
+ * sugov_set_cluster_iowait_boost - set maximum I/O wait boost cap percentage
+ * @cpu:     representative CPU of the cluster
+ * @max_pct: maximum I/O wait boost percentage (0 = disabled, 100 = full)
+ */
+int sugov_set_cluster_iowait_boost(unsigned int cpu, unsigned int max_pct)
+{
+	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, cpu);
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+
+	if (!sg_cpu || !sg_cpu->sg_policy)
+		return -ENODEV;
+
+	sg_policy = sg_cpu->sg_policy;
+	tunables = sg_policy->tunables;
+	if (!tunables)
+		return -ENODEV;
+
+	tunables->iowait_boost_max = min(100U, max_pct);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sugov_set_cluster_iowait_boost);
 
 
 static int __init sugov_register(void)
