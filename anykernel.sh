@@ -61,6 +61,8 @@ hyperos_ver="$(find_prop "ro.mi.os.version.name")";
 [ -z "$hyperos_ver" ] && hyperos_ver="$(find_prop "ro.mi.os.version.incremental")";
 miui_ver="$(find_prop "ro.miui.ui.version.name")";
 [ -z "$miui_ver" ] && miui_ver="$(find_prop "ro.miui.ui.version.code")";
+miui_region="$(find_prop "ro.vendor.miui.build.region")";
+[ -z "$miui_region" ] && miui_region="$(find_prop "ro.miui.build.region")";
 userflavor="$(find_prop "ro.build.flavor")";
 build_inc="$(find_prop "ro.build.version.incremental")";
 
@@ -72,11 +74,15 @@ if [ -n "$hyperos_ver" ] || echo "$build_inc" | grep -qiE '^OS[0-9]'; then
         os_string="Xiaomi HyperOS ROM";
     fi;
 elif [ -n "$miui_ver" ] || echo "$build_inc" | grep -qiE '^V[0-9]' || \
+     case "$miui_region" in cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi) true;; *) false;; esac || \
      [ -d /system/priv-app/MiuiSystemUI -o -d /system_root/system/priv-app/MiuiSystemUI -o -d /system/system/priv-app/MiuiSystemUI ] || \
-     [ -f /system/framework/miui.jar -o -f /system_root/system/framework/miui.jar ]; then
+     [ -f /system/framework/miui.jar -o -f /system_root/system/framework/miui.jar ] || \
+     [ -f /vendor/etc/device_features/munch.xml -o -f /product/etc/device_features/munch.xml ]; then
     os="miui";
     if [ -n "$miui_ver" ]; then
         os_string="Xiaomi MIUI ($miui_ver)";
+    elif [ -n "$miui_region" ]; then
+        os_string="Xiaomi MIUI/HyperOS (Region: $miui_region)";
     else
         os_string="Xiaomi MIUI ROM";
     fi;
