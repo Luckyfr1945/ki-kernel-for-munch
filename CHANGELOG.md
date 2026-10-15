@@ -10,7 +10,11 @@
 ## Ki-kernel v1.4.1
 
 **Build Date:** 2026-10-15  
-**Changelog:**
+• Fix AOSP Night Light & LiveDisplay Color Calibration (`techpack/display/msm/sde/sde_kcal.c`):
+  - Fixed non-functional "Cahaya Malam" (Night Light) and "Warna" (LiveDisplay / color temperature / color modes) in AOSP ROMs (crDroid / Lunaris / Android 14–16)
+  - Set KCAL disabled by default so native Android ColorTransform (PCC/CTM) controls the display hardware without interference
+  - Prevented KCAL from overriding the DSPP hardware block on every frame commit when no KCAL adjustments were made
+  - Enabled smooth color blending when KCAL is active so Night Light and KCAL gains scale together harmoniously
 • Governor Conflict & Anti-Crash Safety (`kernel/sched/cpufreq_schedutil.c`):
   - Fixed kernel panic and Use-After-Free crash loops when third-party apps (e.g., NoKernelManager / NKM) switch CPU governor away from schedutil
   - Cleared dangling `sg_cpu->sg_policy` pointers to NULL during `sugov_stop()` and `sugov_exit()`

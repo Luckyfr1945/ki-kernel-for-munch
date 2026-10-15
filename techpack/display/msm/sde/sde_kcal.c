@@ -26,9 +26,9 @@
 
 static DEFINE_MUTEX(kcal_mutex);
 
-static bool kcal_enabled = true;
-static bool kcal_dirty = true;
-static bool kcal_restored;
+static bool kcal_enabled;
+static bool kcal_dirty;
+static bool kcal_restored = true;
 
 static u32 kcal_red = 256;
 static u32 kcal_green = 256;
@@ -169,13 +169,17 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 
 	mutex_lock(&kcal_mutex);
 
-	/* Safety Guard 2: If disabled and already restored, skip completely */
+	/* Safety Guard 2: If disabled, only restore identity once if needed, then skip */
 	if (!kcal_enabled) {
 		if (kcal_restored) {
 			mutex_unlock(&kcal_mutex);
 			return;
 		}
 		apply_identity = true;
+	} else if (!kcal_dirty) {
+		/* KCAL is enabled but values have not changed: do not overwrite native Android color/night-light */
+		mutex_unlock(&kcal_mutex);
+		return;
 	}
 
 	kms = kcal_get_kms(crtc);
@@ -247,6 +251,8 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 
 void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg)
 {
+	struct drm_msm_pcc *pcc;
+
 	if (!sde_crtc || !hw_cfg)
 		return;
 
@@ -260,7 +266,24 @@ void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg
 		return;
 	}
 
-	hw_cfg->payload = &kcal_pcc_cfg;
+	/*
+	 * When KCAL is enabled, blend/scale with the incoming Android color matrix
+	 * (e.g. Night Light / LiveDisplay) instead of dropping it.
+	 */
+	if (hw_cfg->payload) {
+		pcc = (struct drm_msm_pcc *)hw_cfg->payload;
+		pcc->r.r = clamp_val(((s64)pcc->r.r * kcal_pcc_cfg.r.r) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->r.g = clamp_val(((s64)pcc->r.g * kcal_pcc_cfg.g.g) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->b.b = clamp_val(((s64)pcc->b.b * kcal_pcc_cfg.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->g.r = clamp_val(((s64)pcc->g.r * kcal_pcc_cfg.g.r) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->g.g = clamp_val(((s64)pcc->g.g * kcal_pcc_cfg.g.g) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->g.b = clamp_val(((s64)pcc->g.b * kcal_pcc_cfg.g.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->b.r = clamp_val(((s64)pcc->b.r * kcal_pcc_cfg.b.r) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->b.g = clamp_val(((s64)pcc->b.g * kcal_pcc_cfg.b.g) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->b.b = clamp_val(((s64)pcc->b.b * kcal_pcc_cfg.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+	} else {
+		hw_cfg->payload = &kcal_pcc_cfg;
+	}
 	hw_cfg->payload_clear = NULL;
 	mutex_unlock(&kcal_mutex);
 }
