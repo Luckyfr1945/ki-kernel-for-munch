@@ -8,11 +8,21 @@
 ---
 
 ## Ki-kernel v1.4.1 P3:
-- Added Boeffla Wakelock Blocker with clean `1`/`0` toggle via `/sys/kernel/wakelock_blocker/enabled`
-- Block unnecessary background scan wakeups (`wlan_pno_wl`, `wlan_extscan_wl`, `netmgr_wl`) to reduce idle battery drain
-- Kept CPU governor & scheduler EAS migration untouched to maintain 100% smooth, stutter-free 120 FPS gaming
-- Updated Ki-Optimizer Magisk/KSU WebUI module (v1.1) with clean "Wakelock Blocker" toggle switch (no CLI required)
-- Default state set to OFF (`0`) for zero regression on stock behavior
+- **Wakelock Blocker Driver Integration:**
+  - Added clean sysfs toggle at `/sys/kernel/wakelock_blocker/enabled` (`1` = On, `0` = Off).
+  - Target-isolated non-critical background wakeups (`wlan_pno_wl`, `wlan_extscan_wl`, `netmgr_wl`) to drastically cut idle drain during deep sleep.
+  - Initialized to OFF (`0`) by default for zero regression on stock behavior.
+- **Pure Stutter-Free Gaming Preservation:**
+  - Kept CPU governor, clock transitions, and EAS migration thresholds 100% untouched to ensure stutter-free 120 FPS high-refresh-rate gaming.
+- **Smart Multi-Stage AnyKernel3 ROM Detection (E404 Method Integrated):**
+  - Integrated E404-style `/vendor/build.prop` inspection (`ro.vendor.miui.build.region`) and `/product/etc/build.prop` (`ro.miui.build.region`).
+  - Added POCO F4 proprietary hardware verification (`device_features/munch.xml`).
+  - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT`) inspection for HyperOS and Custom AOSP ROMs (crDroid, LineageOS, Axion, EvolutionX, etc.).
+  - Displays accurate ROM detection details in TWRP/OrangeFox recovery UI automatically.
+- **Ki-Kernel Settings WebUI Module v1.1:**
+  - Added dedicated "Wakelock Blocker" toggle switch in WebUI (no CLI commands required).
+  - Clean UI naming without redundant badges.
+  - Settings persisted automatically to `/sdcard/ki_optimizer.conf` across reboots.
 
 ---
 
