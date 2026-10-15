@@ -87,6 +87,10 @@ const rowScreenOff = document.getElementById("row-screenoff");
 const toggleScreenOff = document.getElementById("toggle-screenoff");
 const badgeScreenOff = document.getElementById("badge-screenoff");
 
+const rowWakelock = document.getElementById("row-wakelock");
+const toggleWakelock = document.getElementById("toggle-wakelock");
+const badgeWakelock = document.getElementById("badge-wakelock");
+
 const rowDynFsync = document.getElementById("row-dynfsync");
 const toggleDynFsync = document.getElementById("toggle-dynfsync");
 const badgeDynFsync = document.getElementById("badge-dynfsync");
@@ -224,6 +228,9 @@ async function refreshState() {
     throt_sup=0; [ -e /sys/kernel/ki_profile/thermal_throttle ] && throt_sup=1
     throt_en=\$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1)
 
+    wl_sup=0; ([ -e /sys/kernel/wakelock_blocker/enabled ] || [ -e /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker ]) && wl_sup=1
+    wl_en=\$(cat /sys/kernel/wakelock_blocker/enabled 2>/dev/null || ([ -s /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker ] && echo 1 || echo 0))
+
     tcp=\$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)
     swap=\$(cat /proc/sys/vm/swappiness 2>/dev/null || echo 80)
 
@@ -231,7 +238,7 @@ async function refreshState() {
     b_tmp=\$(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 300)
     model=\$(getprop ro.product.model 2>/dev/null || echo munch)
 
-    echo "\$is_ki|\$prof|\$mglru_sup|\$mglru_mode|\$mglru_raw|\$bypass_sup|\$bypass_en|\$fc_sup|\$fc_en|\$sbat_sup|\$sbat_en|\$dfs_sup|\$dfs_en|\$throt_sup|\$throt_en|\$tcp|\$swap|\$b_cap|\$b_tmp|\$k_ver|\$model"
+    echo "\$is_ki|\$prof|\$mglru_sup|\$mglru_mode|\$mglru_raw|\$bypass_sup|\$bypass_en|\$fc_sup|\$fc_en|\$sbat_sup|\$sbat_en|\$dfs_sup|\$dfs_en|\$throt_sup|\$throt_en|\$tcp|\$swap|\$b_cap|\$b_tmp|\$k_ver|\$model|\$wl_sup|\$wl_en"
   `;
 
   try {
@@ -287,6 +294,9 @@ async function refreshState() {
       const pBatCap = parts[17].trim();
       const pBatTempRaw = parseInt(parts[18].trim(), 10) || 300;
 
+      const pWlSup = parts[21] === "1";
+      const pWlEn = parts[22] === "1";
+
       // Set Profile
       setActiveProfileUI(pProfile);
 
@@ -297,6 +307,7 @@ async function refreshState() {
       updateFeatureRow(rowBypass, toggleBypass, badgeBypass, pBypassSup, pBypassEn, "Active", "Disabled");
       updateFeatureRow(rowFastCharge, toggleFastCharge, badgeFastCharge, pFcSup, pFcEn, "Active", "Disabled");
       updateFeatureRow(rowScreenOff, toggleScreenOff, badgeScreenOff, pSbatSup, pSbatEn, "Active", "Disabled");
+      updateFeatureRow(rowWakelock, toggleWakelock, badgeWakelock, pWlSup, pWlEn, "Active", "Disabled");
       updateFeatureRow(rowDynFsync, toggleDynFsync, badgeDynFsync, pDfsSup, pDfsEn, "Active", "Disabled");
       updateFeatureRow(rowThermal, toggleThermal, badgeThermal, pThrotSup, pThrotEn, "Active", "Disabled");
 
@@ -345,6 +356,7 @@ async function applyChanges(silent = false) {
   const bypass = toggleBypass.checked ? "1" : "0";
   const fastcharge = toggleFastCharge.checked ? "1" : "0";
   const screenoff = toggleScreenOff.checked ? "1" : "0";
+  const wakelock = toggleWakelock.checked ? "1" : "0";
   const dynfsync = toggleDynFsync.checked ? "1" : "0";
   const thermal = toggleThermal.checked ? "1" : "0";
   const swap = rangeSwappiness.value;
@@ -379,6 +391,15 @@ async function applyChanges(silent = false) {
     # 5. Apply Screen-Off Eco
     echo ${screenoff} > /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
 
+    # 5b. Apply Wakelock Blocker
+    if [ "${wakelock}" = "1" ]; then
+      echo 1 > /sys/kernel/wakelock_blocker/enabled 2>/dev/null
+      echo 1 > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+    else
+      echo 0 > /sys/kernel/wakelock_blocker/enabled 2>/dev/null
+      echo 0 > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+    fi
+
     # 6. Apply Dynamic Fsync
     echo ${dynfsync} > /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null
     echo ${dynfsync} > /sys/kernel/dyn_fsync/dyn_fsync_active 2>/dev/null
@@ -402,6 +423,7 @@ async function applyChanges(silent = false) {
       sed -i -E "s/^SCREEN_ON_FAST_CHARGE=.*/SCREEN_ON_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
       sed -i -E "s/^FORCE_FAST_CHARGE=.*/FORCE_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
       sed -i -E "s/^SCREEN_OFF_BATTERY=.*/SCREEN_OFF_BATTERY=${screenoff}/" "$CONF" 2>/dev/null
+      sed -i -E "s/^WAKELOCK_BLOCKER=.*/WAKELOCK_BLOCKER=${wakelock}/" "$CONF" 2>/dev/null
       sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=${thermal}/" "$CONF" 2>/dev/null
       sed -i -E "s/^DYNAMIC_FSYNC=.*/DYNAMIC_FSYNC=${dynfsync}/" "$CONF" 2>/dev/null
       sed -i -E "s/^TCP_CONGESTION=.*/TCP_CONGESTION=\\"${tcp}\\"/" "$CONF" 2>/dev/null

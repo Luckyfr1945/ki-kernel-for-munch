@@ -65,6 +65,11 @@ apply_config() {
             echo "$dyn_fsync" > /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null
             echo "$dyn_fsync" > /sys/kernel/dyn_fsync/dyn_fsync_active 2>/dev/null
         fi
+        local wl=$(grep -E "^WAKELOCK_BLOCKER=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        if [ -n "$wl" ]; then
+            echo "$wl" > /sys/kernel/wakelock_blocker/enabled 2>/dev/null
+            echo "$wl" > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+        fi
         [ -n "$tcp" ] && echo "$tcp" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
         [ -n "$swap" ] && echo "$swap" > /proc/sys/vm/swappiness 2>/dev/null
         [ -n "$vfs" ] && echo "$vfs" > /proc/sys/vm/vfs_cache_pressure 2>/dev/null

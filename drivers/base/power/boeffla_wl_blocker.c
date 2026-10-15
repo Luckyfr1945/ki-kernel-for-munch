@@ -145,12 +145,18 @@ static ssize_t wakelock_blocker_store(struct device *dev,
 		return -EINVAL;
 
 	spin_lock_irqsave(&wl_blocker_lock, flags);
-	strncpy(list_wl, buf, len);
-	list_wl[len] = '\0';
-
-	/* Strip trailing newline */
-	if (len > 0 && list_wl[len - 1] == '\n')
-		list_wl[len - 1] = '\0';
+	if (sysfs_streq(buf, "1") || sysfs_streq(buf, "on") || sysfs_streq(buf, "enable")) {
+		strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
+		list_wl[sizeof(list_wl) - 1] = '\0';
+	} else if (sysfs_streq(buf, "0") || sysfs_streq(buf, "off") || sysfs_streq(buf, "disable")) {
+		list_wl[0] = '\0';
+	} else {
+		strncpy(list_wl, buf, len);
+		list_wl[len] = '\0';
+		/* Strip trailing newline */
+		if (len > 0 && list_wl[len - 1] == '\n')
+			list_wl[len - 1] = '\0';
+	}
 	spin_unlock_irqrestore(&wl_blocker_lock, flags);
 
 	build_search_string(list_wl, list_wl_default);
@@ -158,6 +164,37 @@ static ssize_t wakelock_blocker_store(struct device *dev,
 	return count;
 }
 static DEVICE_ATTR_RW(wakelock_blocker);
+
+/* sysfs: enabled (Simple 1/0 toggle) */
+static ssize_t enabled_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", wl_blocker_active ? 1 : 0);
+}
+
+static ssize_t enabled_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	unsigned int val;
+	unsigned long flags;
+
+	if (kstrtouint(buf, 0, &val))
+		return -EINVAL;
+
+	spin_lock_irqsave(&wl_blocker_lock, flags);
+	if (val) {
+		strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
+		list_wl[sizeof(list_wl) - 1] = '\0';
+	} else {
+		list_wl[0] = '\0';
+	}
+	spin_unlock_irqrestore(&wl_blocker_lock, flags);
+
+	build_search_string(list_wl, list_wl_default);
+	return count;
+}
+static DEVICE_ATTR_RW(enabled);
 
 /* sysfs: wakelock_blocker_default & default_wakelocks */
 static ssize_t wakelock_blocker_default_show(struct device *dev,
@@ -234,6 +271,7 @@ static ssize_t debug_store(struct device *dev,
 static DEVICE_ATTR_RW(debug);
 
 static struct attribute *boeffla_wl_blocker_attrs[] = {
+	&dev_attr_enabled.attr,
 	&dev_attr_wakelock_blocker.attr,
 	&dev_attr_wakelock_blocker_default.attr,
 	&dev_attr_default_wakelocks.attr,
@@ -250,6 +288,8 @@ static struct miscdevice boeffla_wl_blocker_device = {
 	.minor = MISC_DYNAMIC_MINOR,
 	.name = "boeffla_wakelock_blocker",
 };
+
+static struct kobject *wl_blocker_kobj;
 
 static int __init boeffla_wl_blocker_init(void)
 {
@@ -269,9 +309,14 @@ static int __init boeffla_wl_blocker_init(void)
 		return ret;
 	}
 
-	/* Initialize with default list */
-	strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
-	strncpy(list_wl_default, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl_default) - 1);
+	/* Also expose cleanly under /sys/kernel/wakelock_blocker/ */
+	wl_blocker_kobj = kobject_create_and_add("wakelock_blocker", kernel_kobj);
+	if (wl_blocker_kobj)
+		ret = sysfs_create_group(wl_blocker_kobj, &boeffla_wl_blocker_group);
+
+	/* Default: OFF initially */
+	list_wl[0] = '\0';
+	list_wl_default[0] = '\0';
 	build_search_string(list_wl, list_wl_default);
 
 	pr_info("boeffla_wl_blocker: v%s registered successfully\n", DRIVER_VERSION);

@@ -7,6 +7,15 @@
 
 ---
 
+## Ki-kernel v1.4.1 P3:
+- Added Boeffla Wakelock Blocker with clean `1`/`0` toggle via `/sys/kernel/wakelock_blocker/enabled`
+- Block unnecessary background scan wakeups (`wlan_pno_wl`, `wlan_extscan_wl`, `netmgr_wl`) to reduce idle battery drain
+- Kept CPU governor & scheduler EAS migration untouched to maintain 100% smooth, stutter-free 120 FPS gaming
+- Updated Ki-Optimizer Magisk/KSU WebUI module (v1.1) with clean "Wakelock Blocker" toggle switch (no CLI required)
+- Default state set to OFF (`0`) for zero regression on stock behavior
+
+---
+
 ## Ki-kernel v1.4.1 P2:
 - Fixed persistent 50W fast charging lock and overheating when screen is active
 - Set `force_fast_charge` and `screen_on_fast_charge` to OFF (`0`) by default to protect battery health and avoid thermal degradation
