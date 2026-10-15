@@ -7,6 +7,31 @@
 
 ---
 
+## Ki-kernel v1.4.3
+
+**Build Date:** 2026-10-15  
+**Changelog:**
+• Governor Conflict & Anti-Crash Safety (`kernel/sched/cpufreq_schedutil.c`):
+  - Fixed kernel panic and Use-After-Free crash loops when third-party apps (e.g., NoKernelManager / NKM) switch CPU governor away from schedutil
+  - Cleared dangling `sg_cpu->sg_policy` pointers to NULL during `sugov_stop()` and `sugov_exit()`
+  - Added `sugov_get_valid_policy()` validation check across all exported Ki-Profile sugov cluster helpers
+  - Prevents kernel panic if userspace tools override CPU governor to `performance` or `powersave`
+• PMIC & Thermal Brownout Hardware Safety (`drivers/misc/ki_profile.c`):
+  - Retained baseline thermal limits (`.thermal_throttle = true`) in Performance profile to eliminate PMIC over-current / brownout hard reboots under sustained dual-overclock loads
+  - Preserves instant 0µs ramp-up, 2.65 GHz Prime / 2.15 GHz Gold gaming hispeeds, and GPU performance mode with full hardware protection
+• Native Multi-Queue Default I/O Scheduler (`block/elevator.c`):
+  - Integrated **ADIOS** (Adaptive Deadline I/O Scheduler) as the native default elevator for Multi-Queue (`blk-mq`) block devices
+  - Replaces legacy Single-Queue Maple on UFS 3.1 storage (`sda`/`sde`), delivering low-latency multi-queue I/O throughput across all flash operations
+• Full Droidspaces & Container Integration (`arch/arm64/configs/munch_defconfig`):
+  - Enabled `CONFIG_BINFMT_MISC=y` alongside `CONFIG_FHANDLE=y`
+  - Upgraded Droidspaces status to **Tested & Working**, enabling full support for systemd-nspawn, glibc containers, and multi-architecture binary emulation (Box64, FEX-Emu, QEMU)
+• Ki-Settings Module Hardening (`ki_optimizer_module`):
+  - Filtered block scheduler injection strictly to physical UFS/eMMC devices (`/sys/block/sd*`, `/sys/block/mmcblk*`) with support verification (`grep -qw`)
+  - Prevents I/O stalls and invalid sysfs writes on virtual block devices (`zram0`, `dm-*`, `loop*`)
+  - Updated default scheduler in `ki_optimizer.conf` to `IO_SCHEDULER=adios`
+
+---
+
 ## Ki-kernel v1.4.2
 
 Changelog:
