@@ -7,6 +7,14 @@
 
 ---
 
+## Ki-kernel v1.4.1 P2:
+- Fixed persistent 50W fast charging lock and overheating when screen is active
+- Set `force_fast_charge` and `screen_on_fast_charge` to OFF (`0`) by default to protect battery health and avoid thermal degradation
+- Synchronized `force_fast_charge` toggle to automatically deactivate `screen_on_fast_charge` when turned off in Kernel Manager
+- Restored instant re-evaluation to stock thermal throttling levels upon turning off fast charge overdrive
+
+---
+
 ## Ki-kernel v1.4.1 P1:
 - Fixed non-functional Night Light (Cahaya Malam) on AOSP / Custom ROMs (crDroid / Lunaris / Android 14–16)
 - Fixed LiveDisplay and Color Calibration (Warna) settings not applying to display

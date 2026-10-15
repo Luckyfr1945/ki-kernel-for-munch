@@ -3658,6 +3658,12 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 		return -EINVAL;
 
 	chg->force_fast_charge = val;
+	/* Sync screen_on_fast_charge: turning off force_fast_charge also deactivates screen-on overdrive */
+	if (val == 0)
+		chg->screen_on_fast_charge = 0;
+	else if (val > 0)
+		chg->screen_on_fast_charge = 1;
+
 	switch (val) {
 	case 0:
 		chg->force_fast_charge_ua = 500000;
@@ -3679,8 +3685,8 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 		break;
 	}
 
-	pr_info("smb5: force_fast_charge set to %d (%d uA)\n",
-		chg->force_fast_charge, chg->force_fast_charge_ua);
+	pr_info("smb5: force_fast_charge set to %d (%d uA), screen_on_fast_charge=%d\n",
+		chg->force_fast_charge, chg->force_fast_charge_ua, chg->screen_on_fast_charge);
 
 	if (chg->usb_icl_votable) {
 		if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB ||
@@ -12833,10 +12839,10 @@ int smblib_init(struct smb_charger *chg)
 	chg->thermal_status = TEMP_BELOW_RANGE;
 	chg->pps_thermal_level = -EINVAL;
 	chg->screen_is_on = true;
-	chg->screen_on_fast_charge = 1;
+	chg->screen_on_fast_charge = 0;
 	chg->raw_system_temp_level = 0;
-	chg->force_fast_charge = 1;
-	chg->force_fast_charge_ua = 3000000;
+	chg->force_fast_charge = 0;
+	chg->force_fast_charge_ua = 500000;
 	chg->pd_verifed = true;
 #if (!defined CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH) && (!defined CONFIG_DUAL_FUEL_GAUGE_BQ27Z561)
 	chg->esr_work_status = ESR_CHECK_FCC_NOLIMIT;
