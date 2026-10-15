@@ -69,8 +69,10 @@ apply_config() {
         [ -n "$swap" ] && echo "$swap" > /proc/sys/vm/swappiness 2>/dev/null
         [ -n "$vfs" ] && echo "$vfs" > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
         if [ -n "$sched" ]; then
-            for q in /sys/block/*/queue/scheduler; do
-                [ -f "$q" ] && echo "$sched" > "$q" 2>/dev/null
+            for q in /sys/block/sd*/queue/scheduler /sys/block/mmcblk*/queue/scheduler; do
+                if [ -f "$q" ] && grep -qw "$sched" "$q" 2>/dev/null; then
+                    echo "$sched" > "$q" 2>/dev/null
+                fi
             done
         fi
         echo -e "${G}✔ Ki-Optimizer configuration successfully applied!${X}"

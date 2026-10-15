@@ -304,7 +304,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		},
 		.pl = true,
 		.gpu_perf = true,
-		.thermal_throttle = false,
+		.thermal_throttle = true,
 		.sched_boost = 0,
 		.up_migrate = 65, .down_migrate = 50,
 		.grp_up_migrate = 75, .grp_down_migrate = 60,
