@@ -7,78 +7,42 @@
 
 ---
 
-## Ki-kernel v1.4.1
+## Ki-kernel v1.4.1 P1:
+- Fixed non-functional Night Light (Cahaya Malam) on AOSP / Custom ROMs (crDroid / Lunaris / Android 14–16)
+- Fixed LiveDisplay and Color Calibration (Warna) settings not applying to display
+- Set KCAL disabled by default to grant native Android ColorTransform (PCC/CTM) full hardware control
+- Prevented KCAL from overriding the display DSPP hardware block on every frame commit
+- Enabled harmonious color blending when KCAL is active alongside Night Light
 
-**Build Date:** 2026-10-15  
-• Fix AOSP Night Light & LiveDisplay Color Calibration (`techpack/display/msm/sde/sde_kcal.c`):
-  - Fixed non-functional "Cahaya Malam" (Night Light) and "Warna" (LiveDisplay / color temperature / color modes) in AOSP ROMs (crDroid / Lunaris / Android 14–16)
-  - Set KCAL disabled by default so native Android ColorTransform (PCC/CTM) controls the display hardware without interference
-  - Prevented KCAL from overriding the DSPP hardware block on every frame commit when no KCAL adjustments were made
-  - Enabled smooth color blending when KCAL is active so Night Light and KCAL gains scale together harmoniously
-• Governor Conflict & Anti-Crash Safety (`kernel/sched/cpufreq_schedutil.c`):
-  - Fixed kernel panic and Use-After-Free crash loops when third-party apps (e.g., NoKernelManager / NKM) switch CPU governor away from schedutil
-  - Cleared dangling `sg_cpu->sg_policy` pointers to NULL during `sugov_stop()` and `sugov_exit()`
-  - Added `sugov_get_valid_policy()` validation check across all exported Ki-Profile sugov cluster helpers
-  - Prevents kernel panic if userspace tools override CPU governor to `performance` or `powersave`
-• PMIC & Thermal Brownout Hardware Safety (`drivers/misc/ki_profile.c`):
-  - Retained baseline thermal limits (`.thermal_throttle = true`) in Performance profile to eliminate PMIC over-current / brownout hard reboots under sustained dual-overclock loads
-  - Preserves instant 0µs ramp-up, 2.65 GHz Prime / 2.15 GHz Gold gaming hispeeds, and GPU performance mode with full hardware protection
-• Native Multi-Queue Default I/O Scheduler (`block/elevator.c`):
-  - Integrated **ADIOS** (Adaptive Deadline I/O Scheduler) as the native default elevator for Multi-Queue (`blk-mq`) block devices
-  - Replaces legacy Single-Queue Maple on UFS 3.1 storage (`sda`/`sde`), delivering low-latency multi-queue I/O throughput across all flash operations
-• Full Droidspaces & Container Integration (`arch/arm64/configs/munch_defconfig`):
-  - Enabled `CONFIG_BINFMT_MISC=y` alongside `CONFIG_FHANDLE=y`
-  - Upgraded Droidspaces status to **Tested & Working**, enabling full support for systemd-nspawn, glibc containers, and multi-architecture binary emulation (Box64, FEX-Emu, QEMU)
-• Ki-Settings Module Hardening (`ki_optimizer_module`):
-  - Filtered block scheduler injection strictly to physical UFS/eMMC devices (`/sys/block/sd*`, `/sys/block/mmcblk*`) with support verification (`grep -qw`)
-  - Prevents I/O stalls and invalid sysfs writes on virtual block devices (`zram0`, `dm-*`, `loop*`)
-  - Updated default scheduler in `ki_optimizer.conf` to `IO_SCHEDULER=adios`
-• Optimistic Spinning Queue (OSQ Lock) ARM64 Hardware WFE Optimization (`kernel/locking/osq_lock.c`):
-  - Backported upstream ARM64 WFE (`wfe`) optimization using `smp_cond_load_relaxed`
-  - Replaces power-hungry spinning tight loops with low-power CPU hardware event wait during OSQ lock contention
-  - Boosts lock throughput by up to ~20% under heavy multi-threading and eliminates CPU thermal buildup
-• Reader/Writer Semaphore (rwsem) Clear Linux Fast Spin (`kernel/locking/rwsem-xadd.c`):
-  - Tightens owner check loop before executing `cpu_relax()`, accelerating lock handoff
-  - Eliminates micro-stutters during heavy concurrent memory mapping operations (`mmap_sem`) in gaming and multi-tasking
-• Realtime HRTimer Jitter Elimination (`kernel/time/hrtimer.c`):
-  - Backported upstream realtime task timerslack correction (`get_timer_slack()`)
-  - Forces exact 0 timerslack for Real-Time tasks (`SCHED_FIFO` / `SCHED_RR`), eliminating frame pacing jitter on SurfaceFlinger, audio HAL, and GPU workers
-• Memory Management & Thermal Safety (`mm/page_alloc.c`):
-  - Hard-clamped `watermark_scale_factor <= 20` directly in sysctl handler
-  - Permanently kills `[kswapd0]` 100% CPU thrashing caused by userspace `extra_free_kbytes.sh` scripts on saturated zRAM
-• Balanced Performance Profile Tuning (`cpufreq_schedutil.c` & `ki_profile.c`):
-  - Capped `iowait_boost_max` on Balanced mode (35% Silver, 20% Gold, 0% Prime)
-  - Keeps device cool and battery-efficient during short-video scrolling (TikTok, Instagram Reels, YouTube Shorts)
-• Fixed schedutil clock bouncing and micro-stutters by restoring 20ms down-hold delay
-• Removed idle floor frequency clamps, allowing CPU to rest at 300 MHz idle
-• Tuned hispeed frequencies and loads for smooth 120 Hz scrolling and gaming
-• Increased bypass charging thermal threshold to 48°C for extended gaming sessions
-• Fixed bypass charging cutting off after 30 minutes of heavy gaming
-• Tuned Multi-Gen LRU (MGLRU) with hardware PTE walk for heavy gaming and multitasking
-• Fixed aggressive LMKD kills and game crashes during memory pressure / zRAM saturation
-• Added manual `newfstat` and `fstat64` hooks in `fs/stat.c` for reliable KSU init.rc injection
-• Disabled LSM AUTO_INITRC_HOOK in favor of native sys_read manual hooks
-• Fixed race condition in Thermal Auto-Guard (`ki_profile`) during Performance profile switch
-• Added Power Supply notifier to dynamically adjust screen-off profile on charger connect/disconnect
-• Improved thermal sensor resolution in `ki_profile` with asynchronous retry for late-probing sensors
-• Fixed boot settlement log reporting true active profile during screen-off boot
-• Fixed AOSP boot hangs across custom ROMs with multi-format ramdisk decompressors (LZ4, XZ, LZO, GZIP)
-• Added EROFS compression & security xattr configs (`CONFIG_EROFS_FS_SECURITY`, `CONFIG_EROFS_FS_ZIP`)
-• Added `CONFIG_FHANDLE` for modern Android init and Apexd container compatibility
-• Modernized Clang ThinLTO linker script with upstream wildcards (`..L*`, `ro_after_init`, initcall tables)
-• Restricted `-fsplit-lto-unit` to CFI configurations to eliminate ThinLTO driver symbol misplacements
-• Disabled `CONFIG_MODVERSIONS` to prevent symbol CRC mismatch on vendor modules with Clang LTO
-• Replaced single-node IR driver with clean Hybrid Dual-Interface driver (`/dev/lirc0` for AOSP and `/dev/ir_spi` for MIUI)
-• Fixed IR transmission failure on AOSP custom ROMs by restoring rc-core LIRC device node and pulse-space modulation
-• Fixed broken process comm check (`service_is_ir`) that rejected `/dev/ir_spi` access with `-ENODEV` on MIUI/HyperOS
-• Added dummy regulator (`irda_regulator`) to SM8250 device tree and bound power supply to SPI SE2
-• Fixed LIRC signal trailing space truncation in `lirc_dev.c` for accurate IR protocol packet transmission
-• Fine-tuned Balanced profile with 500µs schedutil ramp-up and 80/70 migration threshold to eliminate micro-janks
-• Added dynamic per-cluster `iowait_boost_max` control in `cpufreq_schedutil.c` and `ki_profile`: 0% on Battery (zero phantom drain), cool & battery-friendly clamp on Balanced (35/20/0% to keep video scrolling cold), and 100% on Performance (instant texture streaming)
-• Clamped `watermark_scale_factor <= 20` directly in `mm/page_alloc.c` sysctl handler to prevent Android scripts from thrashing `kswapd0` at 100% CPU on saturated zRAM
-• Backported Linux 5.16 Futex2 `futex_waitv` (syscall 449) with 32-bit compat for Winlator/Wine/Proton low-latency multi-wait fsync
-• Optimized block I/O path (`block/bio.c`, `linux/bvec.h`, `linux/bio.h`) with single-segment iterator (`bio_advance_iter_single`), asynchronous `submit_bio_nowait()`, and compound page lock avoidance
-• Integrated lockless per-CPU Blake2s CSPRNG rewrite for instant boot entropy and zero-lock cryptographic operations
+---
+
+## Ki-kernel v1.4.1:
+- Fixed CPU governor switch kernel panics and Use-After-Free crashes
+- Fixed schedutil clock bouncing and frequency micro-stutters
+- Restored 300 MHz CPU deep idle frequency
+- Tuned CPU hispeed clocks, ramp-up delays, and task migration thresholds
+- Added dynamic per-cluster I/O wait boost controls in Ki-Profile
+- Fixed PMIC brownout and hard reboots under heavy overclock loads
+- Fixed Ki-Profile Thermal Auto-Guard race conditions and late sensor probing
+- Added dynamic screen-off profile switching on charger events
+- Fixed active Ki-Profile log reporting during screen-off boot
+- Fixed 30-minute bypass charging cutoff and raised thermal limit to 48°C
+- Backported ARM64 WFE hardware lock contention optimizations
+- Optimized rwsem fast-spin lock handoff and memory mapping latency
+- Fixed realtime timer slack jitter on SurfaceFlinger, audio HAL, and GPU workers
+- Tuned Multi-Gen LRU (MGLRU) and fixed aggressive LMKD game kills
+- Fixed kswapd0 100% CPU thrashing on saturated zRAM
+- Set ADIOS as default multi-queue I/O scheduler on UFS 3.1 storage
+- Optimized block I/O path and asynchronous bio submission
+- Fixed Ki-Optimizer invalid sysfs writes on virtual block devices
+- Backported Futex2 multi-wait fsync support
+- Added BINFMT_MISC binary emulation support
+- Added manual VFS stat hooks and fixed KernelSU init.rc injection
+- Added multi-format ramdisk decompression and fixed AOSP boot hangs
+- Added EROFS compression and security xattr support
+- Fixed IR blaster transmission issues
+- Integrated lockless per-CPU Blake2s CSPRNG crypto engine
+- Modernized Clang ThinLTO linker script and fixed vendor module loading
 
 ---
 
