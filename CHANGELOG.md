@@ -7,7 +7,7 @@
 
 ---
 
-## Ki-kernel v1.4.1 P3:
+## Ki-kernel v1.4.1 P1:
 - Added Boeffla Wakelock Blocker with clean `1`/`0` toggle via `/sys/kernel/wakelock_blocker/enabled`
 - Block unnecessary background scan wakeups (`wlan_pno_wl`, `wlan_extscan_wl`, `netmgr_wl`) to reduce idle battery drain
 - Kept CPU governor & scheduler EAS migration untouched to maintain 100% smooth, stutter-free 120 FPS gaming
@@ -18,18 +18,10 @@
   - Added POCO F4 hardware feature verification (`device_features/munch.xml`)
   - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT`) detection for HyperOS & Custom AOSP ROMs
   - Accurate ROM detection reporting in recovery UI automatically
-
----
-
-## Ki-kernel v1.4.1 P2:
 - Fixed persistent 50W fast charging lock and overheating when screen is active
 - Set `force_fast_charge` and `screen_on_fast_charge` to OFF (`0`) by default to protect battery health and avoid thermal degradation
 - Synchronized `force_fast_charge` toggle to automatically deactivate `screen_on_fast_charge` when turned off in Kernel Manager
 - Restored instant re-evaluation to stock thermal throttling levels upon turning off fast charge overdrive
-
----
-
-## Ki-kernel v1.4.1 P1:
 - Fixed non-functional Night Light (Cahaya Malam) on AOSP / Custom ROMs (crDroid / Lunaris / Android 14–16)
 - Fixed LiveDisplay and Color Calibration (Warna) settings not applying to display
 - Set KCAL disabled by default to grant native Android ColorTransform (PCC/CTM) full hardware control
