@@ -1,13 +1,13 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-14  
+**Build Date:** 2026-10-15  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS and AOSP  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## Ki-kernel v1.4.3
+## Ki-kernel v1.4.1
 
 **Build Date:** 2026-10-15  
 **Changelog:**
@@ -29,12 +29,6 @@
   - Filtered block scheduler injection strictly to physical UFS/eMMC devices (`/sys/block/sd*`, `/sys/block/mmcblk*`) with support verification (`grep -qw`)
   - Prevents I/O stalls and invalid sysfs writes on virtual block devices (`zram0`, `dm-*`, `loop*`)
   - Updated default scheduler in `ki_optimizer.conf` to `IO_SCHEDULER=adios`
-
----
-
-## Ki-kernel v1.4.2
-
-Changelog:
 • Optimistic Spinning Queue (OSQ Lock) ARM64 Hardware WFE Optimization (`kernel/locking/osq_lock.c`):
   - Backported upstream ARM64 WFE (`wfe`) optimization using `smp_cond_load_relaxed`
   - Replaces power-hungry spinning tight loops with low-power CPU hardware event wait during OSQ lock contention
@@ -51,12 +45,6 @@ Changelog:
 • Balanced Performance Profile Tuning (`cpufreq_schedutil.c` & `ki_profile.c`):
   - Capped `iowait_boost_max` on Balanced mode (35% Silver, 20% Gold, 0% Prime)
   - Keeps device cool and battery-efficient during short-video scrolling (TikTok, Instagram Reels, YouTube Shorts)
-
----
-
-## Ki-kernel v1.4.1
-
-Changelog:
 • Fixed schedutil clock bouncing and micro-stutters by restoring 20ms down-hold delay
 • Removed idle floor frequency clamps, allowing CPU to rest at 300 MHz idle
 • Tuned hispeed frequencies and loads for smooth 120 Hz scrolling and gaming
