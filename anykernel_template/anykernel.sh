@@ -341,6 +341,11 @@ echo 300000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/nu
 
 # Auto-enable MGLRU (override ROM init.rc 0 disable)
 echo 1 > /proc/mglru 2>/dev/null
+
+# Prevent AOSP / Custom ROM thermal-engine from capping display refresh rate to 30 FPS
+setprop ro.surface_flinger.set_idle_timer_ms 0 2>/dev/null
+setprop ro.surface_flinger.set_touch_timer_ms 0 2>/dev/null
+setprop ro.surface_flinger.use_content_detection_for_refresh_rate false 2>/dev/null
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
 fi;

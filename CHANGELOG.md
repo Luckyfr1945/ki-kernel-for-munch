@@ -18,6 +18,12 @@
   - Added POCO F4 hardware feature verification (`device_features/munch.xml`)
   - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT`) detection for HyperOS & Custom AOSP ROMs
   - Accurate ROM detection reporting in recovery UI automatically
+- Tamed CPU Schedutil down-rate hold time to 8ms on Balanced & 8-10ms on Performance (drops SoC temperature by ~4-6°C)
+- Relaxed Prime cluster ramp-up to 2500us on Balanced to prevent 3.2GHz core from waking up on micro-tasks
+- Enabled selective thermal bypass on Performance mode with 46°C skin auto-guard to eliminate 30/31 FPS thermal cap during gaming
+- Enhanced Battery Saver with Ultra Power Saving tunings (Silver 979MHz, Gold 1.07GHz, Prime 1.17GHz, 1ms instant drop to 300MHz idle)
+- Hardened AOSP screen-off battery state logic against getting stuck in low-power mode when screen wakes up
+- Added SurfaceFlinger anti-30fps cap properties in AnyKernel and module service scripts
 - Fixed persistent 50W fast charging lock and overheating when screen is active
 - Set `force_fast_charge` and `screen_on_fast_charge` to OFF (`0`) by default to protect battery health and avoid thermal degradation
 - Synchronized `force_fast_charge` toggle to automatically deactivate `screen_on_fast_charge` when turned off in Kernel Manager

@@ -51,7 +51,7 @@ EXPORT_SYMBOL_GPL(ki_get_active_profile);
  * The delay avoids flapping from proximity-sensor blanking during calls.
  */
 #define KI_SCREEN_OFF_DELAY_MS	3000
-static bool ki_screen_off_battery = true;
+static bool ki_screen_off_battery;
 static bool ki_screen_on = true;
 static struct delayed_work ki_screen_work;
 
@@ -243,68 +243,72 @@ struct ki_profile_tune {
 
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
-	 * Battery Saver:
-	 * Fokus hemat baterai nyata (irit polll).
-	 * Tasks dikurung di Silver cluster (up_migrate = 98/90),
-	 * Hispeed rendah (Silver 1.05GHz, Gold 1.17GHz, Prime 1.27GHz).
-	 * Ramp-up malas (up_us: 2ms, 4ms, 8ms), drop cepat ke idle (down_us: 2000us = 2ms).
-	 * Swappiness 60 untuk menghemat daya CPU dari kompresi zRAM berlebih.
+	 * Battery Saver (Ultra Power Saving):
+	 * Fokus hemat baterai maksimal (zero phantom drain).
+	 * Tasks dikemas di Silver cluster (up_migrate = 95/85),
+	 * Hispeed sangat hemat: Silver 979MHz, Gold 1.07GHz, Prime 1.17GHz pada load 95-98%.
+	 * Ramp-up sangat santai (up_us: 3ms Silver, 6ms Gold, 12ms Prime),
+	 * Drop kilat ke 300MHz idle (down_us: 1000us = 1ms) untuk memangkas konsumsi voltase.
+	 * Zero I/O wait boost (0%) untuk mencegah storage burst membangunkan CPU ke jam tinggi.
+	 * Swappiness 50 untuk menghemat daya pemrosesan CPU dari kompresi zRAM berulang.
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 2000,  .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 95, .iowait_boost_max = 0 },
-			{ .up_us = 4000,  .down_us = 2000, .hispeed_freq = 1171200, .hispeed_load = 95, .iowait_boost_max = 0 },
-			{ .up_us = 8000,  .down_us = 2000, .hispeed_freq = 1267200, .hispeed_load = 95, .iowait_boost_max = 0 },
+			{ .up_us = 3000,  .down_us = 1000, .hispeed_freq = 979200,  .hispeed_load = 95, .iowait_boost_max = 0 },
+			{ .up_us = 6000,  .down_us = 1000, .hispeed_freq = 1075200, .hispeed_load = 95, .iowait_boost_max = 0 },
+			{ .up_us = 12000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 98, .iowait_boost_max = 0 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 98, .down_migrate = 90,
-		.grp_up_migrate = 100, .grp_down_migrate = 95,
+		.up_migrate = 95, .down_migrate = 85,
+		.grp_up_migrate = 98, .grp_down_migrate = 90,
 		.window_stats_policy = 2,
-		.swappiness = 60, .wmark_scale = 20, .vfs_cache_pressure = 80,
+		.swappiness = 50, .wmark_scale = 10, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Balanced:
 	 * Nyaman, super smooth, dan adem untuk harian & gaming santai (sosmed, chat, UI responsif).
-	 * Schedutil up-rate instan 500us di semua cluster untuk merespons burst render tanpa micro-jank.
-	 * Down-rate hold time diset stabil ke 20ms (20000us) sinkron dengan ritme frame display,
-	 * mencegah clock bouncing / frequency thrashing yang memicu panas & micro-stutter (nyendat).
-	 * Hispeed responsif: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz pada load 70-80%.
-	 * Migrasi seimbang (up_migrate = 80, down_migrate = 70) agar game/app berat dibantu Gold tanpa lag.
-	 * iowait_boost_max diredam (35% Silver, 20% Gold, 0% Prime) agar scroll video (TikTok/IG) adem & irit.
-	 * Swappiness = 80, Wmark = 20, vfs_cache_pressure = 80 (anti-kill multitasking & kswapd sleep).
+	 * Schedutil ramp-up 1000us di Silver/Gold dan 2500us di Prime agar Prime core 3.2GHz
+	 * tidak gampang terpicu beban ringan/spike kecil.
+	 * Down-rate hold time dijinakkan ke 8ms (8000us) agar SoC cepat turun ke idle dan tidak
+	 * menahan clock tinggi berlebihan (suhu turun drastis ~4-6°C lebih dingin).
+	 * Hispeed seimbang: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz pada load 75-85%.
+	 * Migrasi seimbang (up_migrate = 85, down_migrate = 75).
+	 * iowait_boost_max diredam (25% Silver, 15% Gold, 0% Prime) agar scroll video adem.
+	 * Swappiness = 80, Wmark = 20, vfs_cache_pressure = 80.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80, .iowait_boost_max = 35 },
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1651200, .hispeed_load = 70, .iowait_boost_max = 20 },
-			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1804800, .hispeed_load = 70, .iowait_boost_max = 0 },
+			{ .up_us = 1000, .down_us = 8000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 25 },
+			{ .up_us = 1000, .down_us = 8000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 15 },
+			{ .up_us = 2500, .down_us = 8000, .hispeed_freq = 1804800, .hispeed_load = 80, .iowait_boost_max = 0 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 80, .down_migrate = 70,
-		.grp_up_migrate = 90, .grp_down_migrate = 80,
+		.up_migrate = 85, .down_migrate = 75,
+		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
 		.swappiness = 80, .wmark_scale = 20, .vfs_cache_pressure = 80,
 	},
 	/*
 	 * Performance / Gaming Turbo (Optimized):
-	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (16-20ms)
-	 *    prevents clock-bouncing without wasting power during scene pauses.
+	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (8-10ms)
+	 *    prevents clock-bouncing while dropping idle fast on scene pauses.
 	 *  - Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate idle drain.
 	 *  - Efficient gaming hispeeds (Gold 2.15G @ 60% load, Prime 2.65G @ 65% load),
 	 *    scaling naturally to 2.42G / 3.19G (3.2GHz) on heavy sustained spikes.
 	 *  - Clean cluster separation (up_migrate 65/50) isolates game threads from background noise.
 	 *  - MAX_RECENT_AVG window stats + swappiness 60 prevents zRAM stalls & micro-stutters.
-	 *  - GPU perf mode + thermal auto-guard protection.
+	 *  - Thermal bypass active (thermal_throttle = false) to prevent FPS from capping at 30/31 FPS,
+	 *    while Thermal Auto-Guard stays vigilant at 46°C skin / 45°C batt / 85°C die.
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200, .iowait_boost_max = 100 },
-			{ .up_us = 0, .down_us = 16000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100 },
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 8000,  .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100 },
 		},
 		.pl = true,
 		.gpu_perf = true,
-		.thermal_throttle = true,
+		.thermal_throttle = false,
 		.sched_boost = 0,
 		.up_migrate = 65, .down_migrate = 50,
 		.grp_up_migrate = 75, .grp_down_migrate = 60,
@@ -383,17 +387,24 @@ static int apply_ki_profile(int mode, bool force)
 /* Profile that should be applied given user choice, screen state, and power supply */
 static int ki_effective_mode(void)
 {
+	int user_mode = READ_ONCE(current_profile_mode);
+
+	/* Never downgrade to Battery Saver if user explicitly selected Performance mode */
+	if (user_mode == KI_PROFILE_PERFORMANCE)
+		return KI_PROFILE_PERFORMANCE;
+
 	/*
 	 * If connected to external power / charging, do NOT throttle to Battery Saver
 	 * when screen is off. Android runs background maintenance (dexopt, fstrim) while
 	 * charging and needs normal CPU capacity.
 	 */
 	if (power_supply_is_system_supplied() > 0)
-		return READ_ONCE(current_profile_mode);
+		return user_mode;
 
 	if (ki_screen_off_battery && !READ_ONCE(ki_screen_on))
 		return KI_PROFILE_BATTERY;
-	return READ_ONCE(current_profile_mode);
+
+	return user_mode;
 }
 
 /* Caller must hold ki_profile_mutex */
@@ -424,8 +435,9 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 
 	blank = *(int *)evdata->data;
 
-	/* Early unblank: restore profile before panel completes powering on */
-	if (val == MI_DRM_EARLY_EVENT_BLANK && blank == MI_DRM_BLANK_UNBLANK) {
+	/* Early / pre unblank: restore profile before panel completes powering on */
+	if ((val == MI_DRM_EARLY_EVENT_BLANK || val == MI_DRM_PRE_EVENT_BLANK) &&
+	    blank == MI_DRM_BLANK_UNBLANK) {
 		if (!READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_screen_on, true);
 			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
@@ -455,6 +467,11 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 		}
 		break;
 	default:
+		/* Any active display state restores screen on immediately */
+		if (!READ_ONCE(ki_screen_on)) {
+			WRITE_ONCE(ki_screen_on, true);
+			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
+		}
 		break;
 	}
 

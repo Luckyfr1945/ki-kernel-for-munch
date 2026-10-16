@@ -133,6 +133,9 @@ chmod 664 /sys/class/power_supply/battery/input_suspend 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/bypass_charging 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
+setprop ro.surface_flinger.set_idle_timer_ms 0 2>/dev/null
+setprop ro.surface_flinger.set_touch_timer_ms 0 2>/dev/null
+setprop ro.surface_flinger.use_content_detection_for_refresh_rate false 2>/dev/null
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
     ui_print "  -> Bypass charging NKM support configured!";
