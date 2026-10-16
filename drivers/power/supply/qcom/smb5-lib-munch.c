@@ -3722,7 +3722,7 @@ static int smblib_therm_charging(struct smb_charger *chg)
 	int thermal_icl_ua = 0;
 	int thermal_fcc_ua = 0;
 	int rc;
-	int sys_level, pps_level;
+	int sys_level;
 
 	if (chg->raw_system_temp_level >= MAX_TEMP_LEVEL)
 		return 0;
