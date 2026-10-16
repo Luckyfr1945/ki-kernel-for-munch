@@ -51,7 +51,7 @@ EXPORT_SYMBOL_GPL(ki_get_active_profile);
  * The delay avoids flapping from proximity-sensor blanking during calls.
  */
 #define KI_SCREEN_OFF_DELAY_MS	3000
-static bool ki_screen_off_battery;
+static bool ki_screen_off_battery = true;
 static bool ki_screen_on = true;
 static struct delayed_work ki_screen_work;
 
@@ -345,8 +345,6 @@ static int apply_ki_profile(int mode, bool force)
 		sugov_set_cluster_pl(cpu, t->pl);
 	}
 
-	if (force)
-		ki_cpufreq_reset_idle_floors(mode);
 
 	kgsl_set_performance_mode(t->gpu_perf);
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
@@ -369,15 +367,24 @@ static int apply_ki_profile(int mode, bool force)
 		cancel_delayed_work_sync(&ki_guard_work);
 
 	/*
-	 * Update VM watermarks only on explicit force switch (boot or user sysfs),
+	 * Update VM watermarks & idle floors only on explicit force switch (boot or user sysfs),
 	 * never during rapid screen on/off to prevent zone lock contention & SoD.
+	 * Always bound to user's permanent profile selection, never transient screen-off mode.
 	 */
 	if (force) {
-		vm_swappiness = t->swappiness;
-		watermark_scale_factor = t->wmark_scale;
+		int user_mode = READ_ONCE(current_profile_mode);
+		const struct ki_profile_tune *ut;
+
+		if (user_mode < 0 || user_mode >= KI_PROFILE_MAX)
+			user_mode = KI_PROFILE_BALANCED;
+		ut = &ki_tunes[user_mode];
+
+		ki_cpufreq_reset_idle_floors(user_mode);
+		vm_swappiness = ut->swappiness;
+		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = t->vfs_cache_pressure;
+		sysctl_vfs_cache_pressure = ut->vfs_cache_pressure;
 		setup_per_zone_wmarks();
 	}
 
@@ -521,9 +528,10 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 		return -EINVAL;
 
 	mutex_lock(&ki_profile_mutex);
-	WRITE_ONCE(current_profile_mode, val);
-	/* While screen is off the new choice is applied on next screen on */
-	ki_apply_effective(true);
+	if (val != READ_ONCE(current_profile_mode)) {
+		WRITE_ONCE(current_profile_mode, val);
+		ki_apply_effective(true);
+	}
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
@@ -643,8 +651,10 @@ static ssize_t ki_profile_proc_write(struct file *file, const char __user *buf,
 	}
 
 	mutex_lock(&ki_profile_mutex);
-	WRITE_ONCE(current_profile_mode, val);
-	ki_apply_effective(true);
+	if (val != READ_ONCE(current_profile_mode)) {
+		WRITE_ONCE(current_profile_mode, val);
+		ki_apply_effective(true);
+	}
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
