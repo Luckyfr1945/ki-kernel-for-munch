@@ -30,6 +30,9 @@
 - Set `force_fast_charge` and `screen_on_fast_charge` to OFF (`0`) by default to protect battery health and avoid thermal degradation
 - Synchronized `force_fast_charge` toggle to automatically deactivate `screen_on_fast_charge` when turned off in Kernel Manager
 - Restored instant re-evaluation to stock thermal throttling levels upon turning off fast charge overdrive
+- Fixed 49°C thermal emergency clamp in Screen-on / Force Fast Charge by evaluating from `raw_system_temp_level` and preserved PPS thermal stepping
+- Hardened Bypass Charging against bypassing hardware safety voters by unvoting `USER_VOTER` & `MAIN_CHG_SUSPEND_VOTER` without `vote_override` (maintains moisture & thermal protection)
+- Isolated USB connector thermal emergency shutdown and BMS I2C error recovery to direct `smblib_set_usb_suspend` calls (prevented accidental Bypass Charging toggles)
 - Fixed non-functional Night Light (Cahaya Malam) on AOSP / Custom ROMs (crDroid / Lunaris / Android 14–16)
 - Fixed LiveDisplay and Color Calibration (Warna) settings not applying to display
 - Set KCAL disabled by default to grant native Android ColorTransform (PCC/CTM) full hardware control

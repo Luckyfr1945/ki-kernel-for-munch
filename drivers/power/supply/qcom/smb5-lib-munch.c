@@ -3210,10 +3210,10 @@ int smblib_set_bypass(struct smb_charger *chg, bool en)
 		smblib_err(chg, "Couldn't vote %s chg_disable rc=%d\n",
 			en ? "enable" : "disable", rc);
 
-	/* Override USB ICL to 3.0A so charger supplies all motherboard current under high load */
+	/* Ensure USER_VOTER and MAIN_CHG_SUSPEND_VOTER do not choke ICL while bypass is active */
 	if (chg->usb_icl_votable) {
 		vote(chg->usb_icl_votable, USER_VOTER, false, 0);
-		vote_override(chg->usb_icl_votable, USER_BYPASS_VOTER, en, en ? 3000000 : 0);
+		vote(chg->usb_icl_votable, MAIN_CHG_SUSPEND_VOTER, false, 0);
 	}
 
 	if (!chg->cp_disable_votable)
@@ -3724,10 +3724,11 @@ static int smblib_therm_charging(struct smb_charger *chg)
 	int rc;
 	int sys_level, pps_level;
 
-	if (chg->system_temp_level >= MAX_TEMP_LEVEL)
+	if (chg->raw_system_temp_level >= MAX_TEMP_LEVEL)
 		return 0;
 
-	sys_level = smblib_get_screen_on_clamped_level(chg, chg->system_temp_level);
+	/* Always re-evaluate from raw_system_temp_level so 49°C emergency protection is accurate */
+	sys_level = smblib_get_screen_on_clamped_level(chg, chg->raw_system_temp_level);
 	chg->system_temp_level = sys_level;
 
 	switch (chg->real_charger_type) {
@@ -3762,8 +3763,6 @@ static int smblib_therm_charging(struct smb_charger *chg)
 		if (chg->pd_active == POWER_SUPPLY_PD_PPS_ACTIVE) {
 			if (chg->pps_thermal_level < 0)
 				chg->pps_thermal_level = chg->system_temp_level;
-			pps_level = smblib_get_screen_on_clamped_level(chg, chg->pps_thermal_level);
-			chg->pps_thermal_level = pps_level;
 			thermal_fcc_ua =
 				chg->thermal_fcc_pps_cp[chg->pps_thermal_level];
 		} else {
@@ -3817,7 +3816,9 @@ static void smblib_thermal_setting_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger,
 			thermal_setting_work.work);
-	int target_level = smblib_get_screen_on_clamped_level(chg, chg->system_temp_level);
+	int target_level = smblib_get_screen_on_clamped_level(chg, chg->raw_system_temp_level);
+
+	chg->system_temp_level = target_level;
 
 	if (chg->pps_thermal_level > target_level) {
 		if (chg->pps_thermal_level - target_level >= 2)
@@ -5185,12 +5186,7 @@ static void smblib_conn_therm_work(struct work_struct *work)
 						chg->sink_src_mode);
 			smblib_err(chg, "vbus_temp[%d-%d-%d-%d]\n", chg->connector_temp, chg->skin_temp, chg->smb_temp, chg->die_temp);
 
-			val.intval = 1;
-			/*rc = smblib_set_prop_input_suspend(chg, &val);
-			if (rc < 0)
-				smblib_err(chg,"Failed to set suspend\n");*/
-
-			power_supply_set_property(chg->batt_psy,POWER_SUPPLY_PROP_INPUT_SUSPEND,&val);
+			smblib_set_usb_suspend(chg, true);
 
 			while (retry_count) {
 				if(chg->cp_psy && chg->cp_sec_psy){
@@ -5222,11 +5218,8 @@ static void smblib_conn_therm_work(struct work_struct *work)
 						chg->sink_src_mode);
 			smblib_err(chg, "vbus_temp[%d-%d-%d-%d]\n", chg->connector_temp, chg->skin_temp, chg->smb_temp, chg->die_temp);
 
-			val.intval = 0;
-			power_supply_set_property(chg->batt_psy,POWER_SUPPLY_PROP_INPUT_SUSPEND,&val);
-			/*rc = smblib_set_prop_input_suspend(chg, &val);
-			if (rc < 0)
-				smblib_err(chg,"Failed to set suspend\n");*/
+			if (!chg->bypass_active)
+				smblib_set_usb_suspend(chg, false);
 
 			if (chg->sink_src_mode == SRC_MODE)
 				smblib_vbus_regulator_enable(chg->vbus_vreg->rdev);
@@ -11872,16 +11865,11 @@ static void bms_update_work(struct work_struct *work)
 
 	if (bms_i2c_error_count && chg->batt_psy && !input_suspend) {
 		input_suspend = 1;
-		val.intval = 1;
-		ret = power_supply_set_property(chg->batt_psy,POWER_SUPPLY_PROP_INPUT_SUSPEND,&val);
-		if (ret < 0)
-			smblib_err(chg,"Failed to set suspend\n");
-	}else if(!bms_i2c_error_count && chg->batt_psy && input_suspend) {
+		smblib_set_usb_suspend(chg, true);
+	} else if (!bms_i2c_error_count && chg->batt_psy && input_suspend) {
 		input_suspend = 0;
-		val.intval = 0;
-		ret = power_supply_set_property(chg->batt_psy,POWER_SUPPLY_PROP_INPUT_SUSPEND,&val);
-		if (ret < 0)
-			smblib_err(chg,"Failed to set suspend\n");
+		if (!chg->bypass_active)
+			smblib_set_usb_suspend(chg, false);
 	}
 
 	if (chg->batt_psy)
