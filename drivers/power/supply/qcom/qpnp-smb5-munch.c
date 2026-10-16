@@ -307,8 +307,12 @@ static ssize_t thermal_fcc_override_store(struct device *dev, struct device_attr
 		return -EINVAL;
 
 	chg->thermal_fcc_override = val;
-	if (chg->fcc_votable && chg->thermal_fcc_override > 0)
-		vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, true, val);
+	if (chg->fcc_votable) {
+		if (val > 0)
+			vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, true, val);
+		else
+			vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, false, 0);
+	}
 	return count;
 }
 
@@ -3634,10 +3638,12 @@ static ssize_t charging_limit_current_store(struct device *dev,
 		/* Disable custom limit, let normal fast charge policy take over */
 		vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER, false, 0);
 	} else {
-		/* val in mA, convert to uA */
-		vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER, true, val * 1000);
+		/* If input <= 15000 treat as mA, if > 15000 treat as uA */
+		int limit_ua = (val <= 15000) ? (val * 1000) : val;
+
+		limit_ua = min(limit_ua, 12000000); /* Clamp max 12A */
+		vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER, true, limit_ua);
 	}
-	rerun_election(chg->fcc_votable);
 
 	return count;
 }
@@ -3779,6 +3785,7 @@ static int smb5_init_batt_psy(struct smb5 *chip)
 	}
 
 	g_smb_chg = chg;
+	__smbchg = chg;
 
 	proc_create("bypass_charging", 0666, NULL, &bypass_proc_fops);
 	proc_create("fast_charge", 0666, NULL, &fast_charge_proc_fops);
@@ -5401,7 +5408,7 @@ static int smb5_init_typec_class(struct smb5 *chip)
 
 struct usbpd *smb_get_usbpd(void)
 {
-	return __smbchg->pd;
+	return __smbchg ? __smbchg->pd : NULL;
 }
 EXPORT_SYMBOL(smb_get_usbpd);
 
@@ -5654,6 +5661,9 @@ static void smb5_shutdown(struct platform_device *pdev)
 {
 	struct smb5 *chip = platform_get_drvdata(pdev);
 	struct smb_charger *chg = &chip->chg;
+
+	if (chg->bypass_active)
+		smblib_set_bypass(chg, false);
 
 	/* disable all interrupts */
 	smb5_disable_interrupts(chg);

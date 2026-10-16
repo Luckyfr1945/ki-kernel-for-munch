@@ -33,6 +33,10 @@
 - Fixed 49°C thermal emergency clamp in Screen-on / Force Fast Charge by evaluating from `raw_system_temp_level` and preserved PPS thermal stepping
 - Hardened Bypass Charging against bypassing hardware safety voters by unvoting `USER_VOTER` & `MAIN_CHG_SUSPEND_VOTER` without `vote_override` (maintains moisture & thermal protection)
 - Isolated USB connector thermal emergency shutdown and BMS I2C error recovery to direct `smblib_set_usb_suspend` calls (prevented accidental Bypass Charging toggles)
+- Fixed potential 32-bit signed integer overflow in `charging_limit_current` sysfs with dual mA/uA auto-detection and 12A hardware clamp
+- Added automatic Bypass Charging hardware deactivation on shutdown/reboot to preserve offline and TWRP/recovery charging
+- Fixed `thermal_fcc_override` not clearing voter when written with `0`
+- Unified `__smbchg` and `g_smb_chg` references and added NULL pointer protection to `smb_get_usbpd()`
 - Fixed non-functional Night Light (Cahaya Malam) on AOSP / Custom ROMs (crDroid / Lunaris / Android 14–16)
 - Fixed LiveDisplay and Color Calibration (Warna) settings not applying to display
 - Set KCAL disabled by default to grant native Android ColorTransform (PCC/CTM) full hardware control
