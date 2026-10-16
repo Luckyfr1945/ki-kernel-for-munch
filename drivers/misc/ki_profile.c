@@ -267,23 +267,24 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
 	 * Balanced:
 	 * Nyaman, super smooth, dan adem untuk harian & gaming santai (sosmed, chat, UI responsif).
-	 * Schedutil ramp-up 1000us di Silver/Gold dan 2500us di Prime agar Prime core 3.2GHz
-	 * tidak gampang terpicu beban ringan/spike kecil.
-	 * Down-rate hold time dijinakkan ke 8ms (8000us) agar SoC cepat turun ke idle dan tidak
-	 * menahan clock tinggi berlebihan (suhu turun drastis ~4-6°C lebih dingin).
+	 * Schedutil ramp-up 500us di Silver/Gold (responsif instan bebas micro-stutter) dan
+	 * 1500us di Prime agar Prime core 3.2GHz tidak gampang terpicu beban ringan/spike kecil.
+	 * Down-rate hold time 10ms (10000us) meng-cover frame interval 120Hz (8.33ms) secara
+	 * presisi sehingga tidak pernah stutter/drop clock di tengah render, sekaligus
+	 * memangkas panas (suhu turun drastis ~4-6°C dibanding default 20ms).
 	 * Hispeed seimbang: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz pada load 75-85%.
-	 * Migrasi seimbang (up_migrate = 85, down_migrate = 75).
+	 * Migrasi seimbang (up_migrate = 80, down_migrate = 70).
 	 * iowait_boost_max diredam (25% Silver, 15% Gold, 0% Prime) agar scroll video adem.
 	 * Swappiness = 80, Wmark = 20, vfs_cache_pressure = 80.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 1000, .down_us = 8000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 25 },
-			{ .up_us = 1000, .down_us = 8000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 15 },
-			{ .up_us = 2500, .down_us = 8000, .hispeed_freq = 1804800, .hispeed_load = 80, .iowait_boost_max = 0 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 25 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 15 },
+			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .iowait_boost_max = 0 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 85, .down_migrate = 75,
+		.up_migrate = 80, .down_migrate = 70,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
 		.swappiness = 80, .wmark_scale = 20, .vfs_cache_pressure = 80,

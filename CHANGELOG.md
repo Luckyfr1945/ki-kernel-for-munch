@@ -18,8 +18,10 @@
   - Added POCO F4 hardware feature verification (`device_features/munch.xml`)
   - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT`) detection for HyperOS & Custom AOSP ROMs
   - Accurate ROM detection reporting in recovery UI automatically
-- Tamed CPU Schedutil down-rate hold time to 8ms on Balanced & 8-10ms on Performance (drops SoC temperature by ~4-6°C)
-- Relaxed Prime cluster ramp-up to 2500us on Balanced to prevent 3.2GHz core from waking up on micro-tasks
+- Completely purged all hardcoded kernel overrides from AnyKernel scripts (swappiness, vfs_cache_pressure, maple scheduler, scaling_min_freq, mglru, wakelock blocker)
+- All kernel features and toggles are now 100% user-controlled exclusively via the Ki-Kernel Settings module (`ki_optimizer.conf` and WebUI)
+- Fixed MGLRU and Wakelock Blocker turning back on across reboots (prevented interference with WhatsApp background notifications)
+- Tuned Balanced Profile Schedutil Golden Ratio: ramp-up 500us Silver/Gold & 1500us Prime, down-rate hold time 10ms (covers 120Hz 8.33ms frame window with zero micro-stutter while keeping SoC ~4-6°C cooler)
 - Enabled selective thermal bypass on Performance mode with 46°C skin auto-guard to eliminate 30/31 FPS thermal cap during gaming
 - Enhanced Battery Saver with Ultra Power Saving tunings (Silver 979MHz, Gold 1.07GHz, Prime 1.17GHz, 1ms instant drop to 300MHz idle)
 - Hardened AOSP screen-off battery state logic against getting stuck in low-power mode when screen wakes up

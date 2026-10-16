@@ -248,16 +248,8 @@ fi;
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
 if [ -d /data/adb ]; then
     mkdir -p /data/adb/service.d /data/adb/post-fs-data.d;
-    rm -f /data/adb/post-fs-data.d/00_early_adb.sh;
-
-    # Early boot storage scheduler tuning (runs before zygote)
-    cat << 'EOF_MAPLE' > /data/adb/post-fs-data.d/00_maple.sh
-#!/system/bin/sh
-for q in /sys/block/sd*/queue/scheduler /sys/block/*/queue/scheduler; do
-    [ -f "$q" ] && echo maple > "$q" 2>/dev/null
-done
-EOF_MAPLE
-    chmod 755 /data/adb/post-fs-data.d/00_maple.sh
+    rm -f /data/adb/post-fs-data.d/00_early_adb.sh 2>/dev/null;
+    rm -f /data/adb/post-fs-data.d/00_maple.sh 2>/dev/null;
 
     cat << 'EOF' > /data/adb/service.d/00_nkm_bypass.sh
 #!/system/bin/sh
@@ -279,6 +271,7 @@ if [ -n "$KSUD_BIN" ]; then
     $KSUD_BIN sepolicy patch "allow vendor_hal_perf_default system_server dir search" 2>/dev/null
 fi
 
+# Battery & charging sysfs permissions
 chmod 664 /sys/class/power_supply/battery/input_suspend 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/bypass_charging 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_limit_current 2>/dev/null
@@ -287,15 +280,14 @@ chmod 644 /sys/class/power_supply/battery/battery_cycle_count 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
+# Kernel tweak nodes permissions (controlled by user via Ki-Kernel Settings module)
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/mode 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/spoof_version 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/active_profile 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
+chmod 666 /proc/ki_profile 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
 chmod 666 /proc/mglru 2>/dev/null
+chmod 666 /proc/bypass_charging 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
 chmod 666 /sys/kernel/gpu/* 2>/dev/null
@@ -309,7 +301,7 @@ chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null
 
-# Fast charge nodes permission (allow NKM / Kernel Manager to control toggles without overriding to ON on boot)
+# Fast charge nodes permission
 chmod 666 /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
@@ -319,28 +311,10 @@ chmod 666 /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
 
-echo 80 > /proc/sys/vm/swappiness 2>/dev/null
-echo 80 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+# Wakelock blocker permissions
+chmod 666 /sys/kernel/wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
-echo "wlan_pno_wl;wlan_extscan_wl;" > /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
-
-# LMKD Tuning (Anti-Kill Multitasking: kill single heaviest only on true OOM, prevent cache purge)
-setprop sys.lmk.kill_heaviest_task true 2>/dev/null
-setprop ro.lmk.kill_heaviest_task true 2>/dev/null
-setprop ro.lmk.psi_partial_stall_ms 250 2>/dev/null
-setprop ro.lmk.thrashing_limit 100 2>/dev/null
-
-for q in /sys/block/*/queue/scheduler; do
-    if [ -f "$q" ]; then
-        echo maple > "$q" 2>/dev/null
-    fi
-done
-
-# Ensure CPU idle floors allow full power saving when idle
-echo 300000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/null
-
-# Auto-enable MGLRU (override ROM init.rc 0 disable)
-echo 1 > /proc/mglru 2>/dev/null
+chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
 
 # Prevent AOSP / Custom ROM thermal-engine from capping display refresh rate to 30 FPS
 setprop ro.surface_flinger.set_idle_timer_ms 0 2>/dev/null
