@@ -2500,6 +2500,67 @@ void ki_cpufreq_reset_idle_floors(int mode)
 }
 EXPORT_SYMBOL_GPL(ki_cpufreq_reset_idle_floors);
 
+/**
+ * ki_cpufreq_set_limits - set min/max frequency limits for a CPU cluster
+ * @cpu: representative CPU of the cluster
+ * @min_freq: minimum frequency in kHz (0 = use hardware minimum)
+ * @max_freq: maximum frequency in kHz (0 = use hardware maximum)
+ */
+int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int max_freq)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	struct cpufreq_policy new_policy;
+
+	if (!policy)
+		return -ENODEV;
+
+	down_write(&policy->rwsem);
+	if (policy_is_inactive(policy)) {
+		up_write(&policy->rwsem);
+		cpufreq_cpu_put(policy);
+		return -EINVAL;
+	}
+
+	memcpy(&new_policy, policy, sizeof(*policy));
+	if (min_freq) {
+		policy->user_policy.min = max(min_freq, policy->cpuinfo.min_freq);
+		new_policy.min = policy->user_policy.min;
+	} else {
+		policy->user_policy.min = policy->cpuinfo.min_freq;
+		new_policy.min = policy->cpuinfo.min_freq;
+	}
+
+	if (max_freq) {
+		policy->user_policy.max = min(max_freq, policy->cpuinfo.max_freq);
+		new_policy.max = policy->user_policy.max;
+	} else {
+		policy->user_policy.max = policy->cpuinfo.max_freq;
+		new_policy.max = policy->cpuinfo.max_freq;
+	}
+
+	cpufreq_set_policy(policy, &new_policy);
+
+	up_write(&policy->rwsem);
+	cpufreq_cpu_put(policy);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ki_cpufreq_set_limits);
+
+unsigned int ki_cpufreq_get_max(unsigned int cpu)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	unsigned int max_freq = 0;
+
+	if (policy) {
+		down_read(&policy->rwsem);
+		max_freq = policy->user_policy.max;
+		up_read(&policy->rwsem);
+		cpufreq_cpu_put(policy);
+	}
+	return max_freq;
+}
+EXPORT_SYMBOL_GPL(ki_cpufreq_get_max);
+
 /*********************************************************************
  *               BOOST						     *
  *********************************************************************/

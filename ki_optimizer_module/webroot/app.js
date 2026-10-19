@@ -110,6 +110,7 @@ let isKiKernelActive = true;
 
 // Helper to configure feature row support
 function updateFeatureRow(row, input, badge, isSupported, isEnabled, labelOn, labelOff) {
+  if (!row) return;
   if (!isSupported) {
     row.classList.add("is-unsupported");
     if (input) input.disabled = true;
@@ -136,25 +137,55 @@ function updateFeatureRow(row, input, badge, isSupported, isEnabled, labelOn, la
 function setActiveProfileUI(profileId) {
   currentProfile = parseInt(profileId, 10);
   [cardProf0, cardProf1, cardProf2].forEach(card => {
-    card.classList.remove("active");
-    card.setAttribute("aria-pressed", "false");
+    if (card) {
+      card.classList.remove("active");
+      card.setAttribute("aria-pressed", "false");
+    }
   });
   
   if (currentProfile === 0) {
-    cardProf0.classList.add("active");
-    cardProf0.setAttribute("aria-pressed", "true");
-    elCurProfile.textContent = "BATTERY";
-    elCurProfile.style.color = "var(--accent-green)";
+    cardProf0?.classList.add("active");
+    cardProf0?.setAttribute("aria-pressed", "true");
+    if (elCurProfile) {
+      elCurProfile.textContent = "BATTERY";
+      elCurProfile.style.color = "var(--accent-green)";
+    }
   } else if (currentProfile === 2) {
-    cardProf2.classList.add("active");
-    cardProf2.setAttribute("aria-pressed", "true");
-    elCurProfile.textContent = "TURBO";
-    elCurProfile.style.color = "var(--accent-green)";
+    cardProf2?.classList.add("active");
+    cardProf2?.setAttribute("aria-pressed", "true");
+    if (elCurProfile) {
+      elCurProfile.textContent = "TURBO";
+      elCurProfile.style.color = "var(--accent-green)";
+    }
   } else {
-    cardProf1.classList.add("active");
-    cardProf1.setAttribute("aria-pressed", "true");
-    elCurProfile.textContent = "BALANCED";
-    elCurProfile.style.color = "var(--accent-green)";
+    cardProf1?.classList.add("active");
+    cardProf1?.setAttribute("aria-pressed", "true");
+    if (elCurProfile) {
+      elCurProfile.textContent = "BALANCED";
+      elCurProfile.style.color = "var(--accent-green)";
+    }
+  }
+}
+
+// Instant Profile Switcher (Fixes UI mental / reverting back to previous profile)
+async function setProfileInstant(profileId) {
+  if (!isKiKernelActive) return;
+  const id = parseInt(profileId, 10);
+  setActiveProfileUI(id);
+  const names = ["Battery Saver", "Balanced", "Turbo Gaming"];
+
+  try {
+    await exec(`
+      echo ${id} > /proc/ki_profile 2>/dev/null
+      echo ${id} > /sys/kernel/ki_profile/mode 2>/dev/null
+      CONF="/sdcard/ki_optimizer.conf"
+      if [ -f "$CONF" ]; then
+        sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${id}/" "$CONF" 2>/dev/null
+      fi
+    `);
+    showToast(`✔ Switched to ${names[id]} profile`);
+  } catch (err) {
+    console.error("setProfileInstant error:", err);
   }
 }
 
@@ -162,8 +193,8 @@ function setActiveProfileUI(profileId) {
 function setMglruUI(mode, isSupported = true) {
   currentMglruMode = parseInt(mode, 10);
   if (!isSupported) {
-    rowMglru.classList.add("is-unsupported");
-    mglruBtns.forEach(btn => btn.disabled = true);
+    rowMglru?.classList.add("is-unsupported");
+    mglruBtns.forEach(btn => { if (btn) btn.disabled = true; });
     if (badgeMglru) {
       badgeMglru.textContent = "Unsupported";
       badgeMglru.classList.add("is-unsupported");
@@ -171,11 +202,13 @@ function setMglruUI(mode, isSupported = true) {
     return;
   }
 
-  rowMglru.classList.remove("is-unsupported");
+  rowMglru?.classList.remove("is-unsupported");
   mglruBtns.forEach(btn => {
-    btn.disabled = false;
-    const btnMode = parseInt(btn.dataset.mode, 10);
-    btn.classList.toggle("active", btnMode === currentMglruMode);
+    if (btn) {
+      btn.disabled = false;
+      const btnMode = parseInt(btn.dataset.mode, 10);
+      btn.classList.toggle("active", btnMode === currentMglruMode);
+    }
   });
 
   if (badgeMglru) {
@@ -193,7 +226,7 @@ function setMglruUI(mode, isSupported = true) {
   }
 }
 
-// Read current system and kernel state
+// Read current system and kernel state (Executed on initial load and manual Apply)
 async function refreshState() {
   const checkCmd = `
     k_ver="\$(uname -r)"
@@ -312,14 +345,14 @@ async function refreshState() {
       updateFeatureRow(rowThermal, toggleThermal, badgeThermal, pThrotSup, pThrotEn, "Active", "Disabled");
 
       // Swappiness
-      if (pSwappiness) {
+      if (pSwappiness && rangeSwappiness) {
         rangeSwappiness.value = pSwappiness;
         valSwappiness.textContent = pSwappiness;
       }
 
       // TCP
       if (badgeTcp) badgeTcp.textContent = "Supported";
-      if (["bbr", "westwood", "cubic"].includes(pTcp)) {
+      if (["bbr", "westwood", "cubic"].includes(pTcp) && selectTcp) {
         selectTcp.value = pTcp;
       }
 
@@ -344,6 +377,36 @@ async function refreshState() {
   }
 }
 
+// Telemetry Poller (Only updates live sensor numbers, never overwrites user controls)
+async function updateTelemetry() {
+  if (!isKiKernelActive) return;
+  try {
+    const res = await exec(`
+      b_cap=\$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0)
+      b_tmp=\$(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 300)
+      echo "\$b_cap|\$b_tmp"
+    `);
+    if (!res || !res.stdout) return;
+    const parts = res.stdout.trim().split("|");
+    if (parts.length >= 2) {
+      const pBatCap = parts[0].trim();
+      const pBatTempRaw = parseInt(parts[1].trim(), 10) || 300;
+      elCurBattery.textContent = `${pBatCap}%`;
+      const tempC = Math.round(pBatTempRaw / 10);
+      elCurTemp.textContent = `${tempC}°C`;
+      if (tempC >= 42) {
+        elCurTemp.style.color = "var(--danger)";
+      } else if (tempC >= 38) {
+        elCurTemp.style.color = "var(--warning)";
+      } else {
+        elCurTemp.style.color = "var(--accent-green)";
+      }
+    }
+  } catch (err) {
+    console.error("updateTelemetry error:", err);
+  }
+}
+
 // Apply All Changes to Kernel & Update /sdcard/ki_optimizer.conf
 async function applyChanges(silent = false) {
   if (!isKiKernelActive) {
@@ -353,14 +416,14 @@ async function applyChanges(silent = false) {
 
   const prof = currentProfile;
   const mglru = currentMglruMode;
-  const bypass = toggleBypass.checked ? "1" : "0";
-  const fastcharge = toggleFastCharge.checked ? "1" : "0";
-  const screenoff = toggleScreenOff.checked ? "1" : "0";
-  const wakelock = toggleWakelock.checked ? "1" : "0";
-  const dynfsync = toggleDynFsync.checked ? "1" : "0";
-  const thermal = toggleThermal.checked ? "1" : "0";
-  const swap = rangeSwappiness.value;
-  const tcp = selectTcp.value;
+  const bypass = toggleBypass?.checked ? "1" : "0";
+  const fastcharge = toggleFastCharge?.checked ? "1" : "0";
+  const screenoff = toggleScreenOff?.checked ? "1" : "0";
+  const wakelock = toggleWakelock?.checked ? "1" : "0";
+  const dynfsync = toggleDynFsync?.checked ? "1" : "0";
+  const thermal = toggleThermal?.checked ? "1" : "0";
+  const swap = rangeSwappiness?.value || "80";
+  const tcp = selectTcp?.value || "bbr";
 
   // Single shell payload for maximum speed & atomic save
   const script = `
@@ -391,7 +454,7 @@ async function applyChanges(silent = false) {
     # 5. Apply Screen-Off Eco
     echo ${screenoff} > /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
 
-    # 5b. Apply Wakelock Blocker
+    # 6. Apply Wakelock Blocker
     if [ "${wakelock}" = "1" ]; then
       echo 1 > /sys/kernel/wakelock_blocker/enabled 2>/dev/null
       echo 1 > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
@@ -400,20 +463,20 @@ async function applyChanges(silent = false) {
       echo 0 > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
     fi
 
-    # 6. Apply Dynamic Fsync
+    # 7. Apply Dynamic Fsync
     echo ${dynfsync} > /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null
     echo ${dynfsync} > /sys/kernel/dyn_fsync/dyn_fsync_active 2>/dev/null
 
-    # 7. Apply Thermal Throttle Guard
+    # 8. Apply Thermal Throttle Guard
     echo ${thermal} > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 
-    # 8. Apply TCP Congestion
+    # 9. Apply TCP Congestion
     echo "${tcp}" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
 
-    # 9. Apply Swappiness
+    # 10. Apply Swappiness
     echo ${swap} > /proc/sys/vm/swappiness 2>/dev/null
 
-    # 10. Persist to /sdcard/ki_optimizer.conf
+    # 11. Persist to /sdcard/ki_optimizer.conf
     CONF="/sdcard/ki_optimizer.conf"
     if [ -f "$CONF" ]; then
       sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${prof}/" "$CONF" 2>/dev/null
@@ -437,8 +500,6 @@ async function applyChanges(silent = false) {
       const profName = prof === 0 ? "Battery Saver" : prof === 2 ? "Turbo Gaming" : "Balanced";
       showToast(`✔ ${profName} profile & tweaks applied!`);
     }
-    // Refresh display
-    await refreshState();
   } catch (err) {
     console.error("applyChanges error:", err);
     showToast("❌ Failed to apply settings. Check kernel support.");
@@ -446,16 +507,16 @@ async function applyChanges(silent = false) {
 }
 
 // Event Listeners
-cardProf0.addEventListener("click", () => {
-  setActiveProfileUI(0);
+cardProf0?.addEventListener("click", () => {
+  setProfileInstant(0);
 });
 
-cardProf1.addEventListener("click", () => {
-  setActiveProfileUI(1);
+cardProf1?.addEventListener("click", () => {
+  setProfileInstant(1);
 });
 
-cardProf2.addEventListener("click", () => {
-  setActiveProfileUI(2);
+cardProf2?.addEventListener("click", () => {
+  setProfileInstant(2);
 });
 
 mglruBtns.forEach(btn => {
@@ -467,16 +528,16 @@ mglruBtns.forEach(btn => {
   }
 });
 
-rangeSwappiness.addEventListener("input", (e) => {
-  valSwappiness.textContent = e.target.value;
+rangeSwappiness?.addEventListener("input", (e) => {
+  if (valSwappiness) valSwappiness.textContent = e.target.value;
 });
 
-btnApply.addEventListener("click", () => {
+btnApply?.addEventListener("click", () => {
   applyChanges(false);
 });
 
-// Periodic status poll (every 5 seconds for live battery & temp)
-setInterval(refreshState, 5000);
+// Periodic telemetry poll (every 4 seconds for live battery & temp, decoupled from form controls)
+setInterval(updateTelemetry, 4000);
 
 // Initialize on Load
 document.addEventListener("DOMContentLoaded", () => {

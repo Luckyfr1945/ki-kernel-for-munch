@@ -226,6 +226,7 @@ struct ki_cluster_tune {
 	unsigned int rtg_boost_freq;	/* kHz, 0 = disabled */
 	unsigned int floor_freq;	/* kHz, 0 = disabled */
 	unsigned int iowait_boost_max;	/* % (0 = disabled, 100 = full) */
+	unsigned int max_freq;		/* kHz, 0 = hardware max */
 };
 
 struct ki_profile_tune {
@@ -242,22 +243,25 @@ struct ki_profile_tune {
 	int vfs_cache_pressure;
 };
 
+/* User max frequency overrides (0 = follow active profile default) */
+static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
+
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
 	 * Battery Saver (Ultra Power Saving):
 	 * Fokus hemat baterai maksimal (zero phantom drain).
 	 * Tasks dikemas di Silver cluster (up_migrate = 95/85),
-	 * Hispeed sangat hemat: Silver 979MHz, Gold 1.07GHz, Prime 1.17GHz pada load 95-98%.
-	 * Ramp-up sangat santai (up_us: 3ms Silver, 6ms Gold, 12ms Prime),
-	 * Drop kilat ke 300MHz idle (down_us: 1000us = 1ms) untuk memangkas konsumsi voltase.
-	 * Zero I/O wait boost (0%) untuk mencegah storage burst membangunkan CPU ke jam tinggi.
+	 * Clamped max frequencies: Silver 1.52GHz, Gold 1.71GHz, Prime 1.67GHz.
+	 * Eliminates high-voltage VDD states (>1.05V) to save ~60% power under load.
+	 * Down hold 4-8ms prevents PLL thrashing on frame transitions.
+	 * RTG boost at 979MHz Silver / 1.07GHz Gold guarantees stutter-free video decode.
 	 * Swappiness 50 untuk menghemat daya pemrosesan CPU dari kompresi zRAM berulang.
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 3000,  .down_us = 1000, .hispeed_freq = 979200,  .hispeed_load = 95, .iowait_boost_max = 0 },
-			{ .up_us = 6000,  .down_us = 1000, .hispeed_freq = 1075200, .hispeed_load = 95, .iowait_boost_max = 0 },
-			{ .up_us = 12000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 98, .iowait_boost_max = 0 },
+			{ .up_us = 3000,  .down_us = 4000, .hispeed_freq = 979200,  .hispeed_load = 95, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 5,  .max_freq = 1516800 },
+			{ .up_us = 6000,  .down_us = 6000, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 1075200, .floor_freq = 0, .iowait_boost_max = 5,  .max_freq = 1708800 },
+			{ .up_us = 12000, .down_us = 8000, .hispeed_freq = 1171200, .hispeed_load = 98, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0,  .max_freq = 1670400 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 95, .down_migrate = 85,
@@ -267,22 +271,22 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	},
 	/*
 	 * Balanced:
-	 * Nyaman, super smooth, dan adem untuk harian & gaming santai (sosmed, chat, UI responsif).
+	 * Nyaman, super smooth, dan adem untuk harian & sosmed (Reels, TikTok, YouTube 120Hz).
 	 * Schedutil ramp-up 500us di Silver/Gold (responsif instan bebas micro-stutter) dan
-	 * 1500us di Prime agar Prime core 3.2GHz tidak gampang terpicu beban ringan/spike kecil.
+	 * 1500us di Prime.
 	 * Down-rate hold time 10ms (10000us) meng-cover frame interval 120Hz (8.33ms) secara
-	 * presisi sehingga tidak pernah stutter/drop clock di tengah render, sekaligus
-	 * memangkas panas (suhu turun drastis ~4-6°C dibanding default 20ms).
-	 * Hispeed seimbang: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz pada load 75-85%.
-	 * Migrasi seimbang (up_migrate = 80, down_migrate = 70).
-	 * iowait_boost_max diredam (25% Silver, 15% Gold, 0% Prime) agar scroll video adem.
-	 * Swappiness = 80, Wmark = 20, vfs_cache_pressure = 80.
+	 * presisi sehingga tidak pernah stutter/drop clock di tengah render.
+	 * RTG boost: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz ensures UI and video
+	 * decoder threads maintain solid frame rates without dropping frames.
+	 * Floor frequencies (Silver 576MHz, Gold 710MHz) prevent dropping to 300MHz during interaction.
+	 * iowait_boost (Silver 35%, Gold 25%) prevents media stream buffer stalls.
+	 * Max frequency caps Prime to 2.84GHz and Gold to 2.21GHz to prevent outdoor overheating.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 15 },
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 10 },
-			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .iowait_boost_max = 0 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .rtg_boost_freq = 1209600, .floor_freq = 576000, .iowait_boost_max = 35, .max_freq = 1804800 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .rtg_boost_freq = 1651200, .floor_freq = 710400, .iowait_boost_max = 25, .max_freq = 2208000 },
+			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .rtg_boost_freq = 1804800, .floor_freq = 0,      .iowait_boost_max = 0,  .max_freq = 2841600 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 80, .down_migrate = 70,
@@ -295,8 +299,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (8-10ms)
 	 *    prevents clock-bouncing while dropping idle fast on scene pauses.
 	 *  - Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate idle drain.
-	 *  - Efficient gaming hispeeds (Gold 2.15G @ 60% load, Prime 2.65G @ 65% load),
-	 *    scaling naturally to 2.42G / 3.19G (3.2GHz) on heavy sustained spikes.
+	 *  - Peak uncapped hardware clocks: Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz.
 	 *  - Clean cluster separation (up_migrate 65/50) isolates game threads from background noise.
 	 *  - MAX_RECENT_AVG window stats + swappiness 60 prevents zRAM stalls & micro-stutters.
 	 *  - Thermal bypass active (thermal_throttle = false) to prevent FPS from capping at 30/31 FPS,
@@ -304,9 +307,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ .up_us = 0, .down_us = 8000,  .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200, .iowait_boost_max = 100 },
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100 },
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100 },
+			{ .up_us = 0, .down_us = 8000,  .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200,  .iowait_boost_max = 100, .max_freq = 1804800 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100, .max_freq = 2419200 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100, .max_freq = 3187200 },
 		},
 		.pl = true,
 		.gpu_perf = true,
@@ -340,6 +343,7 @@ static int apply_ki_profile(int mode, bool force)
 	for (i = 0; i < KI_NR_CLUSTERS; i++) {
 		const struct ki_cluster_tune *c = &t->cl[i];
 		unsigned int cpu = ki_cluster_cpu[i];
+		unsigned int target_max;
 
 		ret = sugov_set_cluster_rate_limits(cpu, c->up_us, c->down_us);
 		if (ret) {
@@ -353,6 +357,9 @@ static int apply_ki_profile(int mode, bool force)
 		sugov_set_cluster_floor(cpu, c->floor_freq);
 		sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max);
 		sugov_set_cluster_pl(cpu, t->pl);
+
+		target_max = ki_user_max_freq[i] ? ki_user_max_freq[i] : c->max_freq;
+		ki_cpufreq_set_limits(cpu, 0, target_max);
 	}
 
 	if (t->gpu_perf != last_gpu_perf || force) {
@@ -612,12 +619,93 @@ static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute
 	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
 }
 
+static ssize_t max_freq_silver_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int val = ki_cpufreq_get_max(ki_cluster_cpu[0]);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", val);
+}
+
+static ssize_t max_freq_silver_store(struct kobject *kobj, struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	unsigned int val;
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	ki_user_max_freq[0] = val;
+	if (val == 0) {
+		int mode = ki_effective_mode();
+		if (mode >= 0 && mode < KI_PROFILE_MAX)
+			val = ki_tunes[mode].cl[0].max_freq;
+	}
+	ki_cpufreq_set_limits(ki_cluster_cpu[0], 0, val);
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
+}
+
+static ssize_t max_freq_gold_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int val = ki_cpufreq_get_max(ki_cluster_cpu[1]);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", val);
+}
+
+static ssize_t max_freq_gold_store(struct kobject *kobj, struct kobj_attribute *attr,
+				   const char *buf, size_t count)
+{
+	unsigned int val;
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	ki_user_max_freq[1] = val;
+	if (val == 0) {
+		int mode = ki_effective_mode();
+		if (mode >= 0 && mode < KI_PROFILE_MAX)
+			val = ki_tunes[mode].cl[1].max_freq;
+	}
+	ki_cpufreq_set_limits(ki_cluster_cpu[1], 0, val);
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
+}
+
+static ssize_t max_freq_prime_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int val = ki_cpufreq_get_max(ki_cluster_cpu[2]);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", val);
+}
+
+static ssize_t max_freq_prime_store(struct kobject *kobj, struct kobj_attribute *attr,
+				    const char *buf, size_t count)
+{
+	unsigned int val;
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	ki_user_max_freq[2] = val;
+	if (val == 0) {
+		int mode = ki_effective_mode();
+		if (mode >= 0 && mode < KI_PROFILE_MAX)
+			val = ki_tunes[mode].cl[2].max_freq;
+	}
+	ki_cpufreq_set_limits(ki_cluster_cpu[2], 0, val);
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
+}
+
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
 static struct kobj_attribute thermal_throttle_attr = __ATTR_RO(thermal_throttle);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
+static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
+static struct kobj_attribute max_freq_gold_attr = __ATTR_RW(max_freq_gold);
+static struct kobj_attribute max_freq_prime_attr = __ATTR_RW(max_freq_prime);
 
 /*
  * Non-root userspace control interface via /proc/ki_profile
@@ -698,13 +786,18 @@ static struct attribute *ki_profile_attrs[] = {
 	&thermal_throttle_attr.attr,
 	&active_profile_attr.attr,
 	&screen_off_battery_attr.attr,
+	&max_freq_silver_attr.attr,
+	&max_freq_gold_attr.attr,
+	&max_freq_prime_attr.attr,
 	NULL,
 };
 
 static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
-	if (attr == &mode_attr.attr || attr == &screen_off_battery_attr.attr)
-		return 0644;
+	if (attr == &mode_attr.attr || attr == &screen_off_battery_attr.attr ||
+	    attr == &max_freq_silver_attr.attr || attr == &max_freq_gold_attr.attr ||
+	    attr == &max_freq_prime_attr.attr)
+		return 0666;
 	return attr->mode; /* 0444 for RO attrs */
 }
 

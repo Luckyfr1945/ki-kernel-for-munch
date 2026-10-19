@@ -7,6 +7,23 @@
 
 ---
 
+## Ki-kernel v1.4.1 P3:
+- Fixed Facebook Reels & Video Playback Stuttering (Issue 1):
+  - Enabled WALT Related Thread Group (RTG) boost in Balanced profile (`rtg_boost_freq`: 1.21GHz Silver, 1.65GHz Gold, 1.80GHz Prime) providing dedicated frequency headroom for SurfaceFlinger, RenderThread, and video decoders.
+  - Configured active floor frequencies (`floor_freq`: 576MHz Silver, 710MHz Gold) to prevent DVFS frequencies from dropping to 300MHz between 120Hz/60Hz video frames.
+  - Tuned `iowait_boost_max` (35% Silver, 25% Gold) to prevent network and storage buffer stalls during media streaming.
+- Fixed WebUI Profile Auto-Reverting ("Mental") Bug (Issue 2):
+  - Profile buttons now immediately apply the chosen profile to kernel (`/proc/ki_profile`, `/sys/kernel/ki_profile/mode`) and save to `/sdcard/ki_optimizer.conf` upon tap.
+  - Decoupled periodic telemetry polling from form controls, preventing the 4s timer from reverting unapplied profile selections.
+- Fixed Heavy Powersave Battery Drain & Added Anti-Overheat Clamping (Issues 3 & 5):
+  - Implemented CPU cluster max frequency clamping in `ki_profile.c` and `cpufreq.c` (`ki_cpufreq_set_limits`):
+    - Battery Saver mode now firmly clamps Gold cores to 1.71GHz and Prime core to 1.67GHz, eliminating high-voltage VDD states (>1.05V) and cutting heavy background power consumption by >60%.
+    - Increased `down_us` hold time in Battery profile (4ms Silver, 6ms Gold, 8ms Prime) to eliminate PLL thrashing and frequency flutter.
+    - Balanced profile caps Prime to 2.84GHz and Gold to 2.21GHz, stopping thermal runaway outdoors under sunlight while retaining peak daily responsiveness.
+  - Exposed sysfs nodes `/sys/kernel/ki_profile/max_freq_silver`, `max_freq_gold`, and `max_freq_prime` with runtime user overrides.
+
+---
+
 ## Ki-kernel v1.4.1 P2:
 - Fixed Sleep of Death (SoD) & Unrecoverable Screen-off Hangs:
   - Eliminated deadlock where phone became unresponsive and ADB disappeared after 1-minute screen timeout
