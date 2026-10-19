@@ -20,7 +20,10 @@
     - Battery Saver mode now firmly clamps Gold cores to 1.71GHz and Prime core to 1.67GHz, eliminating high-voltage VDD states (>1.05V) and cutting heavy background power consumption by >60%.
     - Increased `down_us` hold time in Battery profile (4ms Silver, 6ms Gold, 8ms Prime) to eliminate PLL thrashing and frequency flutter.
     - Balanced profile caps Prime to 2.84GHz and Gold to 2.21GHz, stopping thermal runaway outdoors under sunlight while retaining peak daily responsiveness.
-  - Exposed sysfs nodes `/sys/kernel/ki_profile/max_freq_silver`, `max_freq_gold`, and `max_freq_prime` with runtime user overrides.
+- Fixed Metamodule & Zygisk Inactivity / Conflict (Issue 4):
+  - Removed the `/system` overlay directory from `ki_optimizer_module`. Previously, containing `system/bin/ki` forced KernelSU metamodules (such as `meta-overlayfs` / `magic mount`) to create an OverlayFS mount over `/system/bin`, breaking Zygisk Next's companion daemon and `app_process` zygote hooking.
+  - Relocated CLI tool to `bin/ki` and dynamically symlinked it into root's binary path (`/data/adb/ksu/bin`, `/data/adb/ap/bin`, `/data/adb/magisk`), achieving full terminal usability with zero `/system` filesystem footprint or metamodule collision.
+  - Removed runtime modifications to `module.prop` and `disable` flags during `service.sh` to prevent state corruption with KernelSU module managers.
 
 ---
 

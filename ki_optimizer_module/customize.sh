@@ -52,8 +52,16 @@ fi
 # Set executable permissions
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
-set_perm "$MODPATH/system/bin/ki" 0 0 0755
+set_perm "$MODPATH/bin/ki" 0 0 0755
 set_perm_recursive "$MODPATH/webroot" 0 0 0755 0644
+
+# Link ki CLI directly to root PATH without touching /system
+# (Prevents OverlayFS conflicts with KernelSU metamodule & Zygisk Next)
+for bin_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/magisk; do
+    if [ -d "$bin_dir" ]; then
+        ln -sf "$MODPATH/bin/ki" "$bin_dir/ki" 2>/dev/null
+    fi
+done
 
 ui_print " "
 ui_print "===================================================="
