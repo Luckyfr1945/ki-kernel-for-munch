@@ -2,77 +2,70 @@
 # Copyright (C) 2018-2020 Oplus. All rights reserved.
 
 config OPLUS_PORT
-	bool "OPLUS port support"
+	bool "oplus port"
 	default y if E404_OPLUS
 	help
-	  This enables OPlus/ColorOS/OxygenOS port compatibility features.
+	  This will allow all OPLUS Feature to be built for ColorOS/OxygenOS port compatibility.
 
 config OPLUS_OPROJECT
 	bool "oplus project"
-	depends on E404_OPLUS || OPLUS_PORT
-	default y
+	default y if OPLUS_PORT || E404_OPLUS
 	help
-	 define this config to define oplus project
+	  Define this config to define oplus project ID and board revision.
 	  
 config OPLUS_NANDSWAP
 	bool "nandswap feature"
-	depends on E404_OPLUS || OPLUS_PORT
-	default n
+	default y if OPLUS_PORT || E404_OPLUS
 	help
-	 nandswap feature
+	  Nandswap (RAM expansion) feature for OPlus.
 
 config OPLUS_NANDSWAP_DEBUG
 	bool "nandswap debug"
-	depends on E404_OPLUS || OPLUS_PORT && F2FS_FS
+	depends on F2FS_FS
 	default n
 	help
-	 nandswap debug
+	  Nandswap debug logging.
 
 config OPLUS_NWPOWER
-    bool "OPLUS NWPOWER"
-    depends on E404_OPLUS || OPLUS_PORT
-    default n
-    help
-	 add for oplus wakelock_profiler
+	bool "OPLUS NWPOWER"
+	default y if OPLUS_PORT || E404_OPLUS
+	help
+	  Network power and socket hooks for OPlus.
 
 config OPLUS_SUBSYS_SLEEP_MONITOR
 	bool "monitor Qualcomm subsystem sleep"
-	depends on E404_OPLUS || OPLUS_PORT
-	default n
+	default y if OPLUS_PORT || E404_OPLUS
 	help
-	  This selects to get sleep info for Qualcomm subsystem
+	  This selects to get sleep info for Qualcomm subsystem.
 
 config OPLUS_WAKELOCK_PROFILER
 	bool "config oplus wakelock profiler"
-	depends on E404_OPLUS || OPLUS_PORT
-	default n
+	default y if OPLUS_PORT || E404_OPLUS
 	help
-		Select this config to enable oplus wakelock profiler
+	  Select this config to enable oplus wakelock profiler.
 
 config OPLUS_POWERINFO_STANDBY_DEBUG
 	bool "powerinfo standby config"
-	depends on E404_OPLUS || OPLUS_PORT
 	default n
 	help
-		Select this config to enable powerinfo standby debug
+	  Select this config to enable powerinfo standby debug.
 
 config OPLUS_POWERINFO_RPMH
 	bool "powerinfo rpmh config"
-	depends on E404_OPLUS || OPLUS_PORT
 	default n
 	help
-		Select this config to enable powerinfo rpmh
+	  Select this config to enable powerinfo rpmh,
+	  currently broken, do not enable this.
 
 config OPLUS_POWERINFO_FTM
 	bool "powerinfo ftm config"
-	depends on E404_OPLUS || OPLUS_PORT
 	default n
 	help
-		Select this config to enable powerinfo ftm
-	
+	  Select this config to enable powerinfo ftm.
+
 config OPLUS_STUB_NODES
 	bool "oplus missing nodes stubs"
-	depends on E404_OPLUS || OPLUS_PORT
+	depends on OPLUS_PORT || E404_OPLUS
 	default y
 	help
-	 Select this to enable dummy stubs for missing oplus procfs and sysfs nodes
+	  Select this to enable dummy stubs for missing oplus procfs and sysfs nodes.

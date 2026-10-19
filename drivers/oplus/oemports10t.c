@@ -7,10 +7,6 @@
 #include <linux/seq_file.h>
 #include <linux/irq.h>
 
-#ifdef CONFIG_E404_ATTRIBUTES
-#include <linux/e404_attributes.h>
-#endif
-
 #define linkdir "oemports10t"
 #define link_file "oemports10t/danda"
 #define link_source "/build.prop"
@@ -21,14 +17,7 @@ static int __init oemports10t_init(void) {
 	static struct proc_dir_entry *link_t;
 	int ret = 0;
 
-#ifdef CONFIG_E404_ATTRIBUTES
-	if (e404_data.rom_type != 3) {
-		pr_alert("E404: Skipping oplus link init\n");
-		return 0;
-	}
-#endif
-
-	pr_alert("E404: Init oplus link\n");
+	printk(KERN_INFO "link initial");
 	
 	link_dir = proc_mkdir(linkdir, NULL);
 	driver_path = kzalloc(PATH_MAX, GFP_KERNEL);
@@ -42,10 +31,13 @@ static int __init oemports10t_init(void) {
 	link_t = proc_symlink(link_file, NULL, driver_path);
 	if (!link_t) {
 		ret = -ENOMEM;
-		printk(KERN_INFO "link failed");
-	} else {
-		printk(KERN_INFO "link initialized");
 	}
+
+	if (!link_t) {
+		ret = -ENOMEM;
+		printk(KERN_INFO "link failed");
+	} else
+		printk(KERN_INFO "link initialized");
 
 	return ret;
 }

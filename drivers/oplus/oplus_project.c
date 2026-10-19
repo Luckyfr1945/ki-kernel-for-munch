@@ -216,7 +216,8 @@ int32_t get_Modem_Version(void)
 {
     init_project_version();
 
-    return g_project?11:-EINVAL;
+    // 13 - INDIA
+    return g_project?13:-EINVAL;
 }
 EXPORT_SYMBOL(get_Modem_Version);
 
@@ -305,10 +306,7 @@ bool is_confidential(void)
 {
     init_project_version();
 
-    if (!g_project)
-        return false;
-
-    return !!g_project->nDataECDT.Is_confidential;
+    return g_project?g_project->nDataECDT.Is_confidential:-EINVAL;
 }
 EXPORT_SYMBOL(is_confidential);
 
@@ -516,18 +514,11 @@ static int __init oplus_project_init(void)
 {
     struct proc_dir_entry *p_entry;
 
-#ifdef CONFIG_E404_ATTRIBUTES
-    if (e404_data.rom_type != 3) {
-        pr_alert("E404: Skipping oplus project init\n");
-        return 0;
-    }
-#endif
-
     oplus_info = proc_mkdir("oplusVersion", NULL);
     if (!oplus_info) {
         goto error_init;
     }
-
+    
     p_entry = proc_create_data("prjName", S_IRUGO, oplus_info, &project_info_fops, UINT2Ptr(PROJECT_VERSION));
     if (!p_entry)
         goto error_init;

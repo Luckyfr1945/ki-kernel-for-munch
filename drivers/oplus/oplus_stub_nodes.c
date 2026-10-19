@@ -12,9 +12,6 @@
 #include <linux/seq_file.h>
 #include <linux/version.h>
 #include <linux/notifier.h>
-#ifdef CONFIG_E404_ATTRIBUTES
-#include <linux/e404_attributes.h>
-#endif
 
 static char ufs_read_mb[32] = "0\n";
 static char ufs_write_mb[32] = "0\n";
@@ -668,13 +665,6 @@ static int __init oplus_stub_nodes_init(void) {
     struct proc_dir_entry *oplus_afs, *oplus_mem, *devinfo, *proc_storage;
     struct proc_dir_entry *charger_dir;
     int rc;
-
-#ifdef CONFIG_E404_ATTRIBUTES
-    if (e404_data.rom_type != 3) {
-        pr_alert("E404: Skipping oplus stub nodes init\n");
-        return 0;
-    }
-#endif
 
     set_proc_owner(proc_create("bootprof", 0666, NULL, &dummy_sink_fops));
     set_proc_owner(proc_create("theiaPwkReport", 0666, NULL, &dummy_sink_fops));

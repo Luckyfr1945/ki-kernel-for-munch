@@ -92,6 +92,10 @@ elif case "$userflavor" in *missi*|*qssi*) true;; *) false;; esac; then
 elif case "$userflavor" in aospa*) true;; *) false;; esac; then
     os="aospa";
     os_string="Paranoid Android (AOSPA) ROM";
+elif [ -n "$(find_prop "ro.build.version.oplusrom")" ] || [ -n "$(find_prop "ro.oplus.version.myos")" ] || \
+     [ -n "$(find_prop "ro.build.version.opporom")" ] || [ -d /my_manifest -o -d /my_product -o -d /my_stock ]; then
+    os="coloros";
+    os_string="OPlus / ColorOS / OxygenOS ROM";
 else
     os="aosp";
     os_string="AOSP ROM";

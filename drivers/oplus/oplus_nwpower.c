@@ -973,14 +973,6 @@ static void nwpower_netlink_exit(void) {
 }
 
 static int __init nwpower_init(void) {
-
-#ifdef CONFIG_E404_ATTRIBUTES
-	if (e404_data.rom_type != 3) {
-		pr_alert("E404: Skipping oplus nwpower init\n");
-		return 0;
-	}
-#endif
-
 	int ret = 0;
 	ret = nwpower_netlink_init();
 	if (ret < 0) {

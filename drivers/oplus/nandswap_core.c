@@ -360,7 +360,7 @@ out:
 
 static void ns_life_ctrl_update(bool timer)
 {
-	unsigned long events[NR_VM_EVENT_ITEMS] = { 0 };
+	unsigned long events[NR_VM_EVENT_ITEMS];
 	long write_inc;
 	struct tm tm;
 	struct timespec64 ts;
@@ -409,7 +409,7 @@ static void ns_life_ctrl_timer(struct timer_list *t)
 
 static inline void ns_life_ctrl_init(void)
 {
-	unsigned long events[NR_VM_EVENT_ITEMS] = { 0 };
+	unsigned long events[NR_VM_EVENT_ITEMS];
 	struct timespec64 ts;
 
 	memset(&nsi, 0, sizeof(nsi));
@@ -1416,7 +1416,7 @@ static struct file_operations life_protect_fops = {
 
 static int stat_info_seq_show(struct seq_file *seq, void *offset)
 {
-	unsigned long events[NR_VM_EVENT_ITEMS] = { 0 };
+	unsigned long events[NR_VM_EVENT_ITEMS];
 	all_vm_events(events);
 
 	seq_printf(seq, "ns_fn_enable: %d\n"
@@ -1529,12 +1529,6 @@ static void nandswap_stop(void)
 
 static int __init nandswap_init(void)
 {
-#ifdef CONFIG_E404_ATTRIBUTES
-	if (e404_data.rom_type != 3) {
-		pr_alert("E404: Skipping oplus nandswap init\n");
-		return 0;
-	}
-#endif
 	//TODO: priority tuning for nswapoutd/nswapind
 	//struct sched_param param = { .sched_priority = MAX_USER_RT_PRIO -1 };
 	//struct sched_param param = { .sched_priority = 1 };

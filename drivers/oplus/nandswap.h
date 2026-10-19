@@ -8,10 +8,6 @@
 
 #include <linux/sched.h>
 
-#ifdef CONFIG_E404_ATTRIBUTES
-#include <linux/e404_attributes.h>
-#endif
-
 /* must check if this flag is repeat in <include/linux/mm.h> */
 #define VM_NANDSWAP	0x8000000000UL	/* swapin mark */
 
