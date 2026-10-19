@@ -441,11 +441,13 @@ elif [ "$TARGET_OS" == "coloros" ]; then
     cp build_artifacts/miui/Image anykernel/Image
     cp build_artifacts/miui/dtb anykernel/dtb
 else
-    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
+    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/ anykernel/kernels/coloros/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
     cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
+    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
+    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
 fi
 
 # DO NOT include dtbo (preserve panel/touch drivers from ROM)
@@ -469,6 +471,7 @@ mkdir -p ../release
 cp -f "$ZIP_FILENAME" ../release/
 mkdir -p ../../release 2>/dev/null || true
 cp -f "$ZIP_FILENAME" ../../release/ 2>/dev/null || true
+cp -f "$ZIP_FILENAME" /home/kiki/Downloads/ 2>/dev/null || true
 mv "$ZIP_FILENAME" ../
 cd ..
 
