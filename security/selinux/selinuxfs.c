@@ -125,7 +125,9 @@ static void selinux_fs_info_free(struct super_block *sb)
 static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 				size_t count, loff_t *ppos)
 {
+#if !defined(CONFIG_E404_OPLUS) && !defined(CONFIG_OPLUS_PORT)
 	struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
+#endif
 	char tmpbuf[TMPBUFLEN];
 	ssize_t length;
 #if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)

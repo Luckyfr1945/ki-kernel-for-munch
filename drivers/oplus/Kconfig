@@ -34,13 +34,13 @@ config OPLUS_NWPOWER
 
 config OPLUS_SUBSYS_SLEEP_MONITOR
 	bool "monitor Qualcomm subsystem sleep"
-	default y if OPLUS_PORT || E404_OPLUS
+	default n
 	help
 	  This selects to get sleep info for Qualcomm subsystem.
 
 config OPLUS_WAKELOCK_PROFILER
 	bool "config oplus wakelock profiler"
-	default y if OPLUS_PORT || E404_OPLUS
+	default n
 	help
 	  Select this config to enable oplus wakelock profiler.
 
