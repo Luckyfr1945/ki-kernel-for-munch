@@ -1,8 +1,8 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-15  
+**Build Date:** 2026-10-19  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI/HyperOS and AOSP  
+**Variant:** Universal Multi-OS (MIUI/HyperOS, AOSP, ColorOS/OxygenOS) & Standalone  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---

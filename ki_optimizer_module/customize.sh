@@ -42,12 +42,6 @@ else
     ui_print "- Existing config found: /sdcard/ki_optimizer.conf (preserved)"
 fi
 
-# Install Ki Settings Launcher APK
-if [ -f "$MODPATH/KiSettings.apk" ]; then
-    ui_print "- Installing Ki Settings App..."
-    pm install -r "$MODPATH/KiSettings.apk" >/dev/null 2>&1
-    ui_print "- Ki Settings App installed! [OK]"
-fi
 
 # Set executable permissions
 set_perm_recursive "$MODPATH" 0 0 0755 0644
