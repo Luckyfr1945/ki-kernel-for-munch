@@ -153,3 +153,5 @@ build_release_all.sh
 build_release_miui.sh
 build_universal.sh
 anykernel_template/
+Baseband-guard/
+NoMount/

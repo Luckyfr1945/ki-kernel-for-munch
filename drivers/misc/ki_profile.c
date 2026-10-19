@@ -24,6 +24,7 @@
 #include <drm/drm_notifier_mi.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
+#include <linux/cpumask.h>
 #include <linux/ki_profile.h>
 
 /* Profile chosen by the user (sysfs "mode") */
@@ -69,15 +70,15 @@ extern int sysctl_vfs_cache_pressure;
 /*
  * Thermal Auto-Guard (Performance mode only):
  * Thermal bypass stays active for max FPS, but throttling is re-armed when
- * CPU/GPU die >= 85C, body (quiet_therm) >= 46C, or battery >= 45C.
- * Released again once die <= 75C, body <= 42C, and battery <= 41C.
- * Polls every 2s, only while Performance is active.
+ * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
+ * Released again once die <= 75C, body <= 43C, and battery <= 41C.
+ * Polls every 2s, only while Performance mode is active.
  */
 #define KI_GUARD_POLL_MS	2000
 #define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
 #define KI_GUARD_DIE_COOL	75000 /* 75.0°C */
-#define KI_GUARD_SKIN_HOT	46000 /* 46.0°C */
-#define KI_GUARD_SKIN_COOL	42000 /* 42.0°C */
+#define KI_GUARD_SKIN_HOT	47000 /* 47.0°C - safe fail-safe for outdoor sunlight */
+#define KI_GUARD_SKIN_COOL	43000 /* 43.0°C */
 #define KI_GUARD_BATT_HOT	45000 /* 45.0°C */
 #define KI_GUARD_BATT_COOL	41000 /* 41.0°C */
 
@@ -204,7 +205,7 @@ static void ki_guard_work_fn(struct work_struct *work)
 	} else if (ki_guard_tripped && cool_condition) {
 		ki_guard_tripped = false;
 		WRITE_ONCE(ki_thermal_throttle_enabled, false);
-		pr_info("ki_profile: guard cooled (die=%d skin=%d batt=%d), gaming unlocked\n",
+		pr_info("ki_profile: guard cooled (die=%d skin=%d batt=%d), throttle released\n",
 			die, skin, batt);
 	}
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
@@ -279,8 +280,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 25 },
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 15 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .iowait_boost_max = 15 },
+			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .iowait_boost_max = 10 },
 			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .iowait_boost_max = 0 },
 		},
 		.thermal_throttle = true,
@@ -321,8 +322,16 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
+	static bool last_gpu_perf = false;
 	int i, ret, err = 0;
 	unsigned long flags;
+
+	/* Prevent profile switching while secondary CPUs are offline (suspend / hotplug) */
+	if (num_online_cpus() < nr_cpu_ids) {
+		pr_debug("ki_profile: secondary CPUs offline (%u/%u), profile switch deferred\n",
+			 num_online_cpus(), nr_cpu_ids);
+		return -EBUSY;
+	}
 
 	if (mode < 0 || mode >= KI_PROFILE_MAX)
 		mode = KI_PROFILE_BALANCED;
@@ -337,6 +346,7 @@ static int apply_ki_profile(int mode, bool force)
 			pr_warn("ki_profile: cpu%u sugov not ready (%d), cpufreq limits skipped\n",
 				cpu, ret);
 			err |= BIT(i);
+			continue;
 		}
 		sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq);
 		sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load);
@@ -345,8 +355,10 @@ static int apply_ki_profile(int mode, bool force)
 		sugov_set_cluster_pl(cpu, t->pl);
 	}
 
-
-	kgsl_set_performance_mode(t->gpu_perf);
+	if (t->gpu_perf != last_gpu_perf || force) {
+		kgsl_set_performance_mode(t->gpu_perf);
+		last_gpu_perf = t->gpu_perf;
+	}
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
 	sched_set_boost(t->sched_boost);
@@ -427,6 +439,10 @@ static int ki_apply_effective(bool force)
 
 static void ki_screen_work_fn(struct work_struct *work)
 {
+	/* Do not attempt to reconfigure cpufreq or scheduler if CPUs are offline (suspend) */
+	if (num_online_cpus() < nr_cpu_ids)
+		return;
+
 	mutex_lock(&ki_profile_mutex);
 	ki_apply_effective(false);
 	mutex_unlock(&ki_profile_mutex);
@@ -494,14 +510,22 @@ static int ki_psy_notifier_cb(struct notifier_block *nb,
 			      unsigned long event, void *data)
 {
 	struct power_supply *psy = data;
+	static int last_supplied = -1;
+	int is_supplied;
 
 	if (event != PSY_EVENT_PROP_CHANGED || !psy || !psy->desc || !psy->desc->name)
 		return NOTIFY_OK;
 
-	if (!strcmp(psy->desc->name, "battery") || !strcmp(psy->desc->name, "usb")) {
-		if (!READ_ONCE(ki_screen_on)) {
-			mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
-					 msecs_to_jiffies(1000));
+	/* Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events */
+	if (strcmp(psy->desc->name, "usb") == 0) {
+		is_supplied = power_supply_is_system_supplied() > 0;
+		if (last_supplied != -1 && is_supplied == last_supplied)
+			return NOTIFY_OK;
+		last_supplied = is_supplied;
+
+		/* Only trigger work while screen is on and all CPUs are active */
+		if (READ_ONCE(ki_screen_on) && num_online_cpus() >= nr_cpu_ids) {
+			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 		}
 	}
 	return NOTIFY_OK;

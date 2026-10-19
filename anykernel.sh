@@ -192,10 +192,6 @@ chmod 666 /sys/kernel/wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
 
-# Prevent AOSP / Custom ROM thermal-engine from capping display refresh rate to 30 FPS
-setprop ro.surface_flinger.set_idle_timer_ms 0 2>/dev/null
-setprop ro.surface_flinger.set_touch_timer_ms 0 2>/dev/null
-setprop ro.surface_flinger.use_content_detection_for_refresh_rate false 2>/dev/null
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
     ui_print "  -> NKM and Ki-Kernel permissions configured!";

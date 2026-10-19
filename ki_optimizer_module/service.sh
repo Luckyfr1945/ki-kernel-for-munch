@@ -57,11 +57,6 @@ chmod 666 /sys/class/power_supply/battery/input_suspend 2>/dev/null
 chmod 666 /sys/kernel/wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
 
-# Prevent thermal daemon from capping display refresh rate to 30 FPS
-setprop ro.surface_flinger.set_idle_timer_ms 0 2>/dev/null
-setprop ro.surface_flinger.set_touch_timer_ms 0 2>/dev/null
-setprop ro.surface_flinger.use_content_detection_for_refresh_rate false 2>/dev/null
-
 # Apply configured tweaks
 if [ -x "$MODDIR/system/bin/ki" ]; then
     "$MODDIR/system/bin/ki" reload >/dev/null 2>&1

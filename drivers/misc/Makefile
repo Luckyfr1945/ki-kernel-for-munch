@@ -89,3 +89,4 @@ obj-y				+= sound_control.o
 obj-y				+= n0kz_attributes.o
 obj-$(CONFIG_DYNAMIC_FSYNC)	+= dyn_fsync.o
 obj-$(CONFIG_NTSYNC)		+= ntsync.o
+obj-$(CONFIG_E404_ATTRIBUTES)	+= e404_attributes.o

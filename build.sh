@@ -1,9 +1,9 @@
 #!/bin/bash
 # Universal Ki-Kernel Build Script for SM8250 (munch / alioth / etc.)
-# Supports: AOSP / Custom ROM & MIUI / HyperOS
+# Supports: AOSP / Custom ROM, MIUI / HyperOS, & ColorOS / OxygenOS
 # Usage: bash build.sh <target_device> [variant] [target_os]
 #   variant   : ksu (default) | nosusfs | noksu
-#   target_os : aosp (default) | miui | both
+#   target_os : aosp (default) | miui | coloros | both
 
 set -e
 
@@ -21,12 +21,13 @@ if [ -z "$1" ]; then
     echo "Arguments:"
     echo "  target_device : munch, alioth, apollo, lmi, umi, etc."
     echo "  variant       : ksu (default) | nosusfs | noksu"
-    echo "  target_os     : aosp (default) | miui | both"
+    echo "  target_os     : aosp (default) | miui | coloros (or oplus/oos) | both"
     echo ""
     echo "Examples:"
-    echo "  bash build.sh munch ksu aosp   # Build AOSP with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu miui   # Build MIUI/HyperOS with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu both   # Build Universal Dual-OS zip"
+    echo "  bash build.sh munch ksu aosp     # Build AOSP with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu miui     # Build MIUI/HyperOS with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu coloros  # Build ColorOS/OxygenOS/RealmeUI with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu both     # Build Universal Dual-OS zip"
     echo "=========================================================="
     exit 1
 fi
@@ -115,10 +116,11 @@ case "$2" in
         ;;
 esac
 
-# Parse Target OS (aosp, miui, both)
+# Parse Target OS (aosp, miui, coloros, both)
 TARGET_OS="${3:-aosp}"
 case "$TARGET_OS" in
     aosp|miui|both|all) ;;
+    coloros|oplus|oos|realme) TARGET_OS="coloros" ;;
     *) TARGET_OS="aosp" ;;
 esac
 
@@ -346,9 +348,13 @@ fi
 # ------------------------------------------------------------
 # BUILD MIUI / HyperOS
 # ------------------------------------------------------------
-if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" == "all" ]; then
+if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" == "all" ]; then
     echo ""
-    echo ">>> Compiling Kernel for MIUI / HyperOS <<<"
+    if [ "$TARGET_OS" == "coloros" ]; then
+        echo ">>> Compiling Kernel for ColorOS / OxygenOS / RealmeUI <<<"
+    else
+        echo ">>> Compiling Kernel for MIUI / HyperOS <<<"
+    fi
     rm -rf out/
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     apply_ksu_config
@@ -356,6 +362,14 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
 
     # Enable MIUI hardware drivers, disable obsolete/hanging daemons
     scripts/config --file out/.config \
+        -e EROFS_FS \
+        -e EROFS_FS_XATTR \
+        -e EROFS_FS_POSIX_ACL \
+        -e EROFS_FS_SECURITY \
+        -e EROFS_FS_ZIP \
+        -e EROFS_FS_PCPU_KTHREAD \
+        -e EROFS_FS_PCPU_KTHREAD_HIPRI \
+        -d PSTORE_COMPRESS \
         --set-str STATIC_USERMODEHELPER_PATH "" \
         -d SF_BINDER \
         -d MILLET \
@@ -382,7 +396,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
-        echo "Error: MIUI Image compilation failed."
+        echo "Error: Image compilation failed."
         exit 1
     fi
 
@@ -398,7 +412,11 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
 
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
     cp out/arch/arm64/boot/dtb build_artifacts/miui/dtb
-    echo ">>> MIUI / HyperOS Build Done! <<<"
+    if [ "$TARGET_OS" == "coloros" ]; then
+        echo ">>> ColorOS / OxygenOS Build Done! <<<"
+    else
+        echo ">>> MIUI / HyperOS Build Done! <<<"
+    fi
 fi
 
 # ------------------------------------------------------------
@@ -416,6 +434,12 @@ elif [ "$TARGET_OS" == "miui" ]; then
     mkdir -p anykernel/kernels/miui/
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
+elif [ "$TARGET_OS" == "coloros" ]; then
+    mkdir -p anykernel/kernels/coloros/
+    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
+    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
+    cp build_artifacts/miui/Image anykernel/Image
+    cp build_artifacts/miui/dtb anykernel/dtb
 else
     mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
@@ -434,6 +458,8 @@ if [ "$TARGET_OS" == "aosp" ]; then
     ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 elif [ "$TARGET_OS" == "miui" ]; then
     ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
+elif [ "$TARGET_OS" == "coloros" ]; then
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-ColorOS-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 else
     ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
 fi

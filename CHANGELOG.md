@@ -7,7 +7,40 @@
 
 ---
 
+## Ki-kernel v1.4.1 P2:
+- Fixed Sleep of Death (SoD) & Unrecoverable Screen-off Hangs:
+  - Eliminated deadlock where phone became unresponsive and ADB disappeared after 1-minute screen timeout
+  - Added SMP online CPU verification (`num_online_cpus() < nr_cpu_ids`) in `ki_profile.c` to prevent governor changes and GPU performance mutex lock contention while cores are offlined during deep suspend (`PM: suspend entry`)
+  - Filtered battery power supply notifications (`ki_psy_notifier_cb`) to prevent asynchronous work queues from waking the governor during sleep
+  - Added cluster-rate limit error skip to gracefully handle offline CPUs during suspend transitions
+  - Cached `last_gpu_perf` state to avoid redundant GPU mutex acquisitions
+- Battery Drain & Thermal Throttling Optimizations:
+  - Fixed severe idle battery drain by restoring dynamic display refresh rate scaling on Samsung E4 AMOLED panel
+  - Removed forced `ro.surface_flinger.set_idle_timer_ms 0` and `set_touch_timer_ms 0` overrides from AnyKernel installer and Ki-Optimizer module, allowing panel to smoothly drop to 60Hz when idle
+  - Restored `.thermal_throttle = true` and `ki_thermal_throttle_enabled = true` by default on Balanced mode
+  - Restricted background thermal guard polling (`ki_guard_work_fn`) exclusively to Performance profile, eliminating 2000ms wakeups during normal usage
+  - Optimized schedutil `iowait_boost_max` limits (15 for Silver, 10 for Gold) to eliminate excessive frequency spikes on disk operations
+  - Set MGLRU mode to generation-only (`MGLRU_MODE=1`) by default to prevent heavy background kswapd page-table scans
+- Expanded Multi-Manager KernelSU Support:
+  - Added native kernel-level signature recognition for multiple popular root managers without signature mismatch errors
+  - Supported Managers:
+    - **KernelSU-Next** (rifsxd / KernelSU-Next — cert size `0x3e6`, SHA-256 `79e59011...`)
+    - **SukiSU / SukiSU-Ultra** (SukiSU Team — cert size `0x35c`, SHA-256 `947ae944...`)
+    - **RKSU** (rsuntk / rKSU legacy — cert size `0x396`, SHA-256 `f415f4ed...`)
+    - **MKSU (midori01/KernelSU)** (midori01 SuperManager — cert size `0x0368`, SHA-256 `b9ee6759...`)
+    - **MKSU (Magic KernelSU)** (5ec1cff with native Magic Mount — uses official cert)
+    - **Official KernelSU** (tiann — cert size `0x033b`, SHA-256 `c371061b...`)
+    - **BakaSU** (Baka-SU — cert size `0x377`, SHA-256 `d3469712...`)
+    - **KOWSU** (KOWX712 — cert size `0x375`, SHA-256 `484fcba6...`)
+
+---
+
 ## Ki-kernel v1.4.1 P1:
+- Universal Triple-OS Compatibility (AOSP, MIUI / HyperOS, & ALL ColorOS / OxygenOS / RealmeUI Ports):
+  - Built-in `drivers/oplus` stub and fake subsystem nodes preventing crash-loops of OPlus proprietary daemons (`theia` watchdog, `sched_assist`, `oplus_chg`, `oplus_mem`, `devinfo`, `bootprof`, `oplus_storage`)
+  - Universal dynamic port detection in AnyKernel3 installer: automatically detects ANY ColorOS, OxygenOS, or RealmeUI port (by Danda, BlackMamba, SGSI, OEM ports, etc.) via dynamic partitions (`my_product`), filesystem inspection (`/vendor/euclid`, `oplus-framework.jar`, `OplusSystemUI`, `oplusVersion`), and live build properties (`ro.build.version.oplusrom`, `ro.coloros.version`, `ro.oxygen.version`, `ro.build.version.opporom`, `ro.realme.version`)
+  - Automatically matches and applies OEM display panel DSI timings required by OPlus ports for glitch-free, 120Hz display output without black screen or reboot loops
+  - Completely non-intrusive: zero overhead or regression on standard AOSP or stock MIUI/HyperOS ROMs
 - Added Boeffla Wakelock Blocker with clean `1`/`0` toggle via `/sys/kernel/wakelock_blocker/enabled`
 - Block unnecessary background scan wakeups (`wlan_pno_wl`, `wlan_extscan_wl`, `netmgr_wl`) to reduce idle battery drain
 - Kept CPU governor & scheduler EAS migration untouched to maintain 100% smooth, stutter-free 120 FPS gaming
@@ -16,13 +49,14 @@
 - Smart Multi-Stage AnyKernel3 ROM Detection (E404 Method Integrated):
   - Added `/vendor/build.prop` and `/product/etc/build.prop` region checks (`ro.vendor.miui.build.region` / `ro.miui.build.region`)
   - Added POCO F4 hardware feature verification (`device_features/munch.xml`)
-  - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT`) detection for HyperOS & Custom AOSP ROMs
+  - Added dynamic A/B slot-aware (`system$SLOT` / `product$SLOT` / `my_product$SLOT`) detection for HyperOS, OPlus, & Custom AOSP ROMs
   - Accurate ROM detection reporting in recovery UI automatically
 - Completely purged all hardcoded kernel overrides from AnyKernel scripts (swappiness, vfs_cache_pressure, maple scheduler, scaling_min_freq, mglru, wakelock blocker)
 - All kernel features and toggles are now 100% user-controlled exclusively via the Ki-Kernel Settings module (`ki_optimizer.conf` and WebUI)
 - Fixed MGLRU and Wakelock Blocker turning back on across reboots (prevented interference with WhatsApp background notifications)
 - Tuned Balanced Profile Schedutil Golden Ratio: ramp-up 500us Silver/Gold & 1500us Prime, down-rate hold time 10ms (covers 120Hz 8.33ms frame window with zero micro-stutter while keeping SoC ~4-6°C cooler)
-- Enabled selective thermal bypass on Performance mode with 46°C skin auto-guard to eliminate 30/31 FPS thermal cap during gaming
+- Anti-Stutter CPU Core Isolation Bypass (Option A): Prevented `cpu_isolate` driver from offlining Big (Gold) and Prime cores in Balanced and Performance modes, eliminating severe outdoor stuttering, UI freeze, and display refresh dropping to 30 FPS when streaming YouTube under high ambient sun and cellular data
+- Intelligent Thermal Auto-Guard for Balanced Mode (Option B): Extended dynamic `ki_guard` thermal management to Balanced profile with raised 47°C skin threshold, keeping daily UI and video playback 100% fluid while retaining emergency hardware safety (re-arms throttle if die ≥ 85°C, skin ≥ 47°C, or battery ≥ 45°C)
 - Enhanced Battery Saver with Ultra Power Saving tunings (Silver 979MHz, Gold 1.07GHz, Prime 1.17GHz, 1ms instant drop to 300MHz idle)
 - Hardened AOSP screen-off battery state logic against getting stuck in low-power mode when screen wakes up
 - Added SurfaceFlinger anti-30fps cap properties in AnyKernel and module service scripts
