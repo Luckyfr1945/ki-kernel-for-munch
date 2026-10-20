@@ -31,7 +31,7 @@
 #include <linux/uaccess.h>
 #include <linux/kobject.h>
 #include <linux/ctype.h>
-#ifdef CONFIG_E404_OPLUS
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_E404_ATTRIBUTES)
 #include <linux/e404_attributes.h>
 #endif
 
@@ -125,20 +125,23 @@ static void selinux_fs_info_free(struct super_block *sb)
 static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 				size_t count, loff_t *ppos)
 {
-#if !defined(CONFIG_E404_OPLUS) && !defined(CONFIG_OPLUS_PORT)
 	struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
-#endif
 	char tmpbuf[TMPBUFLEN];
 	ssize_t length;
 #if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-	bool hide = false;
+	if (early_rom_type == 3) {
+		bool hide = false;
 
-	if (current->cred->uid.val >= 10000)
-		hide = true;
-	else if (strstr(current->comm, ".gms") != NULL)
-		hide = true;
+		if (current->cred->uid.val >= 10000)
+			hide = true;
+		else if (strstr(current->comm, ".gms") != NULL)
+			hide = true;
 
-	length = scnprintf(tmpbuf, TMPBUFLEN, "%d", hide ? 1 : 0);
+		length = scnprintf(tmpbuf, TMPBUFLEN, "%d", hide ? 1 : 0);
+	} else {
+		length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
+				   enforcing_enabled(fsi->state));
+	}
 #else
 	length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
 			   enforcing_enabled(fsi->state));
@@ -174,7 +177,10 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 		goto out;
 
 #if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-	new_value = 0;
+	if (early_rom_type == 3)
+		new_value = 0;
+	else
+		new_value = !!new_value;
 #else
 	new_value = !!new_value;
 #endif
