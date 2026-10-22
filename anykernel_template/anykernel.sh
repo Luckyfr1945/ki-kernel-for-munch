@@ -455,6 +455,8 @@ chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
 
 # OPlus / ColorOS / OxygenOS stub nodes permissions
+chmod 644 /proc/oplusVersion/* 2>/dev/null
+chmod 644 /proc/oplus_charger/* 2>/dev/null
 chmod 666 /proc/theiaPwkReport 2>/dev/null
 chmod 666 /proc/bootprof 2>/dev/null
 chmod 666 /proc/storage/buf_log 2>/dev/null
@@ -463,7 +465,7 @@ chmod 666 /proc/oplus_scheduler/sched_assist/* 2>/dev/null
 chmod 666 /proc/oplus_afs_config/afs_config 2>/dev/null
 chmod 666 /proc/oplus_mem/memory_monitor 2>/dev/null
 chmod 666 /proc/devinfo/lcd* 2>/dev/null
-chmod 666 /sys/class/oplus_chg/common/mutual_cmd 2>/dev/null
+chmod 666 /sys/class/oplus_chg/*/* 2>/dev/null
 
 EOF
     chmod 755 /data/adb/service.d/00_nkm_bypass.sh
