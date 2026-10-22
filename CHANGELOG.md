@@ -14,6 +14,9 @@
 • Uncapped hardware burst clock headroom in Balanced profile (Prime 3.19GHz, Gold 2.42GHz)
 • Defaulted blk-mq I/O scheduler to low-latency BFQ / Maple (eliminated ADIOS barrier flush stalls)
 • Perfected OPlus / ColorOS subsystem: added robust hardware fallback for Project ID (20807), PCB (T6), boot mode, modem, and operator when SMEM 135 is absent on Xiaomi bootloader
+• Fixed OPlus NWPower & IPv6 RTO netlink initialization failure by raising MAX_LINKS to 48 in `netlink.h` and `af_netlink.c`
+• Implemented OPlus Frame Boost & SchedAssist emulation nodes (`/proc/oplus_frame_boost/{ctrl,sys_ctrl}`, `/proc/oplus_scheduler/sched_assist/{ux_task_app,audio/status}`, `/proc/oplus_binder/ux_flag`, `/proc/sys/fbg/frame_boost_enabled`, and per-task `/proc/<pid>/task/<tid>/ux_state`), eliminating SchedAssist ENOENT errors
+• Added dummy ioctl handler for OPlus procfs nodes to prevent launcher and service ioctl rejections
 • Fixed potential kernel panic in `get_serialID()` by adding null checks on `saved_command_line`
 • Eliminated 4KB memory leak in `oemports10t.c` and implemented proper module exit cleanup
 • Configured system group ownership (1000) and read permissions for `/proc/oplusVersion/*` and `/proc/oplus_charger/*`

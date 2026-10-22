@@ -462,6 +462,10 @@ chmod 666 /proc/bootprof 2>/dev/null
 chmod 666 /proc/storage/buf_log 2>/dev/null
 chmod 666 /proc/oplus_storage/io_metrics/forever/* 2>/dev/null
 chmod 666 /proc/oplus_scheduler/sched_assist/* 2>/dev/null
+chmod 666 /proc/oplus_scheduler/sched_assist/audio/* 2>/dev/null
+chmod 666 /proc/oplus_frame_boost/* 2>/dev/null
+chmod 666 /proc/oplus_binder/* 2>/dev/null
+chmod 666 /proc/sys/fbg/* 2>/dev/null
 chmod 666 /proc/oplus_afs_config/afs_config 2>/dev/null
 chmod 666 /proc/oplus_mem/memory_monitor 2>/dev/null
 chmod 666 /proc/devinfo/lcd* 2>/dev/null
