@@ -1,11 +1,19 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-19  
+**Build Date:** 2026-10-22  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.5:
+• Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
+• Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
+• Auto-disarmed GPU Performance mode when screen is OFF to ensure complete SoC low-power sleep
+• Restored CPU relaxation (`cpu_relax`) in `rwsem_spin_on_owner` loop to prevent lock contention
+• Allowed Screen-Off Battery profile to engage cleanly during screen-off under Performance mode
+• Tuned Adreno GPU interval timeout (200ms) for frame-pacing without breaking power collapse
 
 ## Ki-kernel v1.4.1:
 • Backported modern eBPF features for Android 16 and 17
