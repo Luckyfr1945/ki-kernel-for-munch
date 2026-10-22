@@ -20,7 +20,11 @@
 • Fixed potential kernel panic in `get_serialID()` by adding null checks on `saved_command_line`
 • Eliminated 4KB memory leak in `oemports10t.c` and implemented proper module exit cleanup
 • Configured system group ownership (1000) and read permissions for `/proc/oplusVersion/*` and `/proc/oplus_charger/*`
-• Fast-path bypassed OPlus NWPower socket hooks on MIUI/HyperOS and AOSP ROMs
+• Updated ReSuKSU / BakaSU to latest upstream (`v4.2.0-rc3-70`):
+  - Added 32-bit userspace compat support on 64-bit kernel
+  - Improved SELinux hide time side-channel defense and hash-indexed sidtab checking
+  - Synced SuSFS inline hooks with latest KernelSU changes
+  - Retained multi-manager signature support (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU)
 • Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
 • Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
 • Auto-disarmed GPU Performance mode when screen is OFF to ensure complete SoC low-power sleep
