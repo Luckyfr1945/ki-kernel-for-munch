@@ -328,6 +328,7 @@ static int apply_ki_profile(int mode, bool force)
 	static bool last_gpu_perf = false;
 	int i, ret, err = 0;
 	unsigned long flags;
+	bool enable_gpu_perf;
 
 	/* Prevent profile switching while secondary CPUs are offline (suspend / hotplug) */
 	if (num_online_cpus() < nr_cpu_ids) {
@@ -362,9 +363,10 @@ static int apply_ki_profile(int mode, bool force)
 		ki_cpufreq_set_limits(cpu, 0, target_max);
 	}
 
-	if (t->gpu_perf != last_gpu_perf || force) {
-		kgsl_set_performance_mode(t->gpu_perf);
-		last_gpu_perf = t->gpu_perf;
+	enable_gpu_perf = t->gpu_perf && READ_ONCE(ki_screen_on);
+	if (enable_gpu_perf != last_gpu_perf || force) {
+		kgsl_set_performance_mode(enable_gpu_perf);
+		last_gpu_perf = enable_gpu_perf;
 	}
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
@@ -415,10 +417,6 @@ static int apply_ki_profile(int mode, bool force)
 static int ki_effective_mode(void)
 {
 	int user_mode = READ_ONCE(current_profile_mode);
-
-	/* Never downgrade to Battery Saver if user explicitly selected Performance mode */
-	if (user_mode == KI_PROFILE_PERFORMANCE)
-		return KI_PROFILE_PERFORMANCE;
 
 	/*
 	 * If connected to external power / charging, do NOT throttle to Battery Saver

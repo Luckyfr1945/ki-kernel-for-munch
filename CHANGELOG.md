@@ -7,7 +7,7 @@
 
 ---
 
-## Ki-kernel v1.4.1 P3:
+## Ki-kernel v1.4.1:
 • Backported modern eBPF features for Android 16 and 17
 • Cherry-picked selected commits from re-noroi/FD and e404
 • Fixed BPF loader bootloops on newer Android ROMs
