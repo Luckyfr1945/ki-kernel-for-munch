@@ -8,6 +8,12 @@
 ---
 
 ## Ki-kernel v1.5:
+• Fixed MLBB & gaming frame drops / micro-janks: restored schedutil down_us hold time to 20ms across frames (eliminated frequency thrashing)
+• Restored instant Prime core ramp-up (up_us 500us) and responsive hispeed loads (70%)
+• Relaxed WALT group migration thresholds (grp_up_migrate 85 / down 75) to prevent game render threads being trapped on LITTLE cores
+• Uncapped hardware burst clock headroom in Balanced profile (Prime 3.19GHz, Gold 2.42GHz)
+• Defaulted blk-mq I/O scheduler to low-latency BFQ / Maple (eliminated ADIOS barrier flush stalls)
+• Fast-path bypassed OPlus NWPower socket hooks on MIUI/HyperOS and AOSP ROMs
 • Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
 • Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
 • Auto-disarmed GPU Performance mode when screen is OFF to ensure complete SoC low-power sleep

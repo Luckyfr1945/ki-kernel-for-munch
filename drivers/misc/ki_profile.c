@@ -271,45 +271,44 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	},
 	/*
 	 * Balanced:
-	 * Nyaman, super smooth, dan adem untuk harian & sosmed (Reels, TikTok, YouTube 120Hz).
-	 * Schedutil ramp-up 500us di Silver/Gold (responsif instan bebas micro-stutter) dan
-	 * 1500us di Prime.
-	 * Down-rate hold time 10ms (10000us) meng-cover frame interval 120Hz (8.33ms) secara
-	 * presisi sehingga tidak pernah stutter/drop clock di tengah render.
+	 * Nyaman, super smooth, dan adem untuk harian & gaming santai (sosmed, chat, UI responsif).
+	 * Schedutil ramp-up 500us di semua cluster untuk merespons burst render tanpa micro-jank.
+	 * Down-rate hold time 20ms (20000us) sinkron dengan ritme frame display (60Hz=16.6ms, 120Hz=8.33ms),
+	 * mencegah clock bouncing / frequency thrashing yang memicu micro-stutter di tengah render.
 	 * RTG boost: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz ensures UI and video
 	 * decoder threads maintain solid frame rates without dropping frames.
 	 * Floor frequencies (Silver 576MHz, Gold 710MHz) prevent dropping to 300MHz during interaction.
 	 * iowait_boost (Silver 35%, Gold 25%) prevents media stream buffer stalls.
-	 * Max frequency caps Prime to 2.84GHz and Gold to 2.21GHz to prevent outdoor overheating.
+	 * Peak hardware clocks unlocked (0 = uncapped) for full burst headroom during gaming.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .rtg_boost_freq = 1209600, .floor_freq = 576000, .iowait_boost_max = 35, .max_freq = 1804800 },
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .rtg_boost_freq = 1651200, .floor_freq = 710400, .iowait_boost_max = 25, .max_freq = 2208000 },
-			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .rtg_boost_freq = 1804800, .floor_freq = 0,      .iowait_boost_max = 0,  .max_freq = 2841600 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1209600, .hispeed_load = 80, .rtg_boost_freq = 1209600, .floor_freq = 576000, .iowait_boost_max = 35, .max_freq = 0 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1651200, .hispeed_load = 70, .rtg_boost_freq = 1651200, .floor_freq = 710400, .iowait_boost_max = 25, .max_freq = 0 },
+			{ .up_us = 500, .down_us = 20000, .hispeed_freq = 1804800, .hispeed_load = 70, .rtg_boost_freq = 1804800, .floor_freq = 0,      .iowait_boost_max = 0,  .max_freq = 0 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 80, .down_migrate = 70,
-		.grp_up_migrate = 95, .grp_down_migrate = 85,
+		.grp_up_migrate = 85, .grp_down_migrate = 75,
 		.window_stats_policy = 2,
 		.swappiness = 80, .wmark_scale = 20, .vfs_cache_pressure = 80,
 	},
 	/*
 	 * Performance / Gaming Turbo (Optimized):
-	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (8-10ms)
-	 *    prevents clock-bouncing while dropping idle fast on scene pauses.
+	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (Gold/Prime 20ms)
+	 *    prevents clock-bouncing while maintaining maximum sustained FPS.
 	 *  - Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate idle drain.
 	 *  - Peak uncapped hardware clocks: Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz.
-	 *  - Clean cluster separation (up_migrate 65/50) isolates game threads from background noise.
+	 *  - Clean cluster separation (up_migrate 65/50, grp 75/60) promotes game threads to big cores.
 	 *  - MAX_RECENT_AVG window stats + swappiness 60 prevents zRAM stalls & micro-stutters.
 	 *  - Thermal bypass active (thermal_throttle = false) to prevent FPS from capping at 30/31 FPS,
-	 *    while Thermal Auto-Guard stays vigilant at 46°C skin / 45°C batt / 85°C die.
+	 *    while Thermal Auto-Guard stays vigilant at 47°C skin / 45°C batt / 85°C die.
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ .up_us = 0, .down_us = 8000,  .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200,  .iowait_boost_max = 100, .max_freq = 1804800 },
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100, .max_freq = 2419200 },
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100, .max_freq = 3187200 },
+			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 1420800, .hispeed_load = 70, .rtg_boost_freq = 1420800, .floor_freq = 691200,  .iowait_boost_max = 100, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2649600, .hispeed_load = 65, .rtg_boost_freq = 2649600, .floor_freq = 1075200, .iowait_boost_max = 100, .max_freq = 0 },
 		},
 		.pl = true,
 		.gpu_perf = true,
