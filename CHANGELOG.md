@@ -13,6 +13,10 @@
 • Relaxed WALT group migration thresholds (grp_up_migrate 85 / down 75) to prevent game render threads being trapped on LITTLE cores
 • Uncapped hardware burst clock headroom in Balanced profile (Prime 3.19GHz, Gold 2.42GHz)
 • Defaulted blk-mq I/O scheduler to low-latency BFQ / Maple (eliminated ADIOS barrier flush stalls)
+• Perfected OPlus / ColorOS subsystem: added robust hardware fallback for Project ID (20807), PCB (T6), boot mode, modem, and operator when SMEM 135 is absent on Xiaomi bootloader
+• Fixed potential kernel panic in `get_serialID()` by adding null checks on `saved_command_line`
+• Eliminated 4KB memory leak in `oemports10t.c` and implemented proper module exit cleanup
+• Configured system group ownership (1000) and read permissions for `/proc/oplusVersion/*` and `/proc/oplus_charger/*`
 • Fast-path bypassed OPlus NWPower socket hooks on MIUI/HyperOS and AOSP ROMs
 • Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
 • Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
