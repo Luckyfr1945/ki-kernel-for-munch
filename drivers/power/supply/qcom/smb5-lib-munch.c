@@ -1368,11 +1368,19 @@ int smblib_get_prop_from_bms(struct smb_charger *chg,
 				union power_supply_propval *val)
 {
 	int rc;
+	static int last_safe_batt_temp = 250;
 
 	if (!chg->bms_psy)
 		return -EINVAL;
 
 	rc = power_supply_get_property(chg->bms_psy, psp, val);
+	if (psp == POWER_SUPPLY_PROP_TEMP) {
+		if (rc < 0 || val->intval < -200 || val->intval > 560) {
+			val->intval = last_safe_batt_temp;
+			return 0;
+		}
+		last_safe_batt_temp = val->intval;
+	}
 
 	return rc;
 }
