@@ -259,17 +259,18 @@ fn is_screen_on() -> bool {
 }
 
 // Strategy 1: Ultra-fast top-app cgroup reading (0 fork overhead, in-memory)
-fn get_foreground_app_cgroup() -> Option<String> {
+fn get_foreground_app_cgroup(cfg: &DaemonConfig) -> Option<(String, bool)> {
     let cgroup_paths = [
         "/dev/cpuset/top-app/cgroup.procs",
         "/dev/cpuset/top-app/tasks",
         "/sys/fs/cgroup/cpuset/top-app/cgroup.procs",
     ];
 
+    let mut candidate_app: Option<String> = None;
+
     for cpath in &cgroup_paths {
         if let Ok(content) = fs::read_to_string(cpath) {
-            let mut pids: Vec<&str> = content.lines().collect();
-            pids.reverse(); // check newest tasks first
+            let pids: Vec<&str> = content.lines().collect();
 
             for pid_str in pids {
                 let pid = pid_str.trim();
@@ -283,24 +284,41 @@ fn get_foreground_app_cgroup() -> Option<String> {
                     }
                     // Extract first null-terminated string
                     let end = cmd_bytes.iter().position(|&b| b == 0).unwrap_or(cmd_bytes.len());
-                    let pkg = String::from_utf8_lossy(&cmd_bytes[..end]).trim().to_string();
+                    let raw_pkg = String::from_utf8_lossy(&cmd_bytes[..end]).trim().to_string();
 
-                    if !pkg.is_empty()
-                        && !pkg.starts_with('/')
-                        && !pkg.starts_with(':')
-                        && !IGNORED_PACKAGES.iter().any(|&ig| pkg == ig || pkg.starts_with(ig))
-                    {
-                        return Some(pkg);
+                    if raw_pkg.is_empty() || raw_pkg.starts_with('/') {
+                        continue;
+                    }
+
+                    // Strip process suffix: e.g. "com.mobile.legends:UnityKillsMe" -> "com.mobile.legends"
+                    let base_pkg = raw_pkg.split(':').next().unwrap_or(&raw_pkg).trim();
+
+                    // Android apps must have a dot '.' and not be a CLI tool like 'ping' or 'sh'
+                    if base_pkg.contains('.') && base_pkg.len() >= 4 {
+                        // Check if it's directly in our configured game library
+                        if cfg.games.contains(base_pkg) {
+                            return Some((base_pkg.to_string(), true));
+                        }
+
+                        if !IGNORED_PACKAGES.iter().any(|&ig| base_pkg == ig || base_pkg.starts_with(ig)) {
+                            if candidate_app.is_none() {
+                                candidate_app = Some(base_pkg.to_string());
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    None
+
+    candidate_app.map(|app| {
+        let is_game = cfg.games.contains(&app);
+        (app, is_game)
+    })
 }
 
 // Strategy 2: Fallback via dumpsys window / activity (only if Strategy 1 yields nothing)
-fn get_foreground_app_dumpsys() -> Option<String> {
+fn get_foreground_app_dumpsys(cfg: &DaemonConfig) -> Option<(String, bool)> {
     let output = Command::new("dumpsys")
         .args(["window", "displays"])
         .output()
@@ -312,12 +330,11 @@ fn get_foreground_app_dumpsys() -> Option<String> {
             // example: mCurrentFocus=Window{... u0 com.mobile.legends/com.xxx.MainActivity}
             if let Some(start) = line.find(" u0 ") {
                 let sub = &line[start + 4..];
-                let pkg_part = sub.split(&['/', ' ', '}'][..]).next().unwrap_or("");
+                let pkg_part = sub.split(&['/', ' ', '}', ':'][..]).next().unwrap_or("");
                 let clean = pkg_part.trim();
-                if !clean.is_empty()
-                    && !IGNORED_PACKAGES.iter().any(|&ig| clean == ig)
-                {
-                    return Some(clean.to_string());
+                if clean.contains('.') && clean.len() >= 4 && !IGNORED_PACKAGES.iter().any(|&ig| clean == ig) {
+                    let is_game = cfg.games.contains(clean);
+                    return Some((clean.to_string(), is_game));
                 }
             }
         }
@@ -325,14 +342,21 @@ fn get_foreground_app_dumpsys() -> Option<String> {
     None
 }
 
-fn get_foreground_app() -> String {
-    if let Some(pkg) = get_foreground_app_cgroup() {
-        return pkg;
+fn get_foreground_app(cfg: &DaemonConfig) -> (String, bool) {
+    if let Some((pkg, is_game)) = get_foreground_app_cgroup(cfg) {
+        if is_game {
+            return (pkg, true);
+        }
+        // If cgroup found a generic app, check dumpsys in case top-app had background helper
+        if let Some((dumpsys_pkg, true)) = get_foreground_app_dumpsys(cfg) {
+            return (dumpsys_pkg, true);
+        }
+        return (pkg, false);
     }
-    if let Some(pkg) = get_foreground_app_dumpsys() {
-        return pkg;
+    if let Some((pkg, is_game)) = get_foreground_app_dumpsys(cfg) {
+        return (pkg, is_game);
     }
-    "com.android.launcher".to_string()
+    ("com.android.launcher".to_string(), false)
 }
 
 fn write_status(
@@ -414,8 +438,7 @@ fn run_daemon() {
             continue;
         }
 
-        let fg_pkg = get_foreground_app();
-        let is_game = cfg.games.contains(&fg_pkg);
+        let (fg_pkg, is_game) = get_foreground_app(&cfg);
 
         if is_game && !is_game_active {
             // ENTER GAME MODE
@@ -436,6 +459,14 @@ fn run_daemon() {
 
             is_game_active = true;
         } else if is_game && is_game_active {
+            if current_profile != cfg.game_profile {
+                set_kernel_profile(cfg.game_profile);
+                current_profile = cfg.game_profile;
+                println!("[Ki-Daemon] Game profile synchronized to {}", cfg.game_profile);
+            }
+            if cfg.auto_mglru {
+                set_mglru(cfg.game_mglru);
+            }
             // STILL IN GAME: monitor charger plug/unplug for bypass charging
             if cfg.auto_bypass_charging {
                 let plugged = is_charger_connected();
