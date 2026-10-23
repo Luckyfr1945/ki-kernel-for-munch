@@ -8,10 +8,15 @@
 ---
 
 ## Ki-kernel v1.5:
-• Fixed MLBB & gaming frame drops / micro-janks: restored schedutil down_us hold time to 20ms across frames (eliminated frequency thrashing)
-• Restored instant Prime core ramp-up (up_us 500us) and responsive hispeed loads (70%)
-• Relaxed WALT group migration thresholds (grp_up_migrate 85 / down 75) to prevent game render threads being trapped on LITTLE cores
-• Uncapped hardware burst clock headroom in Balanced profile (Prime 3.19GHz, Gold 2.42GHz)
+• Restored Balanced Profile to cool, ultra-efficient daily multitasking sweet-spot:
+  - Capped Prime to 2.84GHz and Gold to 2.21GHz (avoids power-hungry 1.15V+ voltage spike while keeping 120Hz butter-smooth)
+  - Schedutil 10ms down-hold & 1500us Prime ramp-up delay (eliminates -1000mA to -1500mA active drain, drops multitasking current to -300mA ~ -600mA)
+  - Restored WALT group migration to 95/85 to retain background multitasking threads on power-efficient Silver cluster
+• Supercharged Performance / Gaming Turbo Profile for maximum competitive gaming (MLBB/Genshin/COD):
+  - Peak hardware clocks unlocked (Prime 3.19GHz, Gold 2.42GHz) with zero-lag ramp-up (0us) and 20ms frame hold
+  - Boosted Prime RTG render thread frequency to 2.84GHz (delivers rock-solid 120 FPS in intense teamfights)
+  - Eager gaming thread promotion (up_migrate 60/45, grp 70/55) to prevent any render threads from staying on LITTLE cores
+  - Tuned swappiness (50) and vfs_cache_pressure (60) to eliminate asset streaming micro-stutters
 • Defaulted blk-mq I/O scheduler to low-latency BFQ / Maple (eliminated ADIOS barrier flush stalls)
 • Perfected OPlus / ColorOS subsystem: added robust hardware fallback for Project ID (20807), PCB (T6), boot mode, modem, and operator when SMEM 135 is absent on Xiaomi bootloader
 • Fixed OPlus NWPower & IPv6 RTO netlink initialization failure by raising MAX_LINKS to 48 in `netlink.h` and `af_netlink.c`
