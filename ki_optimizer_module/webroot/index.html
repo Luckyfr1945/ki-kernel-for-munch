@@ -1,9 +1,11 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f2f1eb">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#101410">
   <title>Ki Optimizer</title>
   <link rel="icon" type="image/svg+xml" href="icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
@@ -12,12 +14,15 @@
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
   <!-- Incompatible Kernel Modal (Shown only if non-Ki-Kernel is running) -->
-  <div id="unsupported-modal" class="modal-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+  <div id="unsupported-modal" class="modal-overlay hidden" role="alertdialog" aria-modal="true"
+    aria-labelledby="modal-title">
     <div class="modal-card">
       <div class="modal-icon-alert" aria-hidden="true">
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
           <line x1="15" y1="9" x2="9" y2="15"></line>
           <line x1="9" y1="9" x2="15" y2="15"></line>
@@ -30,7 +35,8 @@
         Your current kernel is not supported.
       </p>
       <p class="modal-sub">
-        All kernel tuning controls, MGLRU, and power profiles have been deactivated to prevent system instability. Please flash Ki-Kernel to re-enable this module.
+        All kernel tuning controls, MGLRU, and power profiles have been deactivated to prevent system instability.
+        Please flash Ki-Kernel to re-enable this module.
       </p>
     </div>
   </div>
@@ -63,8 +69,10 @@
 
     <!-- Navigation Tabs -->
     <nav class="view-tabs" role="tablist" aria-label="Settings Views">
-      <button type="button" class="tab-btn active" id="tab-kernel" role="tab" aria-selected="true" data-target="panel-kernel">
-        <svg class="tab-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <button type="button" class="tab-btn active" id="tab-kernel" role="tab" aria-selected="true"
+        data-target="panel-kernel">
+        <svg class="tab-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="4" y="4" width="16" height="16" rx="2"></rect>
           <rect x="9" y="9" width="6" height="6"></rect>
           <line x1="9" y1="1" x2="9" y2="4"></line>
@@ -79,7 +87,8 @@
         <span>Kernel Tweaks</span>
       </button>
       <button type="button" class="tab-btn" id="tab-daemon" role="tab" aria-selected="false" data-target="panel-daemon">
-        <svg class="tab-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="tab-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2" y="6" width="20" height="12" rx="6"></rect>
           <line x1="6" y1="12" x2="10" y2="12"></line>
           <line x1="8" y1="10" x2="8" y2="14"></line>
@@ -170,7 +179,8 @@
                 <h3>Bypass Charging (Direct Wall Power)</h3>
                 <span class="setting-status" id="badge-bypass">Checking...</span>
               </div>
-              <p>Powers the hardware directly from the charger without routing through the battery. Keeps temperature cool during heavy gaming.</p>
+              <p>Powers the hardware directly from the charger without routing through the battery. Keeps temperature
+                cool during heavy gaming.</p>
             </div>
             <label class="switch" aria-label="Toggle bypass charging">
               <input type="checkbox" id="toggle-bypass">
@@ -238,7 +248,8 @@
                 <h3>Dynamic Fsync</h3>
                 <span class="setting-status" id="badge-dynfsync">Checking...</span>
               </div>
-              <p>Disables synchronous filesystem sync while screen is active for instant UFS 3.1 storage I/O and zero stutter.</p>
+              <p>Disables synchronous filesystem sync while screen is active for instant UFS 3.1 storage I/O and zero
+                stutter.</p>
             </div>
             <label class="switch" aria-label="Toggle dynamic fsync">
               <input type="checkbox" id="toggle-dynfsync">
@@ -253,7 +264,8 @@
                 <h3>Dynamic Thermal Guard</h3>
                 <span class="setting-status" id="badge-thermal">Checking...</span>
               </div>
-              <p>Adaptive kernel thermal throttling governor to prevent sudden FPS frame drops during extended gameplay.</p>
+              <p>Adaptive kernel thermal throttling governor to prevent sudden FPS frame drops during extended gameplay.
+              </p>
             </div>
             <label class="switch" aria-label="Toggle thermal guard">
               <input type="checkbox" id="toggle-thermal">
@@ -262,7 +274,7 @@
           </div>
 
           <!-- TCP Congestion Control -->
-          <div class="setting-row setting-row-select" id="row-tcp">
+          <div class="setting-row setting-row-stack setting-row-select" id="row-tcp">
             <div class="setting-copy">
               <div class="setting-title-line">
                 <h3>TCP Congestion Algorithm</h3>
@@ -292,7 +304,8 @@
               <span class="daemon-indicator" id="daemon-indicator"></span>
               <h3>Ki-Daemon Auto Game Turbo</h3>
             </div>
-            <p class="daemon-hero-sub">Native Rust background service. Detects foreground games with zero overhead, automatically switching profiles & thermal limits.</p>
+            <p class="daemon-hero-sub">Native Rust background service. Detects foreground games with zero overhead,
+              automatically switching profiles & thermal limits.</p>
             <div class="daemon-tags">
               <span class="daemon-badge" id="daemon-status-badge">Checking...</span>
               <span class="daemon-badge" id="daemon-pid-badge">PID: --</span>
@@ -316,7 +329,7 @@
         </div>
         <div class="settings-list">
           <!-- Game Profile Trigger -->
-          <div class="setting-row setting-row-select" id="row-game-prof">
+          <div class="setting-row setting-row-stack setting-row-select" id="row-game-prof">
             <div class="setting-copy">
               <div class="setting-title-line">
                 <h3>Game Launch Profile</h3>
@@ -333,7 +346,7 @@
           </div>
 
           <!-- Exit Game Profile Trigger -->
-          <div class="setting-row setting-row-select" id="row-exit-prof">
+          <div class="setting-row setting-row-stack setting-row-select" id="row-exit-prof">
             <div class="setting-copy">
               <div class="setting-title-line">
                 <h3>Game Exit Restore Profile</h3>
@@ -343,8 +356,8 @@
             </div>
             <label class="select-wrap" for="select-exit-prof">
               <select class="custom-select" id="select-exit-prof">
-                <option value="1">Balanced (Default daily -300mA)</option>
-                <option value="0">Battery Saver (Ultra Cool)</option>
+                <option value="1">Balanced </option>
+                <option value="0">Battery Saver </option>
               </select>
             </label>
           </div>
@@ -356,7 +369,8 @@
                 <h3>Auto Bypass Charging in Games</h3>
                 <span class="setting-status" id="badge-auto-bypass">Active</span>
               </div>
-              <p>Engages direct wall power only while playing games and plugged into a charger. Eliminates heat and protects battery health.</p>
+              <p>Engages direct wall power only while playing games and plugged into a charger. Eliminates heat and
+                protects battery health.</p>
             </div>
             <label class="switch" aria-label="Toggle auto bypass charging">
               <input type="checkbox" id="toggle-auto-bypass" checked>
@@ -371,7 +385,8 @@
                 <h3>Auto MGLRU Gaming Turbo</h3>
                 <span class="setting-status" id="badge-auto-mglru">Active</span>
               </div>
-              <p>Automatically upgrades MGLRU to Mode 7 (Gaming Turbo) during game sessions, and restores to Mode 1 (Standard) on exit.</p>
+              <p>Automatically upgrades MGLRU to Mode 7 (Gaming Turbo) during game sessions, and restores to Mode 1
+                (Standard) on exit.</p>
             </div>
             <label class="switch" aria-label="Toggle auto MGLRU boost">
               <input type="checkbox" id="toggle-auto-mglru" checked>
@@ -387,16 +402,20 @@
           <div class="games-header-flex">
             <div>
               <h2 id="games-heading">Game Detection Library</h2>
-              <p>Applications recognized by Ki-Daemon as games (<span id="games-count">0</span> packages configured).</p>
+              <p>Applications recognized by Ki-Daemon as games (<span id="games-count">0</span> packages configured).
+              </p>
             </div>
           </div>
         </div>
 
         <div class="add-game-card">
           <div class="add-game-input-row">
-            <input type="text" id="input-new-game" class="custom-input" placeholder="e.g. com.miHoYo.hkrpg" aria-label="Add game package name" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            <input type="text" id="input-new-game" class="custom-input" placeholder="e.g. com.miHoYo.hkrpg"
+              aria-label="Add game package name" autocomplete="off" autocorrect="off" autocapitalize="off"
+              spellcheck="false">
             <button type="button" class="btn-add-game" id="btn-add-game">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
               </svg>
@@ -430,4 +449,5 @@
 
   <script src="app.js"></script>
 </body>
+
 </html>
