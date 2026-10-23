@@ -25,7 +25,7 @@
   - Improved SELinux hide time side-channel defense and hash-indexed sidtab checking
   - Synced SuSFS inline hooks with latest KernelSU changes
   - Retained multi-manager signature support (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU)
-  - Upgraded KernelSU UAPI to version 6 (implemented `KSU_IOCTL_LOOKUP_SYMBOLS` & `KSU_GET_INFO_FLAG_PREINIT`), eliminating "Kernel update required" warning on latest KernelSU-Next managers
+  - Implemented KernelSU `KSU_IOCTL_LOOKUP_SYMBOLS` & `KSU_GET_INFO_FLAG_PREINIT` while maintaining UAPI 5 compatibility for BakaSU / ReSukiSU manager, Zygisk, and `ksud` modules
 • Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
 • Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
 • Auto-disarmed GPU Performance mode when screen is OFF to ensure complete SoC low-power sleep
