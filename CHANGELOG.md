@@ -8,6 +8,11 @@
 ---
 
 ## Ki-kernel v1.5:
+• Fixed Force Fast Charge and Restored Peak 67W / PPS Turbo Charging ("Gacor"):
+  - Fixed Force Fast Charge having no effect on Wall Chargers (DCP/HVDCP/QC): previous implementation only updated `usb_icl_votable` for PC USB ports (`POWER_SUPPLY_TYPE_USB` / CDP), leaving wall adapters hardcoded to 1.5A. `smblib_set_force_fast_charge()` and plugin handlers now un-throttle `SW_ICL_MAX_VOTER`, `DCP_VOTER`, and `HVDCP2_ICL_VOTER` across all charger types up to 3.5A.
+  - Eliminated PPS Thermal Postponement & Starvation: `mi_thermald` writes to `system_temp_level` every 1–2s previously rescheduled a 3-second delayed worker continuously, starving PPS thermal level updates and locking charging to throttled levels (~15W–30W).
+  - Instant PPS Thermal Clamping: Re-introduced instantaneous PPS thermal clamping to Level 0 (12.4A / 67W) and canceled the delayed worker whenever Force Fast Charge or Screen-On Fast Charge is active.
+  - Unlocked Dual Charge Pump (Master + Slave BQ): Clamping thermal level to 0 at entry prevents lockout (`MAX_THERMAL_LEVEL_FOR_DUAL_BQ`), allowing dual charge pump to engage full 12.4A turbo power while retaining hardware emergency thermal protection at 49.0°C.
 • Fixed Notorious POCO F4 (munch) Auto-Shutdown While Charging Bug:
   - Root Cause: Stock Xiaomi driver (`bq27z561_fg_munch.c`) live-polled hardware I2C registers on every sysfs read whenever USB was connected (`usb_in`). High-wattage fast charging (67W / 6A) switching noise and EMI induced intermittent I2C read spikes or 0xFFFF returns (6280.5°C), prompting Android's BatteryService to trigger an emergency thermal shutdown (`ro.boot.bootreason = shutdown,thermal,battery`).
   - I2C Polling Rate-Limiter: Capped I2C temperature sampling to at most once per 1000ms, eliminating 95% of unnecessary bus traffic and preventing bus collisions.
