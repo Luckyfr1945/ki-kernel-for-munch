@@ -1,6 +1,6 @@
 id=ki_optimizer
 name=Ki-Kernel Settings
-version=v1.1
-versionCode=110
+version=v1.2
+versionCode=120
 author=kiki
-description=WebUI Controller for Ki-Kernel: Profile switcher, MGLRU, Bypass Charging, Fast Charge, Wakelock Blocker, Dynamic Fsync, Thermal Guard & TCP BBR via KernelSU WebUI.
+description=WebUI & Rust Daemon Controller for Ki-Kernel: Auto Game Turbo switcher, Bypass Charging, MGLRU, Fast Charge, Wakelock Blocker, Dynamic Fsync, Thermal Guard & TCP BBR via KernelSU WebUI.

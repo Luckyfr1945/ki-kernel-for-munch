@@ -37,6 +37,14 @@
 • Restored CPU relaxation (`cpu_relax`) in `rwsem_spin_on_owner` loop to prevent lock contention
 • Allowed Screen-Off Battery profile to engage cleanly during screen-off under Performance mode
 • Tuned Adreno GPU interval timeout (200ms) for frame-pacing without breaking power collapse
+• Introduced Ki-Daemon (Rust Native Auto Game Turbo & Automation) & Ki-Kernel Settings v1.2:
+  - Ultra-lightweight native Rust daemon (<500KB stripped, ~1MB RAM usage, zero GC overhead)
+  - Zero-overhead in-memory top-app cgroup detection with automatic game recognition (MLBB, Genshin, PUBG, etc.)
+  - Automated Game Turbo switching: jumps to Performance mode in games, seamlessly reverts to Balanced on exit
+  - Intelligent Auto Bypass Charging: engages direct charger power only while actively gaming, disarms on exit
+  - Automated MGLRU Depth scaling: shifts to Mode 7 Gaming Turbo in games, restores Mode 1 for daily multitasking
+  - Pocket power preservation: enters 4s sleep when display panel is dark
+  - WebUI Tab 2 "🎮 Auto Game Turbo": toggle daemon, customize game/exit profiles, auto-bypass, auto-MGLRU, and add/remove game packages dynamically
 
 ## Ki-kernel v1.4.1:
 • Backported modern eBPF features for Android 16 and 17
