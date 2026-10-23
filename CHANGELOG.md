@@ -1,6 +1,6 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-22  
+**Build Date:** 2026-10-23  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
@@ -8,6 +8,13 @@
 ---
 
 ## Ki-kernel v1.5:
+• Fixed Notorious POCO F4 (munch) Auto-Shutdown While Charging Bug:
+  - Root Cause: Stock Xiaomi driver (`bq27z561_fg_munch.c`) live-polled hardware I2C registers on every sysfs read whenever USB was connected (`usb_in`). High-wattage fast charging (67W / 6A) switching noise and EMI induced intermittent I2C read spikes or 0xFFFF returns (6280.5°C), prompting Android's BatteryService to trigger an emergency thermal shutdown (`ro.boot.bootreason = shutdown,thermal,battery`).
+  - I2C Polling Rate-Limiter: Capped I2C temperature sampling to at most once per 1000ms, eliminating 95% of unnecessary bus traffic and preventing bus collisions.
+  - Sanity Check & Auto-Retry: Rejects raw Kelvin anomalies (< -20°C or > 65°C, 0x0000, 0xFFFF) with immediate retry on bus contention, falling back to last valid temperature instead of injecting fake error spikes.
+  - Slew-Rate Transient Filter: Rejects physically impossible single-sample jumps (> 4.0°C/s), eliminating single-frame thermal spikes.
+  - Safe Temperature Clamp (56.0°C): Guarantees reported battery temperature never trips Android's shutdown threshold while preserving hardware JEITA current cutoffs.
+  - Dual-Layer Defense: Added fallback temperature validation in SMB5 PMIC charger (`smblib_get_prop_from_bms`).
 • Restored Balanced Profile to cool, ultra-efficient daily multitasking sweet-spot:
   - Capped Prime to 2.84GHz and Gold to 2.21GHz (avoids power-hungry 1.15V+ voltage spike while keeping 120Hz butter-smooth)
   - Schedutil 10ms down-hold & 1500us Prime ramp-up delay (eliminates -1000mA to -1500mA active drain, drops multitasking current to -300mA ~ -600mA)
@@ -39,12 +46,12 @@
 • Tuned Adreno GPU interval timeout (200ms) for frame-pacing without breaking power collapse
 • Introduced Ki-Daemon (Rust Native Auto Game Turbo & Automation) & Ki-Kernel Settings v1.2:
   - Ultra-lightweight native Rust daemon (<500KB stripped, ~1MB RAM usage, zero GC overhead)
-  - Zero-overhead in-memory top-app cgroup detection with automatic game recognition (MLBB, Genshin, PUBG, etc.)
+  - Zero-overhead in-memory top-app cgroup detection with robust `:sub_process` suffix stripping and game priority matching
   - Automated Game Turbo switching: jumps to Performance mode in games, seamlessly reverts to Balanced on exit
   - Intelligent Auto Bypass Charging: engages direct charger power only while actively gaming, disarms on exit
   - Automated MGLRU Depth scaling: shifts to Mode 7 Gaming Turbo in games, restores Mode 1 for daily multitasking
   - Pocket power preservation: enters 4s sleep when display panel is dark
-  - WebUI Tab 2 "🎮 Auto Game Turbo": toggle daemon, customize game/exit profiles, auto-bypass, auto-MGLRU, and add/remove game packages dynamically
+  - Ki-Setting WebUI Tab 2 "Auto Game Turbo": toggle daemon, customize game/exit profiles, auto-bypass, auto-MGLRU, clean responsive layout, and add/remove game packages dynamically
 
 ## Ki-kernel v1.4.1:
 • Backported modern eBPF features for Android 16 and 17
