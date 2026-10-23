@@ -1,6 +1,7 @@
 /**
  * Ki-Optimizer WebUI Controller
  * Native JavaScript Bridge for KernelSU WebView
+ * Clean, Emoticon-free, Ultra-Responsive UI
  */
 
 let callbackCounter = 0;
@@ -31,8 +32,9 @@ function exec(command, options = {}) {
   });
 }
 
-// Toast notification helper
-function showToast(message) {
+// Minimalist Toast notification helper
+let toastTimeout = null;
+function showToast(message, isError = false) {
   if (typeof ksu !== "undefined" && ksu.toast) {
     ksu.toast(message);
   }
@@ -41,10 +43,13 @@ function showToast(message) {
   const toastText = document.getElementById("toast-text");
   if (toastEl && toastText) {
     toastText.textContent = message;
+    toastEl.classList.toggle("toast-error", !!isError);
     toastEl.classList.add("show");
-    setTimeout(() => {
+    
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
       toastEl.classList.remove("show");
-    }, 2500);
+    }, 2200);
   }
 }
 
@@ -135,6 +140,21 @@ let currentProfile = 1;
 let isKiKernelActive = true;
 let activeTab = "panel-kernel";
 
+// Interaction tracking to prevent background telemetry stutter
+let isUserInteracting = false;
+let interactTimer = null;
+function flagUserInteraction() {
+  isUserInteracting = true;
+  if (interactTimer) clearTimeout(interactTimer);
+  interactTimer = setTimeout(() => {
+    isUserInteracting = false;
+  }, 1000);
+}
+
+document.addEventListener("touchstart", flagUserInteraction, { passive: true });
+document.addEventListener("touchmove", flagUserInteraction, { passive: true });
+document.addEventListener("pointerdown", flagUserInteraction, { passive: true });
+
 // Tab Switcher
 function switchTab(target) {
   activeTab = target;
@@ -196,31 +216,34 @@ function setActiveProfileUI(profileId) {
     cardProf0?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BATTERY";
-      elCurProfile.style.color = "var(--accent-green)";
+      elCurProfile.style.color = "var(--accent)";
     }
   } else if (currentProfile === 2) {
     cardProf2?.classList.add("active");
     cardProf2?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "TURBO";
-      elCurProfile.style.color = "var(--accent-green)";
+      elCurProfile.style.color = "var(--accent)";
     }
   } else {
     cardProf1?.classList.add("active");
     cardProf1?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BALANCED";
-      elCurProfile.style.color = "var(--accent-green)";
+      elCurProfile.style.color = "var(--accent)";
     }
   }
 }
 
-// Instant Profile Switcher
+// Instant Optimistic Profile Switcher
 async function setProfileInstant(profileId) {
   if (!isKiKernelActive) return;
   const id = parseInt(profileId, 10);
+  
+  // Instant visual update (0ms latency feedback)
   setActiveProfileUI(id);
   const names = ["Battery Saver", "Balanced", "Turbo Gaming"];
+  showToast(`Switched to ${names[id]} profile`);
 
   try {
     await exec(`
@@ -231,9 +254,9 @@ async function setProfileInstant(profileId) {
         sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${id}/" "$CONF" 2>/dev/null
       fi
     `);
-    showToast(`✔ Switched to ${names[id]} profile`);
   } catch (err) {
     console.error("setProfileInstant error:", err);
+    showToast("Failed to switch profile", true);
   }
 }
 
@@ -274,9 +297,9 @@ function setMglruUI(mode, isSupported = true) {
   }
 }
 
-// Live Battery & Temp Telemetry
+// Live Battery & Temp Telemetry (Adaptive & Non-blocking)
 async function updateTelemetry() {
-  if (!isKiKernelActive) return;
+  if (!isKiKernelActive || isUserInteracting) return;
   try {
     const { stdout } = await exec(`
       cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo ""
@@ -539,11 +562,11 @@ async function applyChanges(silent = false) {
     await exec(script);
     if (!silent) {
       const profName = prof === 0 ? "Battery Saver" : prof === 2 ? "Turbo Gaming" : "Balanced";
-      showToast(`✔ ${profName} profile & tweaks applied!`);
+      showToast(`${profName} profile & tweaks applied`);
     }
   } catch (err) {
     console.error("applyChanges error:", err);
-    showToast("❌ Failed to apply settings. Check kernel support.");
+    showToast("Failed to apply settings. Check kernel support", true);
   }
 }
 
@@ -592,7 +615,7 @@ function updateDaemonUI(data) {
       elDaemonStatusBadge.style.color = "var(--warning)";
     } else {
       elDaemonStatusBadge.textContent = "Active";
-      elDaemonStatusBadge.style.color = "var(--accent-green)";
+      elDaemonStatusBadge.style.color = "var(--accent)";
     }
   }
 
@@ -602,7 +625,7 @@ function updateDaemonUI(data) {
 
   if (elDaemonFgBadge) {
     if (data.is_game) {
-      elDaemonFgBadge.textContent = `🎮 ${data.foreground_pkg || "Game"}`;
+      elDaemonFgBadge.textContent = `GAME: ${data.foreground_pkg || "Running"}`;
       elDaemonFgBadge.classList.add("is-game");
     } else {
       elDaemonFgBadge.textContent = `App: ${data.foreground_pkg || "None"}`;
@@ -663,7 +686,12 @@ function renderGameChips(games) {
     chip.className = "game-chip";
     chip.innerHTML = `
       <span>${escapeHtml(pkg)}</span>
-      <button type="button" class="btn-chip-del" data-pkg="${escapeHtml(pkg)}" title="Remove game">&times;</button>
+      <button type="button" class="btn-chip-del" data-pkg="${escapeHtml(pkg)}" title="Remove game" aria-label="Remove game">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     `;
     gamesChipsList.appendChild(chip);
   });
@@ -688,11 +716,11 @@ async function addGame(pkg) {
         /data/adb/modules/ki_optimizer/bin/ki_daemon add-game "${clean}"
       fi
     `);
-    showToast(`✔ Added ${clean} to Auto Game Turbo`);
+    showToast(`Added ${clean} to Auto Game Turbo`);
     if (inputNewGame) inputNewGame.value = "";
     refreshDaemonState();
   } catch (err) {
-    showToast("❌ Failed to add game");
+    showToast("Failed to add game", true);
   }
 }
 
@@ -708,7 +736,7 @@ async function removeGame(pkg) {
     showToast(`Removed ${pkg}`);
     refreshDaemonState();
   } catch (err) {
-    showToast("❌ Failed to remove game");
+    showToast("Failed to remove game", true);
   }
 }
 
@@ -721,14 +749,14 @@ async function setDaemonConfig(key, val) {
         /data/adb/modules/ki_optimizer/bin/ki_daemon set ${key} "${val}"
       fi
     `);
-    showToast(`✔ Updated ${key}`);
+    showToast(`Updated ${key}`);
     refreshDaemonState();
   } catch (err) {
-    showToast(`❌ Failed to update ${key}`);
+    showToast(`Failed to update ${key}`, true);
   }
 }
 
-// Event Listeners
+// Event Listeners with Immediate Optimistic Feedback
 tabKernel?.addEventListener("click", () => switchTab("panel-kernel"));
 tabDaemon?.addEventListener("click", () => switchTab("panel-daemon"));
 
@@ -753,8 +781,56 @@ mglruBtns.forEach(btn => {
   }
 });
 
+// Instant Slider Value Reflection
 rangeSwappiness?.addEventListener("input", (e) => {
   if (valSwappiness) valSwappiness.textContent = e.target.value;
+});
+
+// Optimistic Switch Status Badge Updates
+toggleBypass?.addEventListener("change", (e) => {
+  if (badgeBypass) {
+    badgeBypass.textContent = e.target.checked ? "Active" : "Off";
+    badgeBypass.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+toggleFastCharge?.addEventListener("change", (e) => {
+  if (badgeFastCharge) {
+    badgeFastCharge.textContent = e.target.checked ? "Active" : "Off";
+    badgeFastCharge.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+toggleScreenOff?.addEventListener("change", (e) => {
+  if (badgeScreenOff) {
+    badgeScreenOff.textContent = e.target.checked ? "Active" : "Off";
+    badgeScreenOff.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+toggleWakelock?.addEventListener("change", (e) => {
+  if (badgeWakelock) {
+    badgeWakelock.textContent = e.target.checked ? "Active" : "Off";
+    badgeWakelock.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+toggleDynFsync?.addEventListener("change", (e) => {
+  if (badgeDynFsync) {
+    badgeDynFsync.textContent = e.target.checked ? "Active" : "Off";
+    badgeDynFsync.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+toggleThermal?.addEventListener("change", (e) => {
+  if (badgeThermal) {
+    badgeThermal.textContent = e.target.checked ? "Active" : "Bypass";
+    badgeThermal.classList.toggle("is-off", !e.target.checked);
+  }
+});
+
+selectTcp?.addEventListener("change", (e) => {
+  if (badgeTcp) badgeTcp.textContent = e.target.value;
 });
 
 btnApply?.addEventListener("click", () => {
@@ -799,7 +875,7 @@ inputNewGame?.addEventListener("keypress", (e) => {
   }
 });
 
-// Periodic telemetry poll
+// Periodic telemetry poll (Non-blocking, paused during touch/gestures)
 setInterval(updateTelemetry, 3500);
 
 // Initialize on Load
