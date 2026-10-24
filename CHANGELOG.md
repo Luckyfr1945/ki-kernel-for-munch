@@ -1,13 +1,34 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-23  
+**Build Date:** 2026-10-24  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## Ki-kernel v1.5:
+## Ki-kernel v1.5 (2026-10-24 Update):
+• Ported Hardware SDE Exposure Dim Layer from re404 for True AOSP DC Dimming:
+  - Integrated DevriesL's SDE Exposure Dim Layer driver and EcrosoftXiao's calibrated alpha model (`sde_expo_dim_layer.c`, `sde_expo_dim_layer.h`, `sde_crtc.c`, `sde_crtc.h`) from re404 kernel.
+  - Clamps physical AMOLED backlight to 440 (`DIM_THRES_LEVEL`) to completely eliminate low-brightness PWM flicker.
+  - SDE CRTC hardware stage automatically blends `{0, 0, 0, alpha}` digital dimming over the display pipeline without requiring MIUI SurfaceFlinger.
+  - Multi-node sysfs bridge automatically synchronizes `dimlayer_exposure`, `dc_dimming`, `dimming`, and `disp_param`.
+• Native Kernel SELinux Bypass for Display Sysfs:
+  - Implemented direct LSM policy bypass in `inode_has_perm` and `selinux_inode_permission` (`security/selinux/hooks.c`) for `system_app` (LineageOS / Infinity-X Settings / XiaomiParts) and `system_server` on `vendor_sysfs_graphics` and `sysfs_graphics`.
+  - Fixes SELinux denials (`comm="eageos.settings" name="dimlayer_exposure"`) natively inside the kernel without relying on any Magisk/KernelSU `sepolicy.rule` module.
+• Fixed USB Tethering DHCP & Host IP Assignment:
+  - Enabled `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y`: resolves `Warning: Extension CHECKSUM revision 0 not supported` in Android's TetherController, enabling `--checksum-fill` so host PCs accept UDP port 68 DHCP offers.
+  - Enabled `CONFIG_USB_CONFIGFS_RNDIS=y` and `CONFIG_USB_CONFIGFS_ECM=y`: restores standard RNDIS and ECM tethering gadget function creation.
+• MGLRU Stability & `mmap_sem` Lock Contention Fix:
+  - Mapped sysfs writes of `1` in `mm/vmscan.c` to `0x0001` (`LRU_GEN_CORE` only), disabling `LRU_GEN_MM_WALK` table walker lock contention on `mmap_sem` that previously caused app freezes under memory pressure.
+• Fixed Screen-Off Wakeup Freeze & Deep Eco Black Screen:
+  - Added retry workqueue in `drivers/misc/ki_profile.c` when secondary CPUs are offline during screen-on resume, preventing system lockups.
+  - Treated AOD LP1/LP2 low-power display modes as active display to prevent throttling governor frequencies while interacting with lockscreen.
+  - Rebalanced Battery profile CPU frequencies and set `SCREEN_OFF_BATTERY=0` default.
+• Overhauled Thermal & Performance Profiles for Outdoor Stability:
+  - Rebalanced Balanced and Battery profiles for efficient daily multitasking with schedutil down-hold and WALT migration tuning, keeping temperatures cool under direct sunlight.
+
+## Ki-kernel v1.5 (Initial Release):
 • Fixed Force Fast Charge and Restored Peak 67W / PPS Turbo Charging ("Gacor"):
   - Fixed Force Fast Charge having no effect on Wall Chargers (DCP/HVDCP/QC): previous implementation only updated `usb_icl_votable` for PC USB ports (`POWER_SUPPLY_TYPE_USB` / CDP), leaving wall adapters hardcoded to 1.5A. `smblib_set_force_fast_charge()` and plugin handlers now un-throttle `SW_ICL_MAX_VOTER`, `DCP_VOTER`, and `HVDCP2_ICL_VOTER` across all charger types up to 3.5A.
   - Eliminated PPS Thermal Postponement & Starvation: `mi_thermald` writes to `system_temp_level` every 1–2s previously rescheduled a 3-second delayed worker continuously, starving PPS thermal level updates and locking charging to throttled levels (~15W–30W).
