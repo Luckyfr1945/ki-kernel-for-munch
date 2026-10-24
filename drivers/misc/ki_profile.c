@@ -148,6 +148,8 @@ static int ki_guard_read_batt(void)
 	return val.intval * 100; /* convert tenths of °C to millidegrees C */
 }
 
+static unsigned int ki_guard_unresolved_polls;
+
 static void ki_guard_work_fn(struct work_struct *work)
 {
 	int i, die = INT_MIN, skin, batt;
@@ -164,8 +166,13 @@ static void ki_guard_work_fn(struct work_struct *work)
 	}
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
-	if (!ki_guard_resolved)
+	if (!ki_guard_resolved) {
 		ki_guard_resolve_zones();
+		if (!ki_guard_resolved && ++ki_guard_unresolved_polls == 5)
+			pr_warn("ki_profile: thermal guard zones partially unresolved, running with degraded coverage\n");
+	} else {
+		ki_guard_unresolved_polls = 0;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(ki_guard_die_tz); i++)
 		die = max(die, ki_guard_read(ki_guard_die_tz[i]));
@@ -317,7 +324,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Uncapped hardware maximums: Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz.
 	 * Aggressive game thread promotion (up_migrate 60/45, grp 70/55) locks render threads to Big cores.
 	 * Heavy RTG boost (Gold 2.15GHz, Prime 2.84GHz) ensures locked FPS in intense combat.
-	 * Swappiness 30 frees CPU cycles from zRAM compression to dedicate maximum bandwidth to GPU/render pipeline.
+	 * Swappiness 30 reduces zRAM compression overhead during intensive render workloads (intended to test CPU cycle savings).
 	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
@@ -449,29 +456,39 @@ static int ki_effective_mode(void)
 	return user_mode;
 }
 
+static bool ki_force_pending;	/* protected by ki_profile_mutex */
+
 /* Caller must hold ki_profile_mutex */
 static int ki_apply_effective(bool force)
 {
 	int mode = ki_effective_mode();
+	int ret;
 
+	force |= ki_force_pending;
 	if (!force && mode == READ_ONCE(ki_active_mode))
 		return 0;
-	return apply_ki_profile(mode, force);
+
+	ret = apply_ki_profile(mode, force);
+	ki_force_pending = force && (ret == -EBUSY);
+	return ret;
 }
+
+static unsigned int ki_screen_retry;	/* only touched by ki_screen_work_fn */
 
 static void ki_screen_work_fn(struct work_struct *work)
 {
 	int ret;
 
 	/*
-	 * If secondary CPUs are still coming online during resume from suspend,
+	 * If cluster policy leaders (0, 4, 7) are still coming online during resume,
 	 * re-queue ourselves so we do NOT drop the profile switch or leave the system
 	 * trapped in Battery profile.
+	 * Back off after 20 retries (~1s) to 1000ms if a leader CPU is permanently offlined.
 	 */
 	if (!cpu_online(0) || !cpu_online(4) || !cpu_online(7)) {
 		if (READ_ONCE(ki_screen_on))
 			queue_delayed_work(system_highpri_wq, &ki_screen_work,
-					   msecs_to_jiffies(50));
+					   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
 		return;
 	}
 
@@ -481,7 +498,9 @@ static void ki_screen_work_fn(struct work_struct *work)
 
 	if (ret == -EBUSY && READ_ONCE(ki_screen_on)) {
 		queue_delayed_work(system_highpri_wq, &ki_screen_work,
-				   msecs_to_jiffies(50));
+				   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
+	} else {
+		ki_screen_retry = 0;
 	}
 }
 
@@ -543,6 +562,42 @@ static struct notifier_block ki_display_nb = {
 	.notifier_call = ki_display_notifier_cb,
 };
 
+static struct delayed_work ki_psy_work;
+
+static void ki_psy_work_fn(struct work_struct *work)
+{
+	static int last_supplied = -1;
+	int supplied = power_supply_is_system_supplied();
+
+	if (supplied < 0)
+		return;
+
+	/* Deduplicate redundant power supply events */
+	if (supplied == last_supplied)
+		return;
+	last_supplied = supplied;
+
+	/*
+	 * Charging state only changes effective profile when screen is OFF.
+	 * (When screen is ON, profile is always current_profile_mode).
+	 * If screen is off, update the effective profile without disturbing
+	 * ki_screen_work's 5-second delay timer.
+	 */
+	if (!READ_ONCE(ki_screen_on)) {
+		int ret;
+
+		mutex_lock(&ki_profile_mutex);
+		ret = ki_apply_effective(false);
+		mutex_unlock(&ki_profile_mutex);
+
+		if (ret == -EBUSY) {
+			last_supplied = -1;
+			queue_delayed_work(system_power_efficient_wq, &ki_psy_work,
+					   msecs_to_jiffies(100));
+		}
+	}
+}
+
 static int ki_psy_notifier_cb(struct notifier_block *nb,
 			      unsigned long event, void *data)
 {
@@ -553,12 +608,12 @@ static int ki_psy_notifier_cb(struct notifier_block *nb,
 
 	/*
 	 * Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events.
-	 * Do NOT call power_supply_is_system_supplied() here directly as it can sleep
-	 * over SPMI/I2C regmaps. Instead, defer evaluation to ki_screen_work in process context.
+	 * Do NOT call power_supply_is_system_supplied() directly in notifier as it can
+	 * sleep over SPMI/I2C regmaps. Instead, defer to ki_psy_work in process context.
 	 */
-	if (strcmp(psy->desc->name, "usb") == 0) {
-		mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
-	}
+	if (strcmp(psy->desc->name, "usb") == 0)
+		queue_delayed_work(system_power_efficient_wq, &ki_psy_work, 0);
+
 	return NOTIFY_OK;
 }
 
@@ -829,7 +884,7 @@ static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *att
 	if (attr == &mode_attr.attr || attr == &screen_off_battery_attr.attr ||
 	    attr == &max_freq_silver_attr.attr || attr == &max_freq_gold_attr.attr ||
 	    attr == &max_freq_prime_attr.attr)
-		return 0666;
+		return 0644;
 	return attr->mode; /* 0444 for RO attrs */
 }
 
@@ -875,6 +930,7 @@ static int __init ki_profile_init(void)
 	/* 1. Initialize all delayed work queues BEFORE creating sysfs */
 	INIT_DELAYED_WORK(&ki_guard_work, ki_guard_work_fn);
 	INIT_DELAYED_WORK(&ki_screen_work, ki_screen_work_fn);
+	INIT_DELAYED_WORK(&ki_psy_work, ki_psy_work_fn);
 	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
 
 	/* 2. Create kobject and sysfs group */
