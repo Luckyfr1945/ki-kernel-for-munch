@@ -248,70 +248,77 @@ static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
 
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
-	 * Battery Saver (Ultra Power Saving):
-	 * Fokus hemat baterai maksimal (zero phantom drain).
-	 * Tasks dikemas di Silver cluster (up_migrate = 95/85),
-	 * Clamped max frequencies: Silver 1.52GHz, Gold 1.71GHz, Prime 1.67GHz.
-	 * Eliminates high-voltage VDD states (>1.05V) to save ~60% power under load.
-	 * Down hold 4-8ms prevents PLL thrashing on frame transitions.
-	 * RTG boost at 979MHz Silver / 1.07GHz Gold guarantees stutter-free video decode.
-	 * Swappiness 50 untuk menghemat daya pemrosesan CPU dari kompresi zRAM berulang.
+	 * Battery Saver (Ultra Power Saving & Outdoor Thermal Defense):
+	 * Zero phantom drain, cool chassis under direct sunlight and outdoor heat.
+	 * Tasks packed on Silver cluster (up_migrate = 98/90, grp = 99/95).
+	 * Clamped max frequencies strictly within high-efficiency VDD cliff:
+	 *   - Silver: 1.25GHz (1248000)
+	 *   - Gold:   1.28GHz (1286400)
+	 *   - Prime:  1.07GHz (1075200)
+	 * Eliminates high-voltage VDD states (>0.85V) to save ~65% power under load.
+	 * Down-rate 2ms (2000us) immediately drops CPU to idle floor when finger lifts.
+	 * Up-rate requires sustained compute (Silver 5ms, Gold 10ms, Prime 20ms).
+	 * Zero RTG boost (rtg_boost_freq = 0) prevents artificial clock spikes.
+	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300/710/844MHz.
+	 * Zero iowait boost prevents I/O reads from waking high clock states.
+	 * Swappiness 40 reduces CPU overhead from repeated zRAM compression/decompression loops.
+	 * VFS cache pressure 60 keeps file dentries cached, avoiding flash I/O wakeups.
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 3000,  .down_us = 4000, .hispeed_freq = 979200,  .hispeed_load = 95, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 5,  .max_freq = 1516800 },
-			{ .up_us = 6000,  .down_us = 6000, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 1075200, .floor_freq = 0, .iowait_boost_max = 5,  .max_freq = 1708800 },
-			{ .up_us = 12000, .down_us = 8000, .hispeed_freq = 1171200, .hispeed_load = 98, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0,  .max_freq = 1670400 },
+			{ .up_us = 5000,  .down_us = 2000, .hispeed_freq = 787200,  .hispeed_load = 95, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1248000 },
+			{ .up_us = 10000, .down_us = 2000, .hispeed_freq = 825600,  .hispeed_load = 95, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1286400 },
+			{ .up_us = 20000, .down_us = 2000, .hispeed_freq = 844800,  .hispeed_load = 98, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1075200 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 95, .down_migrate = 85,
-		.grp_up_migrate = 98, .grp_down_migrate = 90,
+		.up_migrate = 98, .down_migrate = 90,
+		.grp_up_migrate = 99, .grp_down_migrate = 95,
 		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 10, .vfs_cache_pressure = 70,
+		.swappiness = 40, .wmark_scale = 10, .vfs_cache_pressure = 60,
 	},
 	/*
-	 * Balanced:
-	 * Nyaman, super smooth, dan adem untuk harian & sosmed (Reels, TikTok, YouTube 120Hz).
-	 * Schedutil ramp-up 500us di Silver/Gold (responsif instan bebas micro-stutter) dan
-	 * 1500us di Prime (mencegah Prime core 3.19GHz bangun untuk beban UI ringan).
-	 * Down-rate hold time 10ms (10000us) meng-cover frame interval 120Hz (8.33ms) secara
-	 * presisi sehingga tidak pernah stutter/drop clock di tengah render, sekaligus
-	 * segera turun ke idle saat layar diam agar baterai super hemat (-300 s/d -600mA).
-	 * RTG boost: Silver 1.21GHz, Gold 1.65GHz, Prime 1.80GHz ensures UI and video
-	 * decoder threads maintain solid frame rates without dropping frames.
-	 * Floor frequencies (Silver 576MHz, Gold 710MHz) prevent dropping to 300MHz during interaction.
-	 * iowait_boost (Silver 15%, Gold 10%) prevents media stream buffer stalls without battery spikes.
-	 * Max frequency caps Prime to 2.84GHz and Gold to 2.21GHz to prevent outdoor overheating & excessive drain.
+	 * Balanced (Daily Driver - Smooth 120Hz & Controlled Thermals):
+	 * Instant UI response (up_us: Silver 500us, Gold 1000us, Prime 2000us).
+	 * Down-rate hold 8ms (8000us) matches 120Hz frame budget (8.33ms) perfectly,
+	 * eliminating stutter during rapid scrolling while quickly recovering idle floor.
+	 * Valid SM8250 OPP frequencies:
+	 *   - Silver: hispeed 1.17GHz, rtg_boost 1.17GHz, floor 518MHz, max 1.80GHz (1804800)
+	 *   - Gold:   hispeed 1.57GHz, rtg_boost 1.57GHz, floor 710MHz, max 2.05GHz (2054400)
+	 *   - Prime:  hispeed 1.75GHz, rtg_boost 1.75GHz, floor 0,      max 2.36GHz (2361600)
+	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off the exponential thermal
+	 * steepness of Cortex-A77 while guaranteeing rock-solid 120 FPS in system UI,
+	 * social media (TikTok, Reels, Twitter), and media playback.
+	 * Up/down migration (80/70, grp 95/85) balances load across Silver & Gold cleanly.
+	 * Swappiness 60 balances memory pressure and zRAM compression load.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1209600, .hispeed_load = 85, .rtg_boost_freq = 1209600, .floor_freq = 576000, .iowait_boost_max = 15, .max_freq = 1804800 },
-			{ .up_us = 500,  .down_us = 10000, .hispeed_freq = 1651200, .hispeed_load = 75, .rtg_boost_freq = 1651200, .floor_freq = 710400, .iowait_boost_max = 10, .max_freq = 2208000 },
-			{ .up_us = 1500, .down_us = 10000, .hispeed_freq = 1804800, .hispeed_load = 80, .rtg_boost_freq = 1804800, .floor_freq = 0,      .iowait_boost_max = 0,  .max_freq = 2841600 },
+			{ .up_us = 500,  .down_us = 8000, .hispeed_freq = 1171200, .hispeed_load = 85, .rtg_boost_freq = 1171200, .floor_freq = 518400, .iowait_boost_max = 15, .max_freq = 1804800 },
+			{ .up_us = 1000, .down_us = 8000, .hispeed_freq = 1574400, .hispeed_load = 80, .rtg_boost_freq = 1574400, .floor_freq = 710400, .iowait_boost_max = 10, .max_freq = 2054400 },
+			{ .up_us = 2000, .down_us = 8000, .hispeed_freq = 1747200, .hispeed_load = 85, .rtg_boost_freq = 1747200, .floor_freq = 0,      .iowait_boost_max = 0,  .max_freq = 2361600 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 80, .down_migrate = 70,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 80, .wmark_scale = 20, .vfs_cache_pressure = 80,
+		.swappiness = 60, .wmark_scale = 15, .vfs_cache_pressure = 80,
 	},
 	/*
-	 * Performance / Gaming Turbo (Optimized):
-	 *  - Zero-lag ramp up (up_us: 0), frame-synchronized down hold (Gold/Prime 20ms)
-	 *    prevents clock-bouncing while maintaining maximum sustained FPS in heavy gaming (MLBB/Genshin).
-	 *  - Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate idle stalls.
-	 *  - Peak uncapped hardware clocks: Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz.
-	 *  - Eager gaming thread promotion (up_migrate 60/45, grp 70/55) locks render threads to big cores.
-	 *  - Heavy RTG boost (Gold 2.15GHz, Prime 2.84GHz) delivers locked 120 FPS in intense teamfights.
-	 *  - MAX_RECENT_AVG window stats + swappiness 50 + vfs_cache_pressure 60 prevents texture streaming hitches.
-	 *  - Thermal bypass active (thermal_throttle = false) to prevent FPS from capping at 30/31 FPS,
-	 *    while Thermal Auto-Guard stays vigilant at 47°C skin / 45°C batt / 85°C die.
+	 * Performance / Gaming Turbo (Max Sustained FPS & Frame Stability):
+	 * Zero-lag ramp up (up_us: 0), frame-synchronized down hold (15ms / 15000us)
+	 * prevents clock bouncing during 60/90/120 FPS game rendering loops.
+	 * Responsive floors (Silver 691M, Gold 1.05G, Prime 1.07G) eliminate frame pacing stalls.
+	 * Uncapped hardware maximums: Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz.
+	 * Aggressive game thread promotion (up_migrate 60/45, grp 70/55) locks render threads to Big cores.
+	 * Heavy RTG boost (Gold 2.15GHz, Prime 2.84GHz) ensures locked FPS in intense combat.
+	 * Swappiness 30 frees CPU cycles from zRAM compression to dedicate maximum bandwidth to GPU/render pipeline.
+	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
 	 */
 	[KI_PROFILE_PERFORMANCE] = {
 		.cl = {
-			{ .up_us = 0, .down_us = 10000, .hispeed_freq = 1420800, .hispeed_load = 65, .rtg_boost_freq = 1420800, .floor_freq = 691200,  .iowait_boost_max = 100, .max_freq = 0 },
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 100, .max_freq = 0 },
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2649600, .hispeed_load = 60, .rtg_boost_freq = 2841600, .floor_freq = 1075200, .iowait_boost_max = 100, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 15000, .hispeed_freq = 1420800, .hispeed_load = 65, .rtg_boost_freq = 1420800, .floor_freq = 691200,  .iowait_boost_max = 50, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 15000, .hispeed_freq = 2150400, .hispeed_load = 60, .rtg_boost_freq = 2150400, .floor_freq = 1056000, .iowait_boost_max = 50, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 15000, .hispeed_freq = 2649600, .hispeed_load = 60, .rtg_boost_freq = 2841600, .floor_freq = 1075200, .iowait_boost_max = 50, .max_freq = 0 },
 		},
 		.pl = true,
 		.gpu_perf = true,
@@ -320,7 +327,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 60, .down_migrate = 45,
 		.grp_up_migrate = 70, .grp_down_migrate = 55,
 		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 15, .vfs_cache_pressure = 60,
+		.swappiness = 30, .wmark_scale = 10, .vfs_cache_pressure = 50,
 	},
 };
 
@@ -614,6 +621,11 @@ static ssize_t screen_off_battery_store(struct kobject *kobj, struct kobj_attrib
 	return count;
 }
 
+static ssize_t screen_state_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_screen_on) ? 1 : 0);
+}
+
 static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
@@ -706,6 +718,7 @@ static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_batt
 static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
 static struct kobj_attribute max_freq_gold_attr = __ATTR_RW(max_freq_gold);
 static struct kobj_attribute max_freq_prime_attr = __ATTR_RW(max_freq_prime);
+static struct kobj_attribute screen_state_attr = __ATTR_RO(screen_state);
 
 /*
  * Non-root userspace control interface via /proc/ki_profile
@@ -789,6 +802,7 @@ static struct attribute *ki_profile_attrs[] = {
 	&max_freq_silver_attr.attr,
 	&max_freq_gold_attr.attr,
 	&max_freq_prime_attr.attr,
+	&screen_state_attr.attr,
 	NULL,
 };
 

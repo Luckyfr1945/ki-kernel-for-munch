@@ -14,9 +14,18 @@ const STATUS_FILE: &str = "/data/adb/modules/ki_optimizer/daemon.status";
 const DEFAULT_GAMES: &[&str] = &[
     "com.mobile.legends",
     "com.miHoYo.GenshinImpact",
+    "com.nexon.bluearchive",
+    "com.YoStar.AetherGazer",
+    "com.YoStarEN.Arknights",
+    "com.YoStarEN.AzurLane",
+    "com.hypergryph.arknights",
+    "com.kurogame.haru.google",
+    "com.HoYoverse.nap",
+    "com.miHoYo.nap",
     "com.dts.freefireth",
     "com.tencent.ig",
     "com.activision.callofduty.shooter",
+    "com.garena.game.codm",
     "com.riotgames.league.wildrift",
     "com.pubg.imobile",
     "com.epicgames.fortnite",
@@ -242,19 +251,22 @@ fn set_mglru(mode: u32) {
 }
 
 fn is_screen_on() -> bool {
-    // Check drm display or power supply state
+    // 1. Direct in-kernel display notifier state
+    if let Some(val) = read_node_trimmed("/sys/kernel/ki_profile/screen_state") {
+        return val == "1";
+    }
+    // 2. Hardware panel backlight brightness
+    if let Some(val) = read_node_trimmed("/sys/class/backlight/panel0-backlight/brightness") {
+        if let Ok(b) = val.parse::<u32>() {
+            return b > 0;
+        }
+    }
+    // 3. Fallback: DRM runtime status
     if let Some(val) = read_node_trimmed("/sys/class/drm/card0/device/power/runtime_status") {
         if val == "active" {
             return true;
         }
     }
-    // Fallback: check ki_profile screen-on hint if present
-    if let Some(val) = read_node_trimmed("/sys/kernel/ki_profile/screen_off_battery") {
-        if val.starts_with('0') {
-            // Not forced
-        }
-    }
-    // Universal fallback: dumpsys power or assume true
     true
 }
 
