@@ -484,6 +484,9 @@ static int ki_effective_mode(void)
 {
 	int user_mode = READ_ONCE(current_profile_mode);
 
+	if (user_mode < 0 || user_mode >= KI_PROFILE_MAX)
+		user_mode = KI_PROFILE_BALANCED;
+
 	/*
 	 * If connected to external power / charging, do NOT throttle to Battery Saver
 	 * when screen is off. Android runs background maintenance (dexopt, fstrim) while
@@ -518,7 +521,7 @@ static int ki_apply_effective(bool force)
 	return ret;
 }
 
-static unsigned int ki_screen_retry;	/* only touched by ki_screen_work_fn */
+static unsigned int ki_screen_retry;	/* touched by ki_screen_work_fn and reset on unblank */
 
 static void ki_screen_requeue(void)
 {
@@ -573,6 +576,7 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 		if (!READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_screen_on, true);
 			WRITE_ONCE(ki_battery_armed, false);
+			WRITE_ONCE(ki_screen_retry, 0);
 			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 		}
 		return NOTIFY_OK;
@@ -586,6 +590,7 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 		if (!READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_screen_on, true);
 			WRITE_ONCE(ki_battery_armed, false);
+			WRITE_ONCE(ki_screen_retry, 0);
 			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 		}
 		break;
@@ -940,7 +945,9 @@ static void ki_profile_delayed_work_fn(struct work_struct *work)
 		return;
 	}
 
-	{
+	if (err) {
+		pr_warn("ki_profile: Boot settlement gave up, err=%d\n", err);
+	} else {
 		int active = ki_get_active_profile();
 		const char *active_name = (active >= 0 && active < KI_PROFILE_MAX) ?
 					  profile_names[active] : "unknown";
