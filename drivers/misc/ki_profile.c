@@ -784,6 +784,9 @@ static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 	if (kstrtouint(buf, 10, &val))
 		return -EINVAL;
 
+	if (val && val < 300000)	/* below lowest valid SM8250 CPU OPP */
+		return -EINVAL;
+
 	mutex_lock(&ki_profile_mutex);
 	WRITE_ONCE(ki_user_max_freq[i], val);
 	ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
@@ -910,7 +913,9 @@ static ssize_t reapply_store(struct kobject *kobj, struct kobj_attribute *attr,
 	ret = ki_apply_effective(true);
 	mutex_unlock(&ki_profile_mutex);
 
-	return ret ? ret : count;
+	if (ret > 0)		/* bitmask of failed sugov clusters, not byte count */
+		ret = -EAGAIN;
+	return ret < 0 ? ret : (ssize_t)count;
 }
 
 static struct kobj_attribute reapply_attr = __ATTR_WO(reapply);
