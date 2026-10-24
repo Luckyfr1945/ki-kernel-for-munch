@@ -89,7 +89,7 @@ impl Default for DaemonConfig {
             game_profile: 2,    // Turbo Gaming
             auto_bypass_charging: true,
             auto_mglru: true,
-            game_mglru: 7,      // 0x0007 Turbo
+            game_mglru: 1,      // 0x0001 Standard (Core LRU - no page table walk lockup)
             default_mglru: 1,   // 0x0001 Standard
             games,
         }

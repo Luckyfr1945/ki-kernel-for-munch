@@ -370,10 +370,10 @@ async function refreshState() {
       fi
 
       HAS_SCREENOFF=0
-      VAL_SCREENOFF=1
+      VAL_SCREENOFF=0
       if [ -f /sys/kernel/ki_profile/screen_off_battery ]; then
         HAS_SCREENOFF=1
-        VAL_SCREENOFF="$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo '1')"
+        VAL_SCREENOFF="$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo '0')"
       fi
 
       HAS_WAKELOCK=0

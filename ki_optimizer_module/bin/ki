@@ -165,7 +165,7 @@ show_status() {
     local cur_sfc=$(cat /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null || echo "0")
     local cur_ffc=$(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo "0")
     local cur_throt=$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo "1")
-    local cur_sbat=$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo "1")
+    local cur_sbat=$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo "0")
     local cur_fsync=$(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo "0")
     local cur_tcp=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "cubic")
     local cur_swap=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "80")
@@ -280,7 +280,7 @@ case "$1" in
   "fast_charge": $(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo 0),
   "dyn_fsync": $(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo 0),
   "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
-  "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 1),
+  "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 0),
   "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
   "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),
   "battery_pct": $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0),

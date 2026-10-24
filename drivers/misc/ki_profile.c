@@ -51,8 +51,8 @@ EXPORT_SYMBOL_GPL(ki_get_active_profile);
  * Screen on   -> restore the user's profile immediately (via early DRM blank).
  * The delay avoids flapping from proximity-sensor blanking during calls.
  */
-#define KI_SCREEN_OFF_DELAY_MS	3000
-static bool ki_screen_off_battery = true;
+#define KI_SCREEN_OFF_DELAY_MS	5000
+static bool ki_screen_off_battery = false;
 static bool ki_screen_on = true;
 static struct delayed_work ki_screen_work;
 
@@ -248,33 +248,33 @@ static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
 
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
-	 * Battery Saver (Ultra Power Saving & Outdoor Thermal Defense):
-	 * Zero phantom drain, cool chassis under direct sunlight and outdoor heat.
-	 * Tasks packed on Silver cluster (up_migrate = 98/90, grp = 99/95).
-	 * Clamped max frequencies strictly within high-efficiency VDD cliff:
-	 *   - Silver: 1.25GHz (1248000)
-	 *   - Gold:   1.28GHz (1286400)
-	 *   - Prime:  1.07GHz (1075200)
-	 * Eliminates high-voltage VDD states (>0.85V) to save ~65% power under load.
+	 * Battery Saver (Ultra Power Saving & Responsive Display Guard):
+	 * Cool chassis and high battery life without dropped frames or DSI commit timeouts.
+	 * Tasks balanced on Silver cluster (up_migrate = 90/80, grp = 95/85).
+	 * Frequencies bounded within high-efficiency VDD sweet-spot (<0.85V):
+	 *   - Silver: 1.51GHz (1516800)
+	 *   - Gold:   1.76GHz (1766400)
+	 *   - Prime:  1.63GHz (1632000)
 	 * Down-rate 2ms (2000us) immediately drops CPU to idle floor when finger lifts.
-	 * Up-rate requires sustained compute (Silver 5ms, Gold 10ms, Prime 20ms).
-	 * Zero RTG boost (rtg_boost_freq = 0) prevents artificial clock spikes.
-	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300/710/844MHz.
+	 * Up-rate (Silver 1.5ms, Gold 3ms, Prime 6ms) prevents clock thrashing while
+	 * guaranteeing SurfaceFlinger meets display fence commit deadlines.
+	 * RTG boost on Silver (979MHz) & Gold (1.05GHz) eliminates black screen / SoD.
+	 * Zero floor frequency (floor_freq = 0) enables full idle drop to 300/710/844MHz.
 	 * Zero iowait boost prevents I/O reads from waking high clock states.
-	 * Swappiness 40 reduces CPU overhead from repeated zRAM compression/decompression loops.
-	 * VFS cache pressure 60 keeps file dentries cached, avoiding flash I/O wakeups.
+	 * Swappiness 50 keeps zRAM compression cycles efficient without cache starvation.
+	 * VFS cache pressure 70 keeps file dentries cached, avoiding flash I/O wakeups.
 	 */
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
-			{ .up_us = 5000,  .down_us = 2000, .hispeed_freq = 787200,  .hispeed_load = 95, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1248000 },
-			{ .up_us = 10000, .down_us = 2000, .hispeed_freq = 825600,  .hispeed_load = 95, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1286400 },
-			{ .up_us = 20000, .down_us = 2000, .hispeed_freq = 844800,  .hispeed_load = 98, .rtg_boost_freq = 0, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1075200 },
+			{ .up_us = 1500, .down_us = 2000, .hispeed_freq = 979200,  .hispeed_load = 90, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1516800 },
+			{ .up_us = 3000, .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 90, .rtg_boost_freq = 1056000, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1766400 },
+			{ .up_us = 6000, .down_us = 2000, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1632000 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 98, .down_migrate = 90,
-		.grp_up_migrate = 99, .grp_down_migrate = 95,
+		.up_migrate = 90, .down_migrate = 80,
+		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 40, .wmark_scale = 10, .vfs_cache_pressure = 60,
+		.swappiness = 50, .wmark_scale = 15, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Balanced (Daily Driver - Smooth 120Hz & Controlled Thermals):
@@ -453,13 +453,28 @@ static int ki_apply_effective(bool force)
 
 static void ki_screen_work_fn(struct work_struct *work)
 {
-	/* Do not attempt to reconfigure cpufreq or scheduler if CPUs are offline (suspend) */
-	if (num_online_cpus() < nr_cpu_ids)
+	int ret;
+
+	/*
+	 * If secondary CPUs are still coming online during resume from suspend,
+	 * re-queue ourselves so we do NOT drop the profile switch or leave the system
+	 * trapped in Battery profile.
+	 */
+	if (num_online_cpus() < nr_cpu_ids) {
+		if (READ_ONCE(ki_screen_on))
+			queue_delayed_work(system_highpri_wq, &ki_screen_work,
+					   msecs_to_jiffies(50));
 		return;
+	}
 
 	mutex_lock(&ki_profile_mutex);
-	ki_apply_effective(false);
+	ret = ki_apply_effective(false);
 	mutex_unlock(&ki_profile_mutex);
+
+	if (ret == -EBUSY && READ_ONCE(ki_screen_on)) {
+		queue_delayed_work(system_highpri_wq, &ki_screen_work,
+				   msecs_to_jiffies(50));
+	}
 }
 
 static int ki_display_notifier_cb(struct notifier_block *nb,
@@ -488,13 +503,13 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 
 	switch (blank) {
 	case MI_DRM_BLANK_UNBLANK:
+	case MI_DRM_BLANK_LP1:
+	case MI_DRM_BLANK_LP2:
 		if (!READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_screen_on, true);
 			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 		}
 		break;
-	case MI_DRM_BLANK_LP1:
-	case MI_DRM_BLANK_LP2:
 	case MI_DRM_BLANK_STANDBY:
 	case MI_DRM_BLANK_SUSPEND:
 	case MI_DRM_BLANK_POWERDOWN:
