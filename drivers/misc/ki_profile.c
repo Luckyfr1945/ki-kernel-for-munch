@@ -377,6 +377,25 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 
 static bool ki_gpu_perf_applied;	/* protected by ki_profile_mutex */
 
+static unsigned int ki_target_max(int i, int mode)
+{
+	unsigned int cap;
+	unsigned int user;
+	bool transient;
+
+	if (mode < 0 || mode >= KI_PROFILE_MAX)
+		mode = KI_PROFILE_BALANCED;
+
+	cap = ki_tunes[mode].cl[i].max_freq;
+	user = READ_ONCE(ki_user_max_freq[i]);
+	transient = (mode != READ_ONCE(current_profile_mode));
+
+	/* Override cannot relax temporary profile caps (e.g. screen-off Battery Saver) */
+	if (user && (!transient || !cap || user < cap))
+		return user;
+	return cap;
+}
+
 static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
@@ -417,7 +436,7 @@ static int apply_ki_profile(int mode, bool force)
 		sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max);
 		sugov_set_cluster_pl(cpu, t->pl);
 
-		target_max = ki_user_max_freq[i] ? ki_user_max_freq[i] : c->max_freq;
+		target_max = ki_target_max(i, mode);
 		ki_cpufreq_set_limits(cpu, 0, target_max);
 	}
 
@@ -495,13 +514,14 @@ static int ki_effective_mode(void)
 	if (power_supply_is_system_supplied() > 0)
 		return user_mode;
 
-	if (ki_screen_off_battery && !READ_ONCE(ki_screen_on) && READ_ONCE(ki_battery_armed))
+	if (READ_ONCE(ki_screen_off_battery) && !READ_ONCE(ki_screen_on) && READ_ONCE(ki_battery_armed))
 		return KI_PROFILE_BATTERY;
 
 	return user_mode;
 }
 
 static bool ki_force_pending;	/* protected by ki_profile_mutex */
+static bool ki_apply_incomplete;	/* protected by ki_profile_mutex */
 
 /* Caller must hold ki_profile_mutex */
 static int ki_apply_effective(bool force)
@@ -511,13 +531,14 @@ static int ki_apply_effective(bool force)
 	bool screen_on = READ_ONCE(ki_screen_on);
 
 	force |= ki_force_pending;
-	if (!force && mode == READ_ONCE(ki_active_mode) &&
+	if (!force && !ki_apply_incomplete && mode == READ_ONCE(ki_active_mode) &&
 	    (ki_tunes[mode].gpu_perf && screen_on) == ki_gpu_perf_applied &&
 	    !READ_ONCE(ki_guard_parked))
 		return 0;
 
 	ret = apply_ki_profile(mode, force);
 	ki_force_pending = force && (ret == -EBUSY);
+	ki_apply_incomplete = (ret != 0);
 	return ret;
 }
 
@@ -600,8 +621,8 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 	case MI_DRM_BLANK_SUSPEND:
 	case MI_DRM_BLANK_POWERDOWN:
 		if (READ_ONCE(ki_screen_on)) {
-			WRITE_ONCE(ki_screen_on, false);
 			WRITE_ONCE(ki_battery_armed, false);
+			WRITE_ONCE(ki_screen_on, false);
 			mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
 					 msecs_to_jiffies(KI_SCREEN_OFF_DELAY_MS));
 		}
@@ -668,10 +689,24 @@ static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char
 	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(current_profile_mode));
 }
 
+/* Caller must hold ki_profile_mutex */
+static void ki_user_set_mode(int val)
+{
+	if (val == READ_ONCE(current_profile_mode))
+		return;
+	WRITE_ONCE(current_profile_mode, val);
+	if (ki_apply_effective(true) == -EBUSY) {
+		WRITE_ONCE(ki_screen_retry, 0);
+		/* queue, not mod: do not pull forward 5-second screen-off timer */
+		queue_delayed_work(system_highpri_wq, &ki_screen_work,
+				   msecs_to_jiffies(100));
+	}
+}
+
 static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 			  const char *buf, size_t count)
 {
-	int val, ret;
+	int val;
 
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
@@ -680,13 +715,7 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 		return -EINVAL;
 
 	mutex_lock(&ki_profile_mutex);
-	if (val != READ_ONCE(current_profile_mode)) {
-		WRITE_ONCE(current_profile_mode, val);
-		ret = ki_apply_effective(true);
-		if (ret == -EBUSY)
-			queue_delayed_work(system_highpri_wq, &ki_screen_work,
-					   msecs_to_jiffies(100));
-	}
+	ki_user_set_mode(val);
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
@@ -719,7 +748,7 @@ static ssize_t active_profile_show(struct kobject *kobj, struct kobj_attribute *
 
 static ssize_t screen_off_battery_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", ki_screen_off_battery ? 1 : 0);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_screen_off_battery) ? 1 : 0);
 }
 
 static ssize_t screen_off_battery_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -731,7 +760,7 @@ static ssize_t screen_off_battery_store(struct kobject *kobj, struct kobj_attrib
 		return -EINVAL;
 
 	mutex_lock(&ki_profile_mutex);
-	ki_screen_off_battery = val;
+	WRITE_ONCE(ki_screen_off_battery, val);
 	ki_apply_effective(false);
 	mutex_unlock(&ki_profile_mutex);
 
@@ -748,6 +777,21 @@ static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute
 	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
 }
 
+static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
+{
+	unsigned int val;
+
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	WRITE_ONCE(ki_user_max_freq[i], val);
+	ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
+			      ki_target_max(i, ki_effective_mode()));
+	mutex_unlock(&ki_profile_mutex);
+	return count;
+}
+
 static ssize_t max_freq_silver_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	unsigned int val = ki_cpufreq_get_max(ki_cluster_cpu[0]);
@@ -757,21 +801,7 @@ static ssize_t max_freq_silver_show(struct kobject *kobj, struct kobj_attribute 
 static ssize_t max_freq_silver_store(struct kobject *kobj, struct kobj_attribute *attr,
 				     const char *buf, size_t count)
 {
-	unsigned int val;
-	if (kstrtouint(buf, 10, &val))
-		return -EINVAL;
-
-	mutex_lock(&ki_profile_mutex);
-	ki_user_max_freq[0] = val;
-	if (val == 0) {
-		int mode = ki_effective_mode();
-		if (mode >= 0 && mode < KI_PROFILE_MAX)
-			val = ki_tunes[mode].cl[0].max_freq;
-	}
-	ki_cpufreq_set_limits(ki_cluster_cpu[0], 0, val);
-	mutex_unlock(&ki_profile_mutex);
-
-	return count;
+	return ki_max_freq_store(0, buf, count);
 }
 
 static ssize_t max_freq_gold_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -783,21 +813,7 @@ static ssize_t max_freq_gold_show(struct kobject *kobj, struct kobj_attribute *a
 static ssize_t max_freq_gold_store(struct kobject *kobj, struct kobj_attribute *attr,
 				   const char *buf, size_t count)
 {
-	unsigned int val;
-	if (kstrtouint(buf, 10, &val))
-		return -EINVAL;
-
-	mutex_lock(&ki_profile_mutex);
-	ki_user_max_freq[1] = val;
-	if (val == 0) {
-		int mode = ki_effective_mode();
-		if (mode >= 0 && mode < KI_PROFILE_MAX)
-			val = ki_tunes[mode].cl[1].max_freq;
-	}
-	ki_cpufreq_set_limits(ki_cluster_cpu[1], 0, val);
-	mutex_unlock(&ki_profile_mutex);
-
-	return count;
+	return ki_max_freq_store(1, buf, count);
 }
 
 static ssize_t max_freq_prime_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -809,21 +825,7 @@ static ssize_t max_freq_prime_show(struct kobject *kobj, struct kobj_attribute *
 static ssize_t max_freq_prime_store(struct kobject *kobj, struct kobj_attribute *attr,
 				    const char *buf, size_t count)
 {
-	unsigned int val;
-	if (kstrtouint(buf, 10, &val))
-		return -EINVAL;
-
-	mutex_lock(&ki_profile_mutex);
-	ki_user_max_freq[2] = val;
-	if (val == 0) {
-		int mode = ki_effective_mode();
-		if (mode >= 0 && mode < KI_PROFILE_MAX)
-			val = ki_tunes[mode].cl[2].max_freq;
-	}
-	ki_cpufreq_set_limits(ki_cluster_cpu[2], 0, val);
-	mutex_unlock(&ki_profile_mutex);
-
-	return count;
+	return ki_max_freq_store(2, buf, count);
 }
 
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
@@ -886,15 +888,7 @@ static ssize_t ki_profile_proc_write(struct file *file, const char __user *buf,
 	}
 
 	mutex_lock(&ki_profile_mutex);
-	if (val != READ_ONCE(current_profile_mode)) {
-		int ret;
-
-		WRITE_ONCE(current_profile_mode, val);
-		ret = ki_apply_effective(true);
-		if (ret == -EBUSY)
-			queue_delayed_work(system_highpri_wq, &ki_screen_work,
-					   msecs_to_jiffies(100));
-	}
+	ki_user_set_mode(val);
 	mutex_unlock(&ki_profile_mutex);
 
 	return count;
@@ -907,6 +901,20 @@ static const struct file_operations ki_profile_proc_fops = {
 	.llseek = default_llseek,
 };
 
+static ssize_t reapply_store(struct kobject *kobj, struct kobj_attribute *attr,
+			     const char *buf, size_t count)
+{
+	int ret;
+
+	mutex_lock(&ki_profile_mutex);
+	ret = ki_apply_effective(true);
+	mutex_unlock(&ki_profile_mutex);
+
+	return ret ? ret : count;
+}
+
+static struct kobj_attribute reapply_attr = __ATTR_WO(reapply);
+
 static struct attribute *ki_profile_attrs[] = {
 	&mode_attr.attr,
 	&current_profile_attr.attr,
@@ -918,6 +926,7 @@ static struct attribute *ki_profile_attrs[] = {
 	&max_freq_gold_attr.attr,
 	&max_freq_prime_attr.attr,
 	&screen_state_attr.attr,
+	&reapply_attr.attr,
 	NULL,
 };
 
