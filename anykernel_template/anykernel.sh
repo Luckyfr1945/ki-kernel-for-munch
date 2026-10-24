@@ -63,9 +63,16 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override)";
     fi;
 
-    # 2. Check live getprop if available (flashed from booted Android via ksud / FK Kernel Manager / TWRP)
+    # 2. Check live getprop if available (flashed from booted Android via ksud / FK Kernel Manager)
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
-        if command -v getprop >/dev/null 2>&1; then
+        IS_RECOVERY=0;
+        if [ -f /sbin/recovery ] || [ -f /system/bin/recovery ] || [ -d /twres ] || [ -f /etc/recovery.fstab ] || \
+           [ "$(getprop ro.bootmode 2>/dev/null)" = "recovery" ] || grep -q -E "bootmode=recovery|recovery" /proc/cmdline 2>/dev/null; then
+            IS_RECOVERY=1;
+        fi;
+
+        # Live getprop is only definitive when booted into Android, NOT inside TWRP/OrangeFox ramdisk
+        if [ "$IS_RECOVERY" -eq 0 ] && command -v getprop >/dev/null 2>&1; then
             OPLUS_PROP=$(getprop ro.build.version.oplusrom 2>/dev/null);
             [ -z "$OPLUS_PROP" ] && OPLUS_PROP=$(getprop ro.coloros.version 2>/dev/null);
             [ -z "$OPLUS_PROP" ] && OPLUS_PROP=$(getprop ro.oxygen.version 2>/dev/null);
@@ -86,8 +93,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             OS_NAME=$(getprop ro.mi.os.version.name 2>/dev/null);
             MIUI_NAME=$(getprop ro.miui.ui.version.name 2>/dev/null);
             BUILD_INC=$(getprop ro.build.version.incremental 2>/dev/null);
-            SYS_NAME=$(getprop ro.product.system.name 2>/dev/null);
-            SYS_MODEL=$(getprop ro.product.system.model 2>/dev/null);
+            FLAVOR=$(getprop ro.build.flavor 2>/dev/null);
 
             # Check OPlus first (ColorOS / OxygenOS / RealmeUI)
             if [ -n "$OPLUS_PROP" ]; then
@@ -106,15 +112,15 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                 IS_MIUI=1;
                 ROM_TYPE="Xiaomi MIUI";
                 ROM_DETAIL="${MIUI_NAME:-$BUILD_INC}";
-            elif [ -n "$SYS_NAME" ] || [ -n "$SYS_MODEL" ]; then
+            elif echo "$FLAVOR $DISP_ID" | grep -i -q -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior|axion|yaap|voltage|elixir"; then
                 IS_AOSP=1;
                 ROM_TYPE="AOSP / Custom ROM";
-                ROM_DETAIL="${SYS_NAME:-$SYS_MODEL}";
+                ROM_DETAIL="${FLAVOR:-$DISP_ID}";
             fi;
         fi;
     fi;
 
-    # 3. Recovery inspection with dynamic partition & A/B slot resolution
+    # 3. Recovery inspection with dynamic partition & A/B slot resolution (re404 inspired)
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
         # Detect active slot
         SLOT=$(getprop ro.boot.slot_suffix 2>/dev/null);
@@ -140,6 +146,18 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                        "/dev/block/bootdevice/by-name/product$SLOT" "/dev/block/bootdevice/by-name/product"; do
                 if [ -b "$dev" ]; then
                     mount -o ro "$dev" /p_chk 2>/dev/null && { PRODUCT_MOUNTED=1; break; };
+                fi;
+            done;
+        fi;
+
+        # Mount vendor partition if not already mounted
+        VENDOR_MOUNTED=0;
+        if [ ! -f /vendor/build.prop ] && [ ! -f /vendor/etc/build.prop ]; then
+            mkdir -p /v_chk 2>/dev/null;
+            for dev in "/dev/block/mapper/vendor$SLOT" "/dev/block/mapper/vendor" \
+                       "/dev/block/bootdevice/by-name/vendor$SLOT" "/dev/block/bootdevice/by-name/vendor"; do
+                if [ -b "$dev" ]; then
+                    mount -o ro "$dev" /v_chk 2>/dev/null && { VENDOR_MOUNTED=1; break; };
                 fi;
             done;
         fi;
@@ -180,7 +198,9 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         # Check vendor port files across all porters (e.g. Danda's OemPorts, SGSI, etc.)
         if [ "$IS_OPLUS" -eq 0 ]; then
             if ls /vendor/OemPorts*.prop >/dev/null 2>&1 || \
+               ls /v_chk/OemPorts*.prop >/dev/null 2>&1 || \
                ls /vendor/etc/init/OemPorts*.rc >/dev/null 2>&1 || \
+               ls /v_chk/etc/init/OemPorts*.rc >/dev/null 2>&1 || \
                ls /system/etc/OemPorts*.prop >/dev/null 2>&1 || \
                ls /s_chk/system/etc/OemPorts*.prop >/dev/null 2>&1; then
                 IS_OPLUS=1;
@@ -193,7 +213,8 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                    /s_chk/system/build.prop /s_chk/build.prop /s_chk/etc/build.prop \
                    /p_chk/etc/build.prop /p_chk/build.prop /product/etc/build.prop /product/build.prop \
                    /m_chk/etc/build.prop /m_chk/build.prop /my_product/etc/build.prop /my_product/build.prop \
-                   /vendor/build.prop /vendor/etc/build.prop /vendor/euclid/euclid.prop";
+                   /vendor/build.prop /vendor/etc/build.prop /vendor/euclid/euclid.prop \
+                   /v_chk/build.prop /v_chk/etc/build.prop";
 
         # Check OPlus props in files
         if [ "$IS_OPLUS" -eq 0 ]; then
@@ -217,11 +238,16 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             done;
         fi;
 
-        # 3b. Check distinctive Xiaomi-exclusive hardware feature files (100% reliable for MIUI/HyperOS)
+        # 3b. Check distinctive Xiaomi-exclusive hardware feature files (100% reliable for MIUI/HyperOS ala re404)
         if [ "$IS_OPLUS" -eq 0 ]; then
             FEATURE_FILES="/s_chk/system/etc/device_features/munch.xml /s_chk/etc/device_features/munch.xml \
                            /system_root/system/etc/device_features/munch.xml /system/etc/device_features/munch.xml \
-                           /p_chk/etc/device_features/munch.xml /product/etc/device_features/munch.xml";
+                           /p_chk/etc/device_features/munch.xml /product/etc/device_features/munch.xml \
+                           /vendor/etc/device_features/munch.xml /v_chk/etc/device_features/munch.xml \
+                           /s_chk/system/etc/device_features/alioth.xml /s_chk/etc/device_features/alioth.xml \
+                           /system_root/system/etc/device_features/alioth.xml /system/etc/device_features/alioth.xml \
+                           /p_chk/etc/device_features/alioth.xml /product/etc/device_features/alioth.xml \
+                           /vendor/etc/device_features/alioth.xml /v_chk/etc/device_features/alioth.xml";
             for f in $FEATURE_FILES; do
                 if [ -f "$f" ]; then
                     IS_MIUI=1;
@@ -292,6 +318,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         # Clean up temporary inspection mounts
         [ "$SYSTEM_MOUNTED" -eq 1 ] && { umount /s_chk 2>/dev/null; rm -rf /s_chk 2>/dev/null; };
         [ "$PRODUCT_MOUNTED" -eq 1 ] && { umount /p_chk 2>/dev/null; rm -rf /p_chk 2>/dev/null; };
+        [ "$VENDOR_MOUNTED" -eq 1 ] && { umount /v_chk 2>/dev/null; rm -rf /v_chk 2>/dev/null; };
         [ "$MY_PRODUCT_MOUNTED" -eq 1 ] && { umount /m_chk 2>/dev/null; rm -rf /m_chk 2>/dev/null; };
     fi;
 
