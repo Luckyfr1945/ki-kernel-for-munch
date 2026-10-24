@@ -290,6 +290,9 @@ apply_droidspaces_config() {
         -e NETFILTER_NETLINK_QUEUE \
         -e NETFILTER_NETLINK_LOG \
         -e NETFILTER_XT_TARGET_NFLOG \
+        -e NETFILTER_XT_TARGET_CHECKSUM \
+        -e USB_CONFIGFS_RNDIS \
+        -e USB_CONFIGFS_ECM \
         -d ANDROID_PARANOID_NETWORK
 }
 
