@@ -19,6 +19,7 @@
 • Fixed USB Tethering DHCP & Host IP Assignment:
   - Enabled `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y`: resolves `Warning: Extension CHECKSUM revision 0 not supported` in Android's TetherController, enabling `--checksum-fill` so host PCs accept UDP port 68 DHCP offers.
   - Enabled `CONFIG_USB_CONFIGFS_RNDIS=y` and `CONFIG_USB_CONFIGFS_ECM=y`: restores standard RNDIS and ECM tethering gadget function creation.
+  - Fixed NCM/RNDIS Interface Naming (`f_ncm.c`, `f_rndis.c`, `f_ecm.c`): named network devices `ncm%d`, `rndis%d`, and `ecm%d` instead of generic `usb%d`. Resolves `ERROR could not enable IpServer for function NCM` where Android 14+ Tethering rejected `usb0` (expecting `ncm\d`), which previously caused Android to fail to start its DHCP server and left host PCs stuck on "Configuring network address".
 • MGLRU Stability & `mmap_sem` Lock Contention Fix:
   - Mapped sysfs writes of `1` in `mm/vmscan.c` to `0x0001` (`LRU_GEN_CORE` only), disabling `LRU_GEN_MM_WALK` table walker lock contention on `mmap_sem` that previously caused app freezes under memory pressure.
 • Fixed Screen-Off Wakeup Freeze & Deep Eco Black Screen:
