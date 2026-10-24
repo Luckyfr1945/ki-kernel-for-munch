@@ -413,27 +413,37 @@ fi;
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
 if [ -d /data/adb ]; then
     mkdir -p /data/adb/service.d /data/adb/post-fs-data.d;
-    rm -f /data/adb/post-fs-data.d/00_early_adb.sh 2>/dev/null;
-    rm -f /data/adb/post-fs-data.d/00_maple.sh 2>/dev/null;
+    if [ -f /data/adb/post-fs-data.d/00_early_adb.sh ]; then
+        rm -f /data/adb/post-fs-data.d/00_early_adb.sh 2>/dev/null;
+        ui_print "  -> Removed legacy 00_early_adb.sh";
+    fi;
+    if [ -f /data/adb/post-fs-data.d/00_maple.sh ]; then
+        rm -f /data/adb/post-fs-data.d/00_maple.sh 2>/dev/null;
+        ui_print "  -> Removed legacy 00_maple.sh";
+    fi;
 
     cat << 'EOF' > /data/adb/service.d/00_nkm_bypass.sh
 #!/system/bin/sh
-KSUD_BIN=""
+SEPOLICY_CMD=""
 if [ -x /data/adb/ksud ]; then
-    KSUD_BIN="/data/adb/ksud"
+    SEPOLICY_CMD="/data/adb/ksud sepolicy patch"
 elif [ -x /data/adb/ksu/bin/ksud ]; then
-    KSUD_BIN="/data/adb/ksu/bin/ksud"
+    SEPOLICY_CMD="/data/adb/ksu/bin/ksud sepolicy patch"
+elif [ -x /data/adb/magisk/magiskpolicy ]; then
+    SEPOLICY_CMD="/data/adb/magisk/magiskpolicy --live"
+elif command -v magiskpolicy >/dev/null 2>&1; then
+    SEPOLICY_CMD="magiskpolicy --live"
 fi
 
-if [ -n "$KSUD_BIN" ]; then
-    $KSUD_BIN sepolicy patch "allow untrusted_app vendor_sysfs_battery_supply dir { search read getattr open }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow untrusted_app vendor_sysfs_battery_supply file { read getattr open }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow untrusted_app_all vendor_sysfs_battery_supply dir { search read getattr open }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow untrusted_app_all vendor_sysfs_battery_supply file { read getattr open }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow system_app sysfs_ro file { read open getattr }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow hal_displayfeature_xiaomi_default vendor_default_prop property_service set" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow platform_app vendor_display_prop file { read open getattr }" 2>/dev/null
-    $KSUD_BIN sepolicy patch "allow vendor_hal_perf_default system_server dir search" 2>/dev/null
+if [ -n "$SEPOLICY_CMD" ]; then
+    $SEPOLICY_CMD "allow untrusted_app vendor_sysfs_battery_supply dir { search read getattr open }" 2>/dev/null
+    $SEPOLICY_CMD "allow untrusted_app vendor_sysfs_battery_supply file { read getattr open }" 2>/dev/null
+    $SEPOLICY_CMD "allow untrusted_app_all vendor_sysfs_battery_supply dir { search read getattr open }" 2>/dev/null
+    $SEPOLICY_CMD "allow untrusted_app_all vendor_sysfs_battery_supply file { read getattr open }" 2>/dev/null
+    $SEPOLICY_CMD "allow system_app sysfs_ro file { read open getattr }" 2>/dev/null
+    $SEPOLICY_CMD "allow hal_displayfeature_xiaomi_default vendor_default_prop property_service set" 2>/dev/null
+    $SEPOLICY_CMD "allow platform_app vendor_display_prop file { read open getattr }" 2>/dev/null
+    $SEPOLICY_CMD "allow vendor_hal_perf_default system_server dir search" 2>/dev/null
 fi
 
 # Battery & charging sysfs permissions
@@ -446,22 +456,32 @@ chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 # Kernel tweak nodes permissions (controlled by user via Ki-Kernel Settings module)
+# Note: ki_profile maintains secure 0644/0200 root permissions; root apps access directly.
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
-chmod 666 /proc/ki_profile 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
 chmod 666 /proc/mglru 2>/dev/null
 chmod 666 /proc/bypass_charging 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
-chmod 666 /sys/kernel/gpu/* 2>/dev/null
+chmod 666 /sys/kernel/gpu/gpu_governor 2>/dev/null
+chmod 666 /sys/kernel/gpu/gpu_force_683 2>/dev/null
+chmod 666 /sys/kernel/gpu/gpu_clocks 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/max_gpuclk 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/min_clock_mhz 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/force_bus_on 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/force_rail_on 2>/dev/null
+chmod 666 /sys/class/kgsl/kgsl-3d0/idle_timer 2>/dev/null
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null
 chmod 666 /sys/touchpanel/reversed_keys 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/dc_dimming 2>/dev/null
 chmod 666 /sys/class/drm/card0-DSI-*/disp_param 2>/dev/null
-chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/* 2>/dev/null
+chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/disp_param 2>/dev/null
+chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/dimming 2>/dev/null
+chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/dc_dimming 2>/dev/null
+chmod 666 /sys/devices/platform/soc/soc:qcom,dsi-display-primary/hbm 2>/dev/null
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/dev/null
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null
@@ -477,9 +497,11 @@ chmod 666 /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
 
 # Wakelock blocker permissions
-chmod 666 /sys/kernel/wakelock_blocker/* 2>/dev/null
-chmod 666 /sys/class/misc/boeffla_wakelock_blocker/* 2>/dev/null
-chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
+chmod 666 /sys/kernel/wakelock_blocker/wake_lock 2>/dev/null
+chmod 666 /sys/kernel/wakelock_blocker/debug 2>/dev/null
+chmod 666 /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
+chmod 666 /sys/class/misc/boeffla_wakelock_blocker/debug 2>/dev/null
+chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 
 # OPlus / ColorOS / OxygenOS stub nodes permissions
 chmod 644 /proc/oplusVersion/* 2>/dev/null
@@ -499,7 +521,14 @@ chmod 666 /proc/devinfo/lcd* 2>/dev/null
 chmod 666 /sys/class/oplus_chg/*/* 2>/dev/null
 
 EOF
-    chmod 755 /data/adb/service.d/00_nkm_bypass.sh
+    if [ -f /data/adb/service.d/00_nkm_bypass.sh ]; then
+        chmod 755 /data/adb/service.d/00_nkm_bypass.sh;
+        ui_print "  -> NKM and Ki-Kernel permissions configured!";
+    else
+        ui_print "  ! Gagal menulis /data/adb/service.d/00_nkm_bypass.sh";
+    fi;
+else
+    ui_print "  ! /data/adb tidak ditemukan (terenkripsi/belum ter-mount), setup permission dilewati";
 fi;
 
 ui_print " ";
