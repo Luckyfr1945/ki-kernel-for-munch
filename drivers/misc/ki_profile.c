@@ -69,11 +69,11 @@ extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
 /*
- * Thermal Auto-Guard (Performance mode only):
+ * Thermal Auto-Guard (Performance mode only, active while screen is on):
  * Thermal bypass stays active for max FPS, but throttling is re-armed when
  * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
  * Released again once die <= 75C, body <= 43C, and battery <= 41C.
- * Polls every 2s, only while Performance mode is active.
+ * Polls every 2s, parked while screen is off with throttling re-armed.
  */
 #define KI_GUARD_POLL_MS	2000
 #define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
@@ -93,6 +93,7 @@ static struct thermal_zone_device *ki_guard_die_tz[ARRAY_SIZE(ki_guard_die_zones
 static struct thermal_zone_device *ki_guard_skin_tz;
 static bool ki_guard_resolved;
 static bool ki_guard_tripped;
+static bool ki_guard_parked;
 static struct delayed_work ki_guard_work;
 
 bool ki_thermal_throttle_enabled = true;
@@ -164,6 +165,22 @@ static void ki_guard_log_missing_zones(void)
 		pr_warn("ki_profile: missing thermal skin zone 'quiet_therm'\n");
 }
 
+/* Caller holds ki_guard_lock; returns true if worker must stop */
+static bool ki_guard_should_stop_locked(void)
+{
+	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
+		ki_guard_tripped = false;
+		return true;
+	}
+	if (!READ_ONCE(ki_screen_on)) {
+		ki_guard_tripped = false;
+		ki_guard_parked = true;
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+		return true;
+	}
+	return false;
+}
+
 static void ki_guard_work_fn(struct work_struct *work)
 {
 	int i, die = INT_MIN, skin, batt;
@@ -171,14 +188,13 @@ static void ki_guard_work_fn(struct work_struct *work)
 	bool hot_condition = false;
 	bool cool_condition = false;
 	bool die_ok, skin_ok, batt_ok;
+	bool stop;
 
 	spin_lock_irqsave(&ki_guard_lock, flags);
-	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE || !READ_ONCE(ki_screen_on)) {
-		ki_guard_tripped = false;
-		spin_unlock_irqrestore(&ki_guard_lock, flags);
-		return;
-	}
+	stop = ki_guard_should_stop_locked();
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
+	if (stop)
+		return;
 
 	if (!ki_guard_resolved) {
 		ki_guard_resolve_zones();
@@ -220,8 +236,7 @@ static void ki_guard_work_fn(struct work_struct *work)
 
 	spin_lock_irqsave(&ki_guard_lock, flags);
 	/* Re-check active mode and screen state under spinlock to eliminate races with apply_ki_profile */
-	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE || !READ_ONCE(ki_screen_on)) {
-		ki_guard_tripped = false;
+	if (ki_guard_should_stop_locked()) {
 		spin_unlock_irqrestore(&ki_guard_lock, flags);
 		return;
 	}
@@ -367,6 +382,7 @@ static int apply_ki_profile(int mode, bool force)
 	const struct ki_profile_tune *t;
 	int i, ret, err = 0;
 	unsigned long flags;
+	bool screen_on;
 	bool enable_gpu_perf;
 	bool enable_thermal_throttle;
 
@@ -405,7 +421,8 @@ static int apply_ki_profile(int mode, bool force)
 		ki_cpufreq_set_limits(cpu, 0, target_max);
 	}
 
-	enable_gpu_perf = t->gpu_perf && READ_ONCE(ki_screen_on);
+	screen_on = READ_ONCE(ki_screen_on);
+	enable_gpu_perf = t->gpu_perf && screen_on;
 	if (enable_gpu_perf != ki_gpu_perf_applied || force) {
 		kgsl_set_performance_mode(enable_gpu_perf);
 		ki_gpu_perf_applied = enable_gpu_perf;
@@ -420,13 +437,14 @@ static int apply_ki_profile(int mode, bool force)
 	 * Re-arm thermal throttling whenever screen is off, even in Performance mode,
 	 * to prevent overheating in pockets and avoid running guard highpri polls in idle.
 	 */
-	enable_thermal_throttle = t->thermal_throttle || !READ_ONCE(ki_screen_on);
+	enable_thermal_throttle = t->thermal_throttle || !screen_on;
 
 	/* Atomic thermal & active mode state switch under spinlock */
 	spin_lock_irqsave(&ki_guard_lock, flags);
 	WRITE_ONCE(ki_active_mode, mode);
 	WRITE_ONCE(ki_thermal_throttle_enabled, enable_thermal_throttle);
 	ki_guard_tripped = false;
+	ki_guard_parked = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
 	/* Thermal auto-guard runs only while screen is on and thermal bypass is active */
@@ -474,7 +492,7 @@ static int ki_effective_mode(void)
 	if (power_supply_is_system_supplied() > 0)
 		return user_mode;
 
-	if (ki_screen_off_battery && READ_ONCE(ki_battery_armed))
+	if (ki_screen_off_battery && !READ_ONCE(ki_screen_on) && READ_ONCE(ki_battery_armed))
 		return KI_PROFILE_BATTERY;
 
 	return user_mode;
@@ -487,10 +505,12 @@ static int ki_apply_effective(bool force)
 {
 	int mode = ki_effective_mode();
 	int ret;
+	bool screen_on = READ_ONCE(ki_screen_on);
 
 	force |= ki_force_pending;
 	if (!force && mode == READ_ONCE(ki_active_mode) &&
-	    (ki_tunes[mode].gpu_perf && READ_ONCE(ki_screen_on)) == ki_gpu_perf_applied)
+	    (ki_tunes[mode].gpu_perf && screen_on) == ki_gpu_perf_applied &&
+	    !READ_ONCE(ki_guard_parked))
 		return 0;
 
 	ret = apply_ki_profile(mode, force);
@@ -500,6 +520,14 @@ static int ki_apply_effective(bool force)
 
 static unsigned int ki_screen_retry;	/* only touched by ki_screen_work_fn */
 
+static void ki_screen_requeue(void)
+{
+	/* Screen on: keep trying; Screen off: try 20x 50ms + 20x 1s, then wait for next event */
+	if (READ_ONCE(ki_screen_on) || ki_screen_retry < 40)
+		queue_delayed_work(system_highpri_wq, &ki_screen_work,
+				   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
+}
+
 static void ki_screen_work_fn(struct work_struct *work)
 {
 	int ret;
@@ -508,12 +536,9 @@ static void ki_screen_work_fn(struct work_struct *work)
 	 * If cluster policy leaders (0, 4, 7) are still coming online during resume,
 	 * re-queue ourselves so we do NOT drop the profile switch or leave the system
 	 * trapped in Battery profile.
-	 * Back off after 20 retries (~1s) to 1000ms if a leader CPU is permanently offlined.
 	 */
 	if (!cpu_online(0) || !cpu_online(4) || !cpu_online(7)) {
-		if (READ_ONCE(ki_screen_on))
-			queue_delayed_work(system_highpri_wq, &ki_screen_work,
-					   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
+		ki_screen_requeue();
 		return;
 	}
 
@@ -524,9 +549,8 @@ static void ki_screen_work_fn(struct work_struct *work)
 	ret = ki_apply_effective(false);
 	mutex_unlock(&ki_profile_mutex);
 
-	if (ret == -EBUSY && READ_ONCE(ki_screen_on)) {
-		queue_delayed_work(system_highpri_wq, &ki_screen_work,
-				   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
+	if (ret == -EBUSY) {
+		ki_screen_requeue();
 	} else {
 		ki_screen_retry = 0;
 	}
@@ -559,14 +583,14 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 
 	switch (blank) {
 	case MI_DRM_BLANK_UNBLANK:
-	case MI_DRM_BLANK_LP1:
-	case MI_DRM_BLANK_LP2:
 		if (!READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_screen_on, true);
 			WRITE_ONCE(ki_battery_armed, false);
 			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 		}
 		break;
+	case MI_DRM_BLANK_LP1:       /* Doze (AOD) */
+	case MI_DRM_BLANK_LP2:       /* DozeSuspend */
 	case MI_DRM_BLANK_STANDBY:
 	case MI_DRM_BLANK_SUSPEND:
 	case MI_DRM_BLANK_POWERDOWN:
@@ -578,12 +602,6 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 		}
 		break;
 	default:
-		/* Any active display state restores screen on immediately */
-		if (!READ_ONCE(ki_screen_on)) {
-			WRITE_ONCE(ki_screen_on, true);
-			WRITE_ONCE(ki_battery_armed, false);
-			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
-		}
 		break;
 	}
 
@@ -815,8 +833,8 @@ static struct kobj_attribute max_freq_prime_attr = __ATTR_RW(max_freq_prime);
 static struct kobj_attribute screen_state_attr = __ATTR_RO(screen_state);
 
 /*
- * Non-root userspace control interface via /proc/ki_profile
- * Allows Termux, Tasker, shell scripts, and unprivileged apps to switch profiles.
+ * Userspace control interface via /proc/ki_profile (0644)
+ * Allows scripts and root managers to monitor and switch profiles.
  */
 static ssize_t ki_profile_proc_read(struct file *file, char __user *buf,
 		size_t count, loff_t *ppos)
