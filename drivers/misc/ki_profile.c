@@ -172,8 +172,14 @@ static void ki_guard_work_fn(struct work_struct *work)
 	skin = ki_guard_read(ki_guard_skin_tz);
 	batt = ki_guard_read_batt();
 
-	/* Hot / Trip condition: if ANY valid sensor crosses HOT threshold */
-	if ((die != INT_MIN && die >= KI_GUARD_DIE_HOT) ||
+	/*
+	 * Hot / Trip condition:
+	 * Fail-safe: If sensors are completely blind (die == INT_MIN), assume HOT
+	 * so thermal bypass is NEVER left unmonitored.
+	 * Otherwise trip if ANY valid sensor crosses HOT threshold.
+	 */
+	if (die == INT_MIN ||
+	    die >= KI_GUARD_DIE_HOT ||
 	    (skin != INT_MIN && skin >= KI_GUARD_SKIN_HOT) ||
 	    (batt != INT_MIN && batt >= KI_GUARD_BATT_HOT))
 		hot_condition = true;
@@ -210,7 +216,7 @@ static void ki_guard_work_fn(struct work_struct *work)
 	}
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
-	queue_delayed_work(system_power_efficient_wq, &ki_guard_work,
+	queue_delayed_work(system_highpri_wq, &ki_guard_work,
 			   msecs_to_jiffies(KI_GUARD_POLL_MS));
 }
 
@@ -253,8 +259,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Tasks balanced on Silver cluster (up_migrate = 90/80, grp = 95/85).
 	 * Frequencies bounded within high-efficiency VDD sweet-spot (<0.85V):
 	 *   - Silver: 1.51GHz (1516800)
-	 *   - Gold:   1.76GHz (1766400)
-	 *   - Prime:  1.63GHz (1632000)
+	 *   - Gold:   1.78GHz (1785600)
+	 *   - Prime:  1.68GHz (1689600)
 	 * Down-rate 2ms (2000us) immediately drops CPU to idle floor when finger lifts.
 	 * Up-rate (Silver 1.5ms, Gold 3ms, Prime 6ms) prevents clock thrashing while
 	 * guaranteeing SurfaceFlinger meets display fence commit deadlines.
@@ -267,8 +273,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	[KI_PROFILE_BATTERY] = {
 		.cl = {
 			{ .up_us = 1500, .down_us = 2000, .hispeed_freq = 979200,  .hispeed_load = 90, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1516800 },
-			{ .up_us = 3000, .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 90, .rtg_boost_freq = 1056000, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1766400 },
-			{ .up_us = 6000, .down_us = 2000, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1632000 },
+			{ .up_us = 3000, .down_us = 2000, .hispeed_freq = 1056000, .hispeed_load = 90, .rtg_boost_freq = 1056000, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1785600 },
+			{ .up_us = 6000, .down_us = 2000, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1689600 },
 		},
 		.thermal_throttle = true,
 		.up_migrate = 90, .down_migrate = 80,
@@ -339,10 +345,12 @@ static int apply_ki_profile(int mode, bool force)
 	unsigned long flags;
 	bool enable_gpu_perf;
 
-	/* Prevent profile switching while secondary CPUs are offline (suspend / hotplug) */
-	if (num_online_cpus() < nr_cpu_ids) {
-		pr_debug("ki_profile: secondary CPUs offline (%u/%u), profile switch deferred\n",
-			 num_online_cpus(), nr_cpu_ids);
+	/*
+	 * Prevent profile switching only if cluster policy leader CPUs (0, 4, 7) are offline.
+	 * Do not lock up profile switching if secondary cores (e.g. CPU 1-3, 5-6) are offlined by power savers.
+	 */
+	if (!cpu_online(0) || !cpu_online(4) || !cpu_online(7)) {
+		pr_debug("ki_profile: cluster policy leaders offline, profile switch deferred\n");
 		return -EBUSY;
 	}
 
@@ -386,13 +394,13 @@ static int apply_ki_profile(int mode, bool force)
 	/* Atomic thermal & active mode state switch under spinlock */
 	spin_lock_irqsave(&ki_guard_lock, flags);
 	WRITE_ONCE(ki_active_mode, mode);
-	ki_thermal_throttle_enabled = t->thermal_throttle;
+	WRITE_ONCE(ki_thermal_throttle_enabled, t->thermal_throttle);
 	ki_guard_tripped = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
 	/* Thermal auto-guard runs only while thermal bypass is active */
 	if (!t->thermal_throttle)
-		mod_delayed_work(system_power_efficient_wq, &ki_guard_work, 0);
+		mod_delayed_work(system_highpri_wq, &ki_guard_work, 0);
 	else
 		cancel_delayed_work_sync(&ki_guard_work);
 
@@ -460,7 +468,7 @@ static void ki_screen_work_fn(struct work_struct *work)
 	 * re-queue ourselves so we do NOT drop the profile switch or leave the system
 	 * trapped in Battery profile.
 	 */
-	if (num_online_cpus() < nr_cpu_ids) {
+	if (!cpu_online(0) || !cpu_online(4) || !cpu_online(7)) {
 		if (READ_ONCE(ki_screen_on))
 			queue_delayed_work(system_highpri_wq, &ki_screen_work,
 					   msecs_to_jiffies(50));
@@ -539,23 +547,17 @@ static int ki_psy_notifier_cb(struct notifier_block *nb,
 			      unsigned long event, void *data)
 {
 	struct power_supply *psy = data;
-	static int last_supplied = -1;
-	int is_supplied;
 
 	if (event != PSY_EVENT_PROP_CHANGED || !psy || !psy->desc || !psy->desc->name)
 		return NOTIFY_OK;
 
-	/* Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events */
+	/*
+	 * Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events.
+	 * Do NOT call power_supply_is_system_supplied() here directly as it can sleep
+	 * over SPMI/I2C regmaps. Instead, defer evaluation to ki_screen_work in process context.
+	 */
 	if (strcmp(psy->desc->name, "usb") == 0) {
-		is_supplied = power_supply_is_system_supplied() > 0;
-		if (last_supplied != -1 && is_supplied == last_supplied)
-			return NOTIFY_OK;
-		last_supplied = is_supplied;
-
-		/* Only trigger work while screen is on and all CPUs are active */
-		if (READ_ONCE(ki_screen_on) && num_online_cpus() >= nr_cpu_ids) {
-			mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
-		}
+		mod_delayed_work(system_highpri_wq, &ki_screen_work, 0);
 	}
 	return NOTIFY_OK;
 }
@@ -572,7 +574,7 @@ static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char
 static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 			  const char *buf, size_t count)
 {
-	int val;
+	int val, ret;
 
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
@@ -583,7 +585,10 @@ static ssize_t mode_store(struct kobject *kobj, struct kobj_attribute *attr,
 	mutex_lock(&ki_profile_mutex);
 	if (val != READ_ONCE(current_profile_mode)) {
 		WRITE_ONCE(current_profile_mode, val);
-		ki_apply_effective(true);
+		ret = ki_apply_effective(true);
+		if (ret == -EBUSY)
+			queue_delayed_work(system_highpri_wq, &ki_screen_work,
+					   msecs_to_jiffies(100));
 	}
 	mutex_unlock(&ki_profile_mutex);
 
@@ -747,18 +752,11 @@ static ssize_t ki_profile_proc_read(struct file *file, char __user *buf,
 	int mode = READ_ONCE(current_profile_mode);
 	const char *name = "unknown";
 
-	if (*ppos != 0)
-		return 0;
-
 	if (mode >= 0 && mode < KI_PROFILE_MAX)
 		name = profile_names[mode];
 
 	len = scnprintf(kbuf, sizeof(kbuf), "%d (%s)\n", mode, name);
-	if (copy_to_user(buf, kbuf, len))
-		return -EFAULT;
-
-	*ppos += len;
-	return len;
+	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
 }
 
 static ssize_t ki_profile_proc_write(struct file *file, const char __user *buf,
@@ -792,8 +790,13 @@ static ssize_t ki_profile_proc_write(struct file *file, const char __user *buf,
 
 	mutex_lock(&ki_profile_mutex);
 	if (val != READ_ONCE(current_profile_mode)) {
+		int ret;
+
 		WRITE_ONCE(current_profile_mode, val);
-		ki_apply_effective(true);
+		ret = ki_apply_effective(true);
+		if (ret == -EBUSY)
+			queue_delayed_work(system_highpri_wq, &ki_screen_work,
+					   msecs_to_jiffies(100));
 	}
 	mutex_unlock(&ki_profile_mutex);
 
@@ -889,7 +892,8 @@ static int __init ki_profile_init(void)
 	}
 
 	/* Non-root unprivileged interface */
-	proc_create("ki_profile", 0666, NULL, &ki_profile_proc_fops);
+	if (!proc_create("ki_profile", 0666, NULL, &ki_profile_proc_fops))
+		pr_warn("ki_profile: Failed to create /proc/ki_profile entry\n");
 
 	/* 3. Apply default profile */
 	mutex_lock(&ki_profile_mutex);
