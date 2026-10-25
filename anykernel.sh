@@ -77,14 +77,104 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
         ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override: /data)";
     fi;
 
+    # Detect Recovery environment vs booted Android
+    IS_RECOVERY=0;
+    if [ -f /sbin/recovery ] || [ -f /system/bin/recovery ] || [ -d /twres ] || [ -f /etc/recovery.fstab ] || \
+       [ "$(getprop ro.bootmode 2>/dev/null)" = "recovery" ] || grep -q -E "bootmode=recovery|recovery" /proc/cmdline 2>/dev/null; then
+        IS_RECOVERY=1;
+    fi;
+
+    # Volume Button Helper Functions (re404 inspired interactive selection)
+    select_option() {
+        ui_print " - $1 :";
+        ui_print "  (Vol +) $2";
+        ui_print "  (Vol -) $3";
+
+        SELECT_RESULT="";
+        local start now key_event;
+        start=$(date +%s 2>/dev/null || echo 0);
+        while true; do
+            key_event=$(timeout 0.3 getevent -qlc 1 2>/dev/null);
+            case "$key_event" in
+                *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*)
+                    ui_print "  Dipilih : $2" " ";
+                    SELECT_RESULT="$2";
+                    break;
+                    ;;
+                *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*)
+                    ui_print "  Dipilih : $3" " ";
+                    SELECT_RESULT="$3";
+                    break;
+                    ;;
+            esac;
+            now=$(date +%s 2>/dev/null || echo 0);
+            if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 15 ]; then
+                ui_print "  ! Waktu habis, menggunakan default: $2" " ";
+                SELECT_RESULT="$2";
+                break;
+            fi;
+            sleep 0.1;
+        done;
+    }
+
+    choose_config_mode() {
+        ui_print "--------------------------------------";
+        ui_print "--> Konfigurasi ROM (re404 mode):";
+        ui_print "  (Vol +) Manual  - Pilih AOSP atau MIUI";
+        ui_print "  (Vol -) Otomatis - Deteksi ROM sekarang";
+        ui_print "  ! Waktu tunggu 5 detik, default ke Otomatis";
+
+        local timeout=5;
+        local start now key_event;
+
+        start=$(date +%s 2>/dev/null || echo 0);
+
+        while :; do
+            key_event=$(timeout 0.2 getevent -qlc 1 2>/dev/null);
+
+            if [ -n "$key_event" ]; then
+                if echo "$key_event" | grep -q -E "KEY_VOLUMEUP.*(DOWN|1)"; then
+                    ui_print "  Dipilih : Konfigurasi Manual" " ";
+                    select_option "Tipe ROM" "AOSP / Custom ROM" "MIUI / HyperOS";
+                    case "$SELECT_RESULT" in
+                        *AOSP*)
+                            IS_AOSP=1;
+                            ROM_TYPE="AOSP / Custom ROM (Pilihan Manual Vol+)";
+                            ;;
+                        *MIUI*|*HyperOS*)
+                            IS_MIUI=1;
+                            ROM_TYPE="Xiaomi MIUI / HyperOS (Pilihan Manual Vol-)";
+                            ;;
+                    esac;
+                    return 0;
+                fi;
+
+                if echo "$key_event" | grep -q -E "KEY_VOLUMEDOWN.*(DOWN|1)"; then
+                    ui_print "  Dipilih : Deteksi Otomatis" " ";
+                    return 0;
+                fi;
+            fi;
+
+            now=$(date +%s 2>/dev/null || echo 0);
+            if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge $timeout ]; then
+                ui_print "  ! Waktu tunggu habis -> Menjalankan Deteksi Otomatis..." " ";
+                return 0;
+            fi;
+        done;
+    }
+
+    # 1b. Prompt Volume Key Configuration in Recovery if Dual/Universal Kernel
+    if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
+        if [ "$IS_RECOVERY" -eq 1 ] && [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; then
+            if which getevent >/dev/null 2>&1 && which timeout >/dev/null 2>&1; then
+                sleep 0.5;
+                choose_config_mode;
+            fi;
+        fi;
+    fi;
+
     # 2. Check live getprop if available (flashed from booted Android via ksud / FK Kernel Manager)
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
-        IS_RECOVERY=0;
-        if [ -f /sbin/recovery ] || [ -f /system/bin/recovery ] || [ -d /twres ] || [ -f /etc/recovery.fstab ] || \
-           [ "$(getprop ro.bootmode 2>/dev/null)" = "recovery" ] || grep -q -E "bootmode=recovery|recovery" /proc/cmdline 2>/dev/null; then
-            IS_RECOVERY=1;
-        fi;
-
         # Live getprop is only definitive when booted into Android, NOT inside TWRP/OrangeFox ramdisk
         if [ "$IS_RECOVERY" -eq 0 ] && command -v getprop >/dev/null 2>&1; then
             OPLUS_PROP=$(getprop ro.build.version.oplusrom 2>/dev/null);
@@ -108,6 +198,9 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
             MIUI_NAME=$(getprop ro.miui.ui.version.name 2>/dev/null);
             BUILD_INC=$(getprop ro.build.version.incremental 2>/dev/null);
             FLAVOR=$(getprop ro.build.flavor 2>/dev/null);
+            V_REG=$(getprop ro.vendor.miui.build.region 2>/dev/null);
+            P_REG=$(getprop ro.miui.build.region 2>/dev/null);
+            REG="${V_REG:-$P_REG}";
 
             # Check OPlus first (ColorOS / OxygenOS / RealmeUI)
             if [ -n "$OPLUS_PROP" ]; then
@@ -126,7 +219,11 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
                 IS_MIUI=1;
                 ROM_TYPE="Xiaomi MIUI";
                 ROM_DETAIL="${MIUI_NAME:-$BUILD_INC}";
-            elif echo "$FLAVOR $DISP_ID" | grep -i -q -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior|axion|yaap|voltage|elixir"; then
+            elif case "$REG" in cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi) true;; *) false;; esac; then
+                IS_MIUI=1;
+                ROM_TYPE="Xiaomi MIUI / HyperOS";
+                ROM_DETAIL="Region: $REG";
+            elif echo "$FLAVOR $DISP_ID" | grep -i -q -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior|axion|yaap|voltage|elixir|infinity"; then
                 IS_AOSP=1;
                 ROM_TYPE="AOSP / Custom ROM";
                 ROM_DETAIL="${FLAVOR:-$DISP_ID}";
@@ -265,32 +362,11 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
             done;
         fi;
 
-        # 3b. Check distinctive Xiaomi-exclusive hardware feature files (System/Product only; ignore /vendor)
-        if [ "$IS_OPLUS" -eq 0 ]; then
-            FEATURE_FILES="/s_chk/system/etc/device_features/munch.xml /s_chk/etc/device_features/munch.xml \
-                           /system_root/system/etc/device_features/munch.xml /system/etc/device_features/munch.xml \
-                           /p_chk/etc/device_features/munch.xml /product/etc/device_features/munch.xml \
-                           /se_chk/etc/device_features/munch.xml /system_ext/etc/device_features/munch.xml \
-                           /s_chk/system/etc/device_features/alioth.xml /s_chk/etc/device_features/alioth.xml \
-                           /system_root/system/etc/device_features/alioth.xml /system/etc/device_features/alioth.xml \
-                           /p_chk/etc/device_features/alioth.xml /product/etc/device_features/alioth.xml \
-                           /se_chk/etc/device_features/alioth.xml /system_ext/etc/device_features/alioth.xml";
-            for f in $FEATURE_FILES; do
-                if [ -f "$f" ]; then
-                    IS_MIUI=1;
-                    ROM_TYPE="Xiaomi MIUI / HyperOS (device_features verified)";
-                    break;
-                fi;
-            done;
-        fi;
-
-        # Check Xiaomi proprietary app structures
+        # Check Xiaomi proprietary app structures (genuine MIUI / HyperOS framework only)
         if [ "$IS_OPLUS" -eq 0 ] && [ "$IS_MIUI" -eq 0 ]; then
             MIUI_DIRS="/s_chk/system/priv-app/MiuiSystemUI /s_chk/priv-app/MiuiSystemUI \
                        /system_root/system/priv-app/MiuiSystemUI /system/priv-app/MiuiSystemUI \
                        /p_chk/priv-app/MiuiSystemUI /product/priv-app/MiuiSystemUI \
-                       /se_chk/priv-app/MiuiSystemUI /se_chk/system_ext/priv-app/MiuiSystemUI \
-                       /s_chk/system_ext/priv-app/MiuiSystemUI /system_ext/priv-app/MiuiSystemUI \
                        /s_chk/system/framework/miui.jar /system_root/system/framework/miui.jar /system/framework/miui.jar";
             for d in $MIUI_DIRS; do
                 if [ -e "$d" ]; then
@@ -301,14 +377,16 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
             done;
         fi;
 
-        # Check HyperOS / MIUI signature props (including E404 region detection)
+        # Check HyperOS / MIUI signature props (including re404 vendor/product region detection)
         if [ "$IS_OPLUS" -eq 0 ] && [ "$IS_MIUI" -eq 0 ]; then
             for prop in $PROP_LIST; do
                 if [ -f "$prop" ]; then
                     HOS_VAL=$(grep -E "^(ro\.mi\.os\.version\.name|ro\.mi\.os\.version\.code)=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
                     MIUI_VAL=$(grep -E "^(ro\.miui\.ui\.version\.name|ro\.miui\.version\.code_time)=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
                     INC_VAL=$(grep -E "^ro\.build\.version\.incremental=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
-                    REGION_VAL=$(grep -E "^ro\.miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
+                    V_REGION=$(grep -E "^ro\.vendor\.miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
+                    P_REGION=$(grep -E "^ro\.miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
+                    REGION_VAL="${V_REGION:-$P_REGION}";
 
                     if [ -n "$HOS_VAL" ] || echo "$INC_VAL" | grep -q -E "^OS[0-9]"; then
                         IS_MIUI=1;
@@ -334,10 +412,12 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
         if [ "$IS_OPLUS" -eq 0 ] && [ "$IS_MIUI" -eq 0 ]; then
             for prop in $PROP_LIST; do
                 if [ -f "$prop" ]; then
-                    AOSP_MATCH=$(grep -i -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior|axion|yaap|voltage|elixir" "$prop" 2>/dev/null | head -n 1);
-                    if [ -n "$AOSP_MATCH" ]; then
+                    FLAVOR_VAL=$(grep -E "^ro\.build\.flavor=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2 | tr -d '\r');
+                    AOSP_MATCH=$(grep -i -E "lineage|crdroid|evolution|pixel|arrow|havoc|aosp|corvus|spark|matrixx|rising|cherish|derp|paranoid|hentai|superior|axion|yaap|voltage|elixir|infinity" "$prop" 2>/dev/null | head -n 1);
+                    if [ -n "$FLAVOR_VAL" ] || [ -n "$AOSP_MATCH" ]; then
                         IS_AOSP=1;
                         ROM_TYPE="AOSP / Custom ROM";
+                        ROM_DETAIL="${FLAVOR_VAL:-$AOSP_MATCH}";
                         break;
                     fi;
                 fi;
@@ -352,16 +432,12 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
         [ "$MY_PRODUCT_MOUNTED" -eq 1 ] && { umount /m_chk 2>/dev/null && rmdir /m_chk 2>/dev/null; };
     fi;
 
-    # Fail-safe handling if detection yielded no matching ROM variant
+    # Fail-safe handling if detection yielded no matching ROM variant (re404 default behavior)
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
         if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; then
-            ui_print " ";
-            ui_print "  ! ROM tidak terdeteksi secara otomatis.";
-            ui_print "  ! Buat flag file lalu flash ulang di TWRP/OrangeFox terminal:";
-            ui_print "      touch /tmp/miui   (untuk MIUI / HyperOS)";
-            ui_print "      touch /tmp/aosp   (untuk AOSP / Custom ROM)";
-            ui_print "      touch /tmp/oplus  (untuk ColorOS / OxygenOS / RealmeUI)";
-            abort "  ! Dibatalkan agar Image/DTB tidak salah pilih.";
+            ui_print "  -> ROM tidak terdeteksi spesifik, default ke: AOSP / Custom ROM";
+            IS_AOSP=1;
+            ROM_TYPE="AOSP / Custom ROM (Default fallback)";
         elif [ -f "$AKHOME/kernels/miui/Image" ]; then
             ui_print "  -> ROM tidak terdeteksi pasti, menggunakan target: MIUI / HyperOS";
             IS_MIUI=1;
