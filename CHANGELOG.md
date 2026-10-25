@@ -1,11 +1,30 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-24  
+**Build Date:** 2026-10-25  
 **Kernel Version:** Linux 4.19.325  
-**Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS
+**Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.5 (2026-10-25 Update):
+• Overhauled AnyKernel3 Universal ROM Detection & Automated Installer:
+  - Eliminated False-Positive AOSP Match: removed flawed `device_features/munch.xml` check that caused AOSP custom ROMs (Infinity-X, crDroid, LineageOS, PixelOS, etc.) with XiaomiParts/Dirac to be mistakenly flagged as MIUI/HyperOS.
+  - Dual-Region Detection Engine (re404 inspired): implemented strict inspection of official Xiaomi regions (`cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi`) across `ro.vendor.miui.build.region` (vendor) and `ro.miui.build.region` (product) plus exclusive framework APK verification (`miui.jar` / `MiuiSystemUI`).
+  - 100% Automated Seamless Flashing: removed volume button prompts and delays — installer now runs completely automatic and instant across TWRP, OrangeFox, and root managers (KernelSU/ksud/Magisk).
+  - Safe Universal Default: defaults safely to AOSP if no MIUI or OPlus signatures are detected, ensuring zero bootloops or display driver mismatches.
+  - Preserved Partition Architecture: splits kernel Image to `/boot` and dedicated SM8250 DTB to `/vendor_boot` while leaving ROM vendor DTBO intact.
+  - Cross-Flashing Prevention: single-variant packages (AOSP-only or MIUI-only) automatically abort if accidentally flashed on the wrong ROM.
+• Hardened Ki-Profile Kernel Driver & Workqueue Reliability (`drivers/misc/ki_profile.c`):
+  - Fixed Sysfs Store Return (`reapply_store`): resolved bug where failure bitmask was returned as byte count, returning standard byte count on success or `-EAGAIN` on incomplete apply.
+  - Safe Target Max Frequency Cap (`ki_target_max`): user max frequency overrides can no longer exceed or loosen the Battery mode cap during screen-off.
+  - Strict Mode Index Clamping (`ki_effective_mode`): clamped `current_profile_mode` strictly to `[0, KI_PROFILE_MAX)` before indexing `ki_tunes` array to prevent out-of-bounds reads.
+  - Fixed Screen-Off Retry Hang: reset `ki_screen_retry` to 0 upon screen unblank, preventing the profile worker from giving up permanently after screen-off sleep.
+  - Sysfs & Procfs Permission Hardening: enforced 0200 root write-only on `reapply` and 0644 (root RW, user RO) on profile nodes; removed insecure `chmod 666` calls from init/service scripts.
+  - Thermal Guard & Boot Settle Warning: added settlement warning diagnostic and refined thermal guard parking logic.
+• Upstream ReSukiSU / BakaSU & SuSFS Compatibility:
+  - Verified upstream alignment with latest ReSukiSU / BakaSU (`d5e9e025b8b49155f8014684d64c91742b465f65`).
+  - Maintained multi-manager compatibility (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU) with UAPI 5 compatibility for BakaSU/ReSukiSU managers.
 
 ## Ki-kernel v1.5 (2026-10-24 Update):
 • Ported Hardware SDE Exposure Dim Layer from re404 for True AOSP DC Dimming:
