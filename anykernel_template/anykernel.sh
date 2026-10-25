@@ -410,9 +410,18 @@ elif [ -f "$AKHOME/kernels/Image" ]; then
     rom_arg="rom_port";
     cp -f "$AKHOME/kernels/Image" "$AKHOME/Image";
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/Image" ]; then
+    rom_arg="${rom_arg:-rom_port}";
+    [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
+fi;
+
+# Preserve existing single-kernel dtb for vendor_boot before clearing boot dtb
+if [ ! -f "$AKHOME/dtb_vendor" ] && [ -f "$AKHOME/dtb" ]; then
+    cp -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
 fi;
 
 # DO NOT touch DTBO (preserve panel/touch drivers from ROM)
+# Remove dtb from boot flashing stage (DTB on SM8250 belongs in vendor_boot)
 rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
 
 # Verify that target Image exists before proceeding with flash

@@ -32,11 +32,10 @@ if [ ! -f "$CONF_PATH" ]; then
     chmod 666 "$CONF_PATH" 2>/dev/null
 fi
 
-# Ensure all Ki-Kernel tweak nodes have correct read/write permissions
-chmod 666 /proc/ki_profile 2>/dev/null
+# Ensure user tweak nodes have correct read/write permissions
+# Note: ki_profile maintains secure 0644/0200 root permissions; root apps/daemons access directly.
 chmod 666 /proc/mglru 2>/dev/null
 chmod 666 /proc/bypass_charging 2>/dev/null
-chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/* 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
