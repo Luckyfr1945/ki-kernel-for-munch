@@ -48,19 +48,33 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
     ROM_DETAIL="";
 
     # 1. Check for manual override flags
-    if [ -f /tmp/aosp ] || [ -f /sdcard/aosp ] || [ -f /data/aosp ]; then
+    if [ -f /tmp/aosp ]; then
         IS_AOSP=1;
-        ROM_TYPE="AOSP (Manual Override)";
-    elif [ -f /tmp/miui ] || [ -f /sdcard/miui ] || [ -f /data/miui ] || [ -f /tmp/hyperos ] || [ -f /sdcard/hyperos ]; then
+        ROM_TYPE="AOSP (Manual Override: /tmp/aosp)";
+    elif [ -f /sdcard/aosp ]; then
+        IS_AOSP=1;
+        ROM_TYPE="AOSP (Manual Override: /sdcard/aosp)";
+    elif [ -f /data/aosp ]; then
+        IS_AOSP=1;
+        ROM_TYPE="AOSP (Manual Override: /data/aosp)";
+    elif [ -f /tmp/miui ] || [ -f /tmp/hyperos ]; then
         IS_MIUI=1;
-        ROM_TYPE="MIUI / HyperOS (Manual Override)";
-    elif [ -f /tmp/oplus ] || [ -f /sdcard/oplus ] || [ -f /data/oplus ] || \
-         [ -f /tmp/oos ] || [ -f /sdcard/oos ] || [ -f /data/oos ] || \
-         [ -f /tmp/coloros ] || [ -f /sdcard/coloros ] || [ -f /data/coloros ] || \
-         [ -f /tmp/realme ] || [ -f /sdcard/realme ] || [ -f /data/realme ] || \
-         [ -f /tmp/realmeui ] || [ -f /sdcard/realmeui ] || [ -f /data/realmeui ]; then
+        ROM_TYPE="MIUI / HyperOS (Manual Override: /tmp)";
+    elif [ -f /sdcard/miui ] || [ -f /sdcard/hyperos ]; then
+        IS_MIUI=1;
+        ROM_TYPE="MIUI / HyperOS (Manual Override: /sdcard)";
+    elif [ -f /data/miui ]; then
+        IS_MIUI=1;
+        ROM_TYPE="MIUI / HyperOS (Manual Override: /data)";
+    elif [ -f /tmp/oplus ] || [ -f /tmp/oos ] || [ -f /tmp/coloros ] || [ -f /tmp/realme ] || [ -f /tmp/realmeui ]; then
         IS_OPLUS=1;
-        ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override)";
+        ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override: /tmp)";
+    elif [ -f /sdcard/oplus ] || [ -f /sdcard/oos ] || [ -f /sdcard/coloros ] || [ -f /sdcard/realme ] || [ -f /sdcard/realmeui ]; then
+        IS_OPLUS=1;
+        ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override: /sdcard)";
+    elif [ -f /data/oplus ] || [ -f /data/oos ] || [ -f /data/coloros ] || [ -f /data/realme ] || [ -f /data/realmeui ]; then
+        IS_OPLUS=1;
+        ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override: /data)";
     fi;
 
     # 2. Check live getprop if available (flashed from booted Android via ksud / FK Kernel Manager)
@@ -238,16 +252,14 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             done;
         fi;
 
-        # 3b. Check distinctive Xiaomi-exclusive hardware feature files (100% reliable for MIUI/HyperOS ala re404)
+        # 3b. Check distinctive Xiaomi-exclusive hardware feature files (System/Product only; ignore /vendor)
         if [ "$IS_OPLUS" -eq 0 ]; then
             FEATURE_FILES="/s_chk/system/etc/device_features/munch.xml /s_chk/etc/device_features/munch.xml \
                            /system_root/system/etc/device_features/munch.xml /system/etc/device_features/munch.xml \
                            /p_chk/etc/device_features/munch.xml /product/etc/device_features/munch.xml \
-                           /vendor/etc/device_features/munch.xml /v_chk/etc/device_features/munch.xml \
                            /s_chk/system/etc/device_features/alioth.xml /s_chk/etc/device_features/alioth.xml \
                            /system_root/system/etc/device_features/alioth.xml /system/etc/device_features/alioth.xml \
-                           /p_chk/etc/device_features/alioth.xml /product/etc/device_features/alioth.xml \
-                           /vendor/etc/device_features/alioth.xml /v_chk/etc/device_features/alioth.xml";
+                           /p_chk/etc/device_features/alioth.xml /product/etc/device_features/alioth.xml";
             for f in $FEATURE_FILES; do
                 if [ -f "$f" ]; then
                     IS_MIUI=1;
@@ -262,7 +274,8 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             MIUI_DIRS="/s_chk/system/priv-app/MiuiSystemUI /s_chk/priv-app/MiuiSystemUI \
                        /system_root/system/priv-app/MiuiSystemUI /system/priv-app/MiuiSystemUI \
                        /p_chk/priv-app/MiuiSystemUI /product/priv-app/MiuiSystemUI \
-                       /s_chk/system/framework/miui.jar /system_root/system/framework/miui.jar";
+                       /s_chk/system_ext/priv-app/MiuiSystemUI /system_ext/priv-app/MiuiSystemUI \
+                       /s_chk/system/framework/miui.jar /system_root/system/framework/miui.jar /system/framework/miui.jar";
             for d in $MIUI_DIRS; do
                 if [ -e "$d" ]; then
                     IS_MIUI=1;
@@ -279,7 +292,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                     HOS_VAL=$(grep -E "^ro\.mi\.os\.version\.name=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
                     MIUI_VAL=$(grep -E "^ro\.miui\.ui\.version\.name=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
                     INC_VAL=$(grep -E "^ro\.build\.version\.incremental=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
-                    REGION_VAL=$(grep -E "^ro\.(vendor\.)?miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
+                    REGION_VAL=$(grep -E "^ro\.miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
 
                     if [ -n "$HOS_VAL" ] || echo "$INC_VAL" | grep -q -E "^OS[0-9]"; then
                         IS_MIUI=1;
@@ -315,11 +328,22 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             done;
         fi;
 
-        # Clean up temporary inspection mounts
-        [ "$SYSTEM_MOUNTED" -eq 1 ] && { umount /s_chk 2>/dev/null; rm -rf /s_chk 2>/dev/null; };
-        [ "$PRODUCT_MOUNTED" -eq 1 ] && { umount /p_chk 2>/dev/null; rm -rf /p_chk 2>/dev/null; };
-        [ "$VENDOR_MOUNTED" -eq 1 ] && { umount /v_chk 2>/dev/null; rm -rf /v_chk 2>/dev/null; };
-        [ "$MY_PRODUCT_MOUNTED" -eq 1 ] && { umount /m_chk 2>/dev/null; rm -rf /m_chk 2>/dev/null; };
+        # Clean up temporary inspection mounts safely using rmdir
+        [ "$SYSTEM_MOUNTED" -eq 1 ] && { umount /s_chk 2>/dev/null && rmdir /s_chk 2>/dev/null; };
+        [ "$PRODUCT_MOUNTED" -eq 1 ] && { umount /p_chk 2>/dev/null && rmdir /p_chk 2>/dev/null; };
+        [ "$VENDOR_MOUNTED" -eq 1 ] && { umount /v_chk 2>/dev/null && rmdir /v_chk 2>/dev/null; };
+        [ "$MY_PRODUCT_MOUNTED" -eq 1 ] && { umount /m_chk 2>/dev/null && rmdir /m_chk 2>/dev/null; };
+    fi;
+
+    # Fail-safe abort if detection yielded no matching ROM variant
+    if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
+        ui_print " ";
+        ui_print "  ! ROM tidak terdeteksi secara otomatis.";
+        ui_print "  ! Buat flag file lalu flash ulang di TWRP/OrangeFox terminal:";
+        ui_print "      touch /tmp/miui   (untuk MIUI / HyperOS)";
+        ui_print "      touch /tmp/aosp   (untuk AOSP / Custom ROM)";
+        ui_print "      touch /tmp/oplus  (untuk ColorOS / OxygenOS / RealmeUI)";
+        abort "  ! Dibatalkan agar Image/DTB tidak salah pilih.";
     fi;
 
     # Apply selected kernel Image and matching DTB
@@ -351,7 +375,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         ui_print "  -> Kernel Target: MIUI / HyperOS variant";
         cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
         [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
-    else
+    elif [ "$IS_AOSP" -eq 1 ]; then
         rom_arg="rom_aosp";
         if [ -n "$ROM_DETAIL" ]; then
             ui_print "  -> ROM Detected : ${ROM_TYPE:-AOSP / Custom ROM} ($ROM_DETAIL)";
@@ -391,12 +415,15 @@ fi;
 # DO NOT touch DTBO (preserve panel/touch drivers from ROM)
 rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
 
+# Verify that target Image exists before proceeding with flash
+[ -f "$AKHOME/Image" ] || abort "  ! Image tidak ditemukan di $AKHOME (cek folder kernels/ dan paket AnyKernel3)";
+
 # 1. Flash Kernel Image to boot partition with e404 dynamic cmdline
 ui_print "- Flashing kernel to boot...";
-dump_boot;
+split_boot;
 ui_print "--> Applying universal configuration: ${rom_arg:-rom_port}";
 patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_port},dtbo_oem,dtb_def,batt_def";
-write_boot;
+flash_boot;
 
 # 2. Flash DTB to vendor_boot partition (Extreme UV + OC 683 MHz GPU table)
 if [ -f "$AKHOME/dtb_vendor" ]; then
@@ -405,8 +432,8 @@ if [ -f "$AKHOME/dtb_vendor" ]; then
     reset_ak;
     rm -f "$AKHOME/Image";
     cp -f "$AKHOME/dtb_vendor" "$AKHOME/dtb";
-    dump_boot;
-    write_boot;
+    split_boot;
+    flash_boot;
     rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
 fi;
 
@@ -461,17 +488,14 @@ chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
 chmod 666 /proc/mglru 2>/dev/null
-chmod 666 /proc/bypass_charging 2>/dev/null
-chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
-chmod 666 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
+chmod 664 /proc/bypass_charging 2>/dev/null
+chmod 664 /sys/kernel/dyn_fsync/* 2>/dev/null
+chmod 664 /sys/module/sync/parameters/fsync_enabled 2>/dev/null
 chmod 666 /sys/kernel/gpu/gpu_governor 2>/dev/null
 chmod 666 /sys/kernel/gpu/gpu_force_683 2>/dev/null
 chmod 666 /sys/kernel/gpu/gpu_clocks 2>/dev/null
 chmod 666 /sys/class/kgsl/kgsl-3d0/max_gpuclk 2>/dev/null
 chmod 666 /sys/class/kgsl/kgsl-3d0/min_clock_mhz 2>/dev/null
-chmod 666 /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null
-chmod 666 /sys/class/kgsl/kgsl-3d0/force_bus_on 2>/dev/null
-chmod 666 /sys/class/kgsl/kgsl-3d0/force_rail_on 2>/dev/null
 chmod 666 /sys/class/kgsl/kgsl-3d0/idle_timer 2>/dev/null
 chmod 666 /sys/touchpanel/double_tap 2>/dev/null
 chmod 666 /sys/touchpanel/reversed_keys 2>/dev/null
