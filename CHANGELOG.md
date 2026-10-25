@@ -22,9 +22,11 @@
   - Fixed Screen-Off Retry Hang: reset `ki_screen_retry` to 0 upon screen unblank, preventing the profile worker from giving up permanently after screen-off sleep.
   - Sysfs & Procfs Permission Hardening: enforced 0200 root write-only on `reapply` and 0644 (root RW, user RO) on profile nodes; removed insecure `chmod 666` calls from init/service scripts.
   - Thermal Guard & Boot Settle Warning: added settlement warning diagnostic and refined thermal guard parking logic.
-• Upstream ReSukiSU / BakaSU & SuSFS Compatibility:
-  - Verified upstream alignment with latest ReSukiSU / BakaSU (`d5e9e025b8b49155f8014684d64c91742b465f65`).
-  - Maintained multi-manager compatibility (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU) with UAPI 5 compatibility for BakaSU/ReSukiSU managers.
+• Upstream ReSukiSU / BakaSU & SuSFS Compatibility (UAPI v6 Upgrade):
+  - Upgraded KernelSU to latest upstream BakaSU / ReSukiSU (`d5e9e025b8b49155f8014684d64c91742b465f65`) with native UAPI Version 6 (`KERNEL_SU_UAPI_VERSION = 6`).
+  - Eliminates the "Diperlukan pembaruan kernel / Kernel update required" warning prompt in latest BakaSU Manager apps (v4.2.0-rc3 / v4.2.0-rc2).
+  - Preserved universal multi-manager signature support (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU).
+  - Full support for `KSU_IOCTL_LOOKUP_SYMBOLS`, `module_preinit`, and kernel SuSFS backport using `ksu_close_fd`.
 
 ## Ki-kernel v1.5 (2026-10-24 Update):
 • Ported Hardware SDE Exposure Dim Layer from re404 for True AOSP DC Dimming:
