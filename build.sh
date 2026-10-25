@@ -298,7 +298,7 @@ apply_droidspaces_config() {
 
 echo "Cleaning build directories..."
 rm -rf out/ anykernel/
-rm -rf include/config include/generated .config 2>/dev/null || true
+rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/null || true
 rm -rf build_artifacts 2>/dev/null || true
 mkdir -p build_artifacts/aosp build_artifacts/miui
 
@@ -359,6 +359,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         echo ">>> Compiling Kernel for MIUI / HyperOS <<<"
     fi
     rm -rf out/
+    rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/null || true
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     apply_ksu_config
     apply_droidspaces_config
