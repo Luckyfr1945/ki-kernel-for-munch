@@ -163,25 +163,11 @@ set_thermal() {
     local val="$1"
     local silent="$2"
     if [ "$val" = "0" ] || [ "$val" = "off" ] || [ "$val" = "disable" ] || [ "$val" = "bypass" ]; then
-        [ -w /sys/kernel/ki_profile/thermal_throttle ] && echo 0 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
-        stop mi_thermald 2>/dev/null
-        stop thermal-engine 2>/dev/null
-        setprop ctl.stop mi_thermald 2>/dev/null
-        setprop ctl.stop thermal-engine 2>/dev/null
-        for tz in /sys/class/thermal/thermal_zone*/mode; do
-            [ -f "$tz" ] && echo "disabled" > "$tz" 2>/dev/null
-        done
+        echo 0 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
         [ -f "$CONF_PATH" ] && sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=0/" "$CONF_PATH" 2>/dev/null
-        [ -z "$silent" ] && echo -e "${Y}✔ Thermal Guard: BYPASS (Userspace thermal throttling disabled)!${X}"
+        [ -z "$silent" ] && echo -e "${Y}✔ Thermal Guard: BYPASS (Gaming unlocked, kernel auto-guard active)!${X}"
     else
-        [ -w /sys/kernel/ki_profile/thermal_throttle ] && echo 1 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
-        start mi_thermald 2>/dev/null
-        start thermal-engine 2>/dev/null
-        setprop ctl.start mi_thermald 2>/dev/null
-        setprop ctl.start thermal-engine 2>/dev/null
-        for tz in /sys/class/thermal/thermal_zone*/mode; do
-            [ -f "$tz" ] && echo "enabled" > "$tz" 2>/dev/null
-        done
+        echo 1 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
         [ -f "$CONF_PATH" ] && sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=1/" "$CONF_PATH" 2>/dev/null
         [ -z "$silent" ] && echo -e "${G}✔ Thermal Guard: ACTIVE (Normal Thermal Protection)${X}"
     fi
@@ -193,13 +179,7 @@ show_status() {
     local cur_bypass=$(cat /proc/bypass_charging 2>/dev/null || cat /sys/class/power_supply/battery/bypass_charging 2>/dev/null || echo "0")
     local cur_sfc=$(cat /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null || echo "0")
     local cur_ffc=$(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo "0")
-    local cur_throt="1"
-    if [ -f "$CONF_PATH" ]; then
-        local cfg_throt=$(grep -E "^THERMAL_THROTTLE=" "$CONF_PATH" 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
-        [ -n "$cfg_throt" ] && cur_throt="$cfg_throt"
-    elif [ -f /sys/kernel/ki_profile/thermal_throttle ]; then
-        cur_throt=$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo "1")
-    fi
+    local cur_throt=$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo "1")
     local cur_sbat=$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo "0")
     local cur_fsync=$(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo "0")
     local cur_tcp=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "cubic")
@@ -293,10 +273,7 @@ interactive_menu() {
                 fi
                 ;;
             t|T)
-                cur_t="1"
-                if [ -f "$CONF_PATH" ]; then
-                    cur_t=$(grep -E "^THERMAL_THROTTLE=" "$CONF_PATH" 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
-                fi
+                cur_t=$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo "1")
                 if [ "$cur_t" = "0" ]; then
                     set_thermal 1
                 else
@@ -330,7 +307,7 @@ case "$1" in
   "bypass": $(cat /proc/bypass_charging 2>/dev/null || cat /sys/class/power_supply/battery/bypass_charging 2>/dev/null || echo 0),
   "fast_charge": $(cat /sys/kernel/fast_charge/force_fast_charge 2>/dev/null || echo 0),
   "dyn_fsync": $(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo 0),
-  "thermal_throttle": $([ -f "$CONF_PATH" ] && grep -E "^THERMAL_THROTTLE=" "$CONF_PATH" 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -d ' "\r' || cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
+  "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
   "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 0),
   "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
   "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),

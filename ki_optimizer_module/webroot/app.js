@@ -392,14 +392,9 @@ async function refreshState() {
 
       HAS_THERMAL=0
       VAL_THERMAL=1
-      if [ -f /sys/kernel/ki_profile/thermal_throttle ] || [ -f /sdcard/ki_optimizer.conf ]; then
+      if [ -f /sys/kernel/ki_profile/thermal_throttle ]; then
         HAS_THERMAL=1
-        if [ -f /sdcard/ki_optimizer.conf ]; then
-          VAL_THERMAL="$(grep -E "^THERMAL_THROTTLE=" /sdcard/ki_optimizer.conf 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')"
-          [ -z "$VAL_THERMAL" ] && VAL_THERMAL="$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo '1')"
-        else
-          VAL_THERMAL="$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo '1')"
-        fi
+        VAL_THERMAL="$(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo '1')"
       fi
 
       VAL_SWAP="$(cat /proc/sys/vm/swappiness 2>/dev/null || echo '130')"
@@ -538,23 +533,9 @@ async function applyChanges(silent = false) {
 
     # 8. Apply Thermal Throttle Guard
     if [ "${thermal}" = "0" ]; then
-      [ -w /sys/kernel/ki_profile/thermal_throttle ] && echo 0 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
-      stop mi_thermald 2>/dev/null
-      stop thermal-engine 2>/dev/null
-      setprop ctl.stop mi_thermald 2>/dev/null
-      setprop ctl.stop thermal-engine 2>/dev/null
-      for tz in /sys/class/thermal/thermal_zone*/mode; do
-        [ -f "$tz" ] && echo "disabled" > "$tz" 2>/dev/null
-      done
+      echo 0 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
     else
-      [ -w /sys/kernel/ki_profile/thermal_throttle ] && echo 1 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
-      start mi_thermald 2>/dev/null
-      start thermal-engine 2>/dev/null
-      setprop ctl.start mi_thermald 2>/dev/null
-      setprop ctl.start thermal-engine 2>/dev/null
-      for tz in /sys/class/thermal/thermal_zone*/mode; do
-        [ -f "$tz" ] && echo "enabled" > "$tz" 2>/dev/null
-      done
+      echo 1 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
     fi
 
     # 9. Apply TCP Congestion

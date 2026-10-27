@@ -281,6 +281,10 @@ chmod 666 /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/debug 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 
+# Ki-Profile and Thermal Guard nodes permission
+chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
+chmod 666 /proc/ki_profile 2>/dev/null
+
 # OPlus / ColorOS / OxygenOS stub nodes permissions
 chmod 644 /proc/oplusVersion/* 2>/dev/null
 chmod 644 /proc/oplus_charger/* 2>/dev/null

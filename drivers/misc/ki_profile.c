@@ -68,196 +68,6 @@ extern int watermark_scale_factor;
 extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
-/*
- * Thermal Auto-Guard (Performance mode only, active while screen is on):
- * Thermal bypass stays active for max FPS, but throttling is re-armed when
- * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
- * Released again once die <= 75C, body <= 43C, and battery <= 41C.
- * Polls every 2s, parked while screen is off with throttling re-armed.
- */
-#define KI_GUARD_POLL_MS	2000
-#define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
-#define KI_GUARD_DIE_COOL	75000 /* 75.0°C */
-#define KI_GUARD_SKIN_HOT	47000 /* 47.0°C - safe fail-safe for outdoor sunlight */
-#define KI_GUARD_SKIN_COOL	43000 /* 43.0°C */
-#define KI_GUARD_BATT_HOT	45000 /* 45.0°C */
-#define KI_GUARD_BATT_COOL	41000 /* 41.0°C */
-
-static const char * const ki_guard_die_zones[] = {
-	"cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr", "cpu-1-3-usr",
-	"cpu-1-4-usr", "cpu-1-5-usr", "cpu-1-6-usr", "cpu-1-7-usr",
-	"gpuss-0-usr", "gpuss-1-usr",
-};
-
-static struct thermal_zone_device *ki_guard_die_tz[ARRAY_SIZE(ki_guard_die_zones)];
-static struct thermal_zone_device *ki_guard_skin_tz;
-static bool ki_guard_resolved;
-static bool ki_guard_tripped;
-static bool ki_guard_parked;
-static struct delayed_work ki_guard_work;
-
-bool ki_thermal_throttle_enabled = true;
-EXPORT_SYMBOL_GPL(ki_thermal_throttle_enabled);
-
-static void ki_guard_resolve_zones(void)
-{
-	struct thermal_zone_device *tz;
-	int i, valid_count = 0;
-	const int total_zones = ARRAY_SIZE(ki_guard_die_zones) + 1;
-
-	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
-		if (!ki_guard_die_tz[i]) {
-			tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
-			ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
-		}
-		if (ki_guard_die_tz[i])
-			valid_count++;
-	}
-
-	if (!ki_guard_skin_tz) {
-		tz = thermal_zone_get_zone_by_name("quiet_therm");
-		ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
-	}
-	if (ki_guard_skin_tz)
-		valid_count++;
-
-	/* Only mark resolved if all expected thermal zones are found */
-	if (valid_count == total_zones)
-		ki_guard_resolved = true;
-}
-
-static int ki_guard_read(struct thermal_zone_device *tz)
-{
-	int temp;
-
-	if (!tz || thermal_zone_get_temp(tz, &temp))
-		return INT_MIN;
-	return temp;
-}
-
-static int ki_guard_read_batt(void)
-{
-	struct power_supply *psy = power_supply_get_by_name("battery");
-	union power_supply_propval val;
-	int ret;
-
-	if (!psy)
-		return INT_MIN;
-	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val);
-	power_supply_put(psy);
-	if (ret)
-		return INT_MIN;
-	return val.intval * 100; /* convert tenths of °C to millidegrees C */
-}
-
-static unsigned int ki_guard_unresolved_polls;
-
-static void ki_guard_log_missing_zones(void)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
-		if (!ki_guard_die_tz[i])
-			pr_warn("ki_profile: missing thermal die zone '%s'\n",
-				ki_guard_die_zones[i]);
-	}
-	if (!ki_guard_skin_tz)
-		pr_warn("ki_profile: missing thermal skin zone 'quiet_therm'\n");
-}
-
-/* Caller holds ki_guard_lock; returns true if worker must stop */
-static bool ki_guard_should_stop_locked(void)
-{
-	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
-		ki_guard_tripped = false;
-		return true;
-	}
-	if (!READ_ONCE(ki_screen_on)) {
-		ki_guard_tripped = false;
-		ki_guard_parked = true;
-		WRITE_ONCE(ki_thermal_throttle_enabled, true);
-		return true;
-	}
-	return false;
-}
-
-static void ki_guard_work_fn(struct work_struct *work)
-{
-	int i, die = INT_MIN, skin, batt;
-	unsigned long flags;
-	bool hot_condition = false;
-	bool cool_condition = false;
-	bool die_ok, skin_ok, batt_ok;
-	bool stop;
-
-	spin_lock_irqsave(&ki_guard_lock, flags);
-	stop = ki_guard_should_stop_locked();
-	spin_unlock_irqrestore(&ki_guard_lock, flags);
-	if (stop)
-		return;
-
-	if (!ki_guard_resolved) {
-		ki_guard_resolve_zones();
-		if (!ki_guard_resolved && ++ki_guard_unresolved_polls == 5) {
-			pr_warn("ki_profile: thermal guard zones partially unresolved, running with degraded coverage\n");
-			ki_guard_log_missing_zones();
-		}
-	} else {
-		ki_guard_unresolved_polls = 0;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(ki_guard_die_tz); i++)
-		die = max(die, ki_guard_read(ki_guard_die_tz[i]));
-	skin = ki_guard_read(ki_guard_skin_tz);
-	batt = ki_guard_read_batt();
-
-	/*
-	 * Hot / Trip condition:
-	 * Fail-safe: If sensors are completely blind (die == INT_MIN), assume HOT
-	 * so thermal bypass is NEVER left unmonitored.
-	 * Otherwise trip if ANY valid sensor crosses HOT threshold.
-	 */
-	if (die == INT_MIN ||
-	    die >= KI_GUARD_DIE_HOT ||
-	    (skin != INT_MIN && skin >= KI_GUARD_SKIN_HOT) ||
-	    (batt != INT_MIN && batt >= KI_GUARD_BATT_HOT))
-		hot_condition = true;
-
-	/*
-	 * Cool / Recovery condition (Fail-safe):
-	 * Must have valid die readings and all available sensors <= COOL.
-	 * If sensor readings are missing/INT_MIN, cool_condition is FALSE.
-	 */
-	die_ok = (die != INT_MIN) && (die <= KI_GUARD_DIE_COOL);
-	skin_ok = (skin == INT_MIN) || (skin <= KI_GUARD_SKIN_COOL);
-	batt_ok = (batt == INT_MIN) || (batt <= KI_GUARD_BATT_COOL);
-	if (die_ok && skin_ok && batt_ok)
-		cool_condition = true;
-
-	spin_lock_irqsave(&ki_guard_lock, flags);
-	/* Re-check active mode and screen state under spinlock to eliminate races with apply_ki_profile */
-	if (ki_guard_should_stop_locked()) {
-		spin_unlock_irqrestore(&ki_guard_lock, flags);
-		return;
-	}
-
-	if (!ki_guard_tripped && hot_condition) {
-		ki_guard_tripped = true;
-		WRITE_ONCE(ki_thermal_throttle_enabled, true);
-		pr_info("ki_profile: guard tripped (die=%d skin=%d batt=%d), throttle re-armed\n",
-			die, skin, batt);
-	} else if (ki_guard_tripped && cool_condition) {
-		ki_guard_tripped = false;
-		WRITE_ONCE(ki_thermal_throttle_enabled, false);
-		pr_info("ki_profile: guard cooled (die=%d skin=%d batt=%d), throttle released\n",
-			die, skin, batt);
-	}
-	spin_unlock_irqrestore(&ki_guard_lock, flags);
-
-	queue_delayed_work(system_highpri_wq, &ki_guard_work,
-			   msecs_to_jiffies(KI_GUARD_POLL_MS));
-}
-
 /* Representative CPU of each cluster: Silver, Gold, Prime */
 #define KI_NR_CLUSTERS	3
 static const unsigned int ki_cluster_cpu[KI_NR_CLUSTERS] = { 0, 4, 7 };
@@ -289,6 +99,15 @@ struct ki_profile_tune {
 
 /* User max frequency overrides (0 = follow active profile default) */
 static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
+
+/*
+ * User thermal throttle override:
+ *  -1: Auto / follow profile default (Balanced/Battery = throttled, Performance = bypass)
+ *   0: Forced bypass (Unlocked performance)
+ *   1: Forced enabled (Safe active throttling)
+ */
+static int ki_user_thermal_throttle = -1;
+static bool ki_thermal_applied = true;	/* protected by ki_profile_mutex */
 
 static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
@@ -388,6 +207,216 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	},
 };
 
+/*
+ * Thermal Auto-Guard:
+ * Active whenever thermal bypass is engaged (Performance mode default or user override)
+ * while screen is on. Thermal bypass stays active for max FPS, but throttling is re-armed
+ * when CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
+ * Released again once die <= 75C, body <= 43C, and battery <= 41C.
+ * Polls every 2s, parked while screen is off with throttling re-armed for pocket safety.
+ */
+#define KI_GUARD_POLL_MS	2000
+#define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
+#define KI_GUARD_DIE_COOL	75000 /* 75.0°C */
+#define KI_GUARD_SKIN_HOT	47000 /* 47.0°C - safe fail-safe for outdoor sunlight */
+#define KI_GUARD_SKIN_COOL	43000 /* 43.0°C */
+#define KI_GUARD_BATT_HOT	45000 /* 45.0°C */
+#define KI_GUARD_BATT_COOL	41000 /* 41.0°C */
+
+static const char * const ki_guard_die_zones[] = {
+	"cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr", "cpu-1-3-usr",
+	"cpu-1-4-usr", "cpu-1-5-usr", "cpu-1-6-usr", "cpu-1-7-usr",
+	"gpuss-0-usr", "gpuss-1-usr",
+};
+
+static struct thermal_zone_device *ki_guard_die_tz[ARRAY_SIZE(ki_guard_die_zones)];
+static struct thermal_zone_device *ki_guard_skin_tz;
+static bool ki_guard_resolved;
+static bool ki_guard_tripped;
+static bool ki_guard_parked;
+static struct delayed_work ki_guard_work;
+
+bool ki_thermal_throttle_enabled = true;
+EXPORT_SYMBOL_GPL(ki_thermal_throttle_enabled);
+
+static void ki_guard_resolve_zones(void)
+{
+	struct thermal_zone_device *tz;
+	int i, valid_count = 0;
+	const int total_zones = ARRAY_SIZE(ki_guard_die_zones) + 1;
+
+	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
+		if (!ki_guard_die_tz[i]) {
+			tz = thermal_zone_get_zone_by_name(ki_guard_die_zones[i]);
+			ki_guard_die_tz[i] = IS_ERR(tz) ? NULL : tz;
+		}
+		if (ki_guard_die_tz[i])
+			valid_count++;
+	}
+
+	if (!ki_guard_skin_tz) {
+		tz = thermal_zone_get_zone_by_name("quiet_therm");
+		ki_guard_skin_tz = IS_ERR(tz) ? NULL : tz;
+	}
+	if (ki_guard_skin_tz)
+		valid_count++;
+
+	/* Only mark resolved if all expected thermal zones are found */
+	if (valid_count == total_zones)
+		ki_guard_resolved = true;
+}
+
+static int ki_guard_read(struct thermal_zone_device *tz)
+{
+	int temp;
+
+	if (!tz || thermal_zone_get_temp(tz, &temp))
+		return INT_MIN;
+	return temp;
+}
+
+static int ki_guard_read_batt(void)
+{
+	struct power_supply *psy = power_supply_get_by_name("battery");
+	union power_supply_propval val;
+	int ret;
+
+	if (!psy)
+		return INT_MIN;
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val);
+	power_supply_put(psy);
+	if (ret)
+		return INT_MIN;
+	return val.intval * 100; /* convert tenths of °C to millidegrees C */
+}
+
+static unsigned int ki_guard_unresolved_polls;
+
+static void ki_guard_log_missing_zones(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ki_guard_die_zones); i++) {
+		if (!ki_guard_die_tz[i])
+			pr_warn("ki_profile: missing thermal die zone '%s'\n",
+				ki_guard_die_zones[i]);
+	}
+	if (!ki_guard_skin_tz)
+		pr_warn("ki_profile: missing thermal skin zone 'quiet_therm'\n");
+}
+
+/* Caller holds ki_guard_lock; returns true if thermal bypass is active */
+static bool ki_guard_bypass_active_locked(void)
+{
+	int user_throt = READ_ONCE(ki_user_thermal_throttle);
+	int mode = READ_ONCE(ki_active_mode);
+
+	if (user_throt == 0)
+		return true;
+	if (user_throt == 1)
+		return false;
+
+	if (mode < 0 || mode >= KI_PROFILE_MAX)
+		mode = KI_PROFILE_BALANCED;
+
+	return !ki_tunes[mode].thermal_throttle;
+}
+
+/* Caller holds ki_guard_lock; returns true if worker must stop */
+static bool ki_guard_should_stop_locked(void)
+{
+	if (!ki_guard_bypass_active_locked()) {
+		ki_guard_tripped = false;
+		return true;
+	}
+	if (!READ_ONCE(ki_screen_on)) {
+		ki_guard_tripped = false;
+		ki_guard_parked = true;
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+		return true;
+	}
+	return false;
+}
+
+static void ki_guard_work_fn(struct work_struct *work)
+{
+	int i, die = INT_MIN, skin, batt;
+	unsigned long flags;
+	bool hot_condition = false;
+	bool cool_condition = false;
+	bool die_ok, skin_ok, batt_ok;
+	bool stop;
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	stop = ki_guard_should_stop_locked();
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
+	if (stop)
+		return;
+
+	if (!ki_guard_resolved) {
+		ki_guard_resolve_zones();
+		if (!ki_guard_resolved && ++ki_guard_unresolved_polls == 5) {
+			pr_warn("ki_profile: thermal guard zones partially unresolved, running with degraded coverage\n");
+			ki_guard_log_missing_zones();
+		}
+	} else {
+		ki_guard_unresolved_polls = 0;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(ki_guard_die_tz); i++)
+		die = max(die, ki_guard_read(ki_guard_die_tz[i]));
+	skin = ki_guard_read(ki_guard_skin_tz);
+	batt = ki_guard_read_batt();
+
+	/*
+	 * Hot / Trip condition:
+	 * Fail-safe: If sensors are completely blind (die == INT_MIN), assume HOT
+	 * so thermal bypass is NEVER left unmonitored.
+	 * Otherwise trip if ANY valid sensor crosses HOT threshold.
+	 */
+	if (die == INT_MIN ||
+	    die >= KI_GUARD_DIE_HOT ||
+	    (skin != INT_MIN && skin >= KI_GUARD_SKIN_HOT) ||
+	    (batt != INT_MIN && batt >= KI_GUARD_BATT_HOT))
+		hot_condition = true;
+
+	/*
+	 * Cool / Recovery condition (Fail-safe):
+	 * Must have valid die readings and all available sensors <= COOL.
+	 * If sensor readings are missing/INT_MIN, cool_condition is FALSE.
+	 */
+	die_ok = (die != INT_MIN) && (die <= KI_GUARD_DIE_COOL);
+	skin_ok = (skin == INT_MIN) || (skin <= KI_GUARD_SKIN_COOL);
+	batt_ok = (batt == INT_MIN) || (batt <= KI_GUARD_BATT_COOL);
+	if (die_ok && skin_ok && batt_ok)
+		cool_condition = true;
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	/* Re-check active mode and screen state under spinlock to eliminate races with apply_ki_profile */
+	if (ki_guard_should_stop_locked()) {
+		spin_unlock_irqrestore(&ki_guard_lock, flags);
+		return;
+	}
+
+	if (!ki_guard_tripped && hot_condition) {
+		ki_guard_tripped = true;
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+		pr_info("ki_profile: guard tripped (die=%d skin=%d batt=%d), throttle re-armed\n",
+			die, skin, batt);
+	} else if (ki_guard_tripped && cool_condition) {
+		ki_guard_tripped = false;
+		WRITE_ONCE(ki_thermal_throttle_enabled, false);
+		pr_info("ki_profile: guard cooled (die=%d skin=%d batt=%d), throttle released\n",
+			die, skin, batt);
+	}
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
+
+	queue_delayed_work(system_highpri_wq, &ki_guard_work,
+			   msecs_to_jiffies(KI_GUARD_POLL_MS));
+}
+
+
+
 static bool ki_gpu_perf_applied;	/* protected by ki_profile_mutex */
 
 static unsigned int ki_target_max(int i, int mode)
@@ -412,7 +441,7 @@ static unsigned int ki_target_max(int i, int mode)
 static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
-	int i, ret, err = 0;
+	int i, ret, err = 0, user_throt;
 	unsigned long flags;
 	bool screen_on;
 	bool enable_gpu_perf;
@@ -466,10 +495,21 @@ static int apply_ki_profile(int mode, bool force)
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
 
 	/*
-	 * Re-arm thermal throttling whenever screen is off, even in Performance mode,
-	 * to prevent overheating in pockets and avoid running guard highpri polls in idle.
+	 * Determine effective thermal throttling:
+	 * If user explicitly set override:
+	 *   0 (bypass): Active while screen is on. Re-arm throttling when screen is off
+	 *               to prevent overheating in pockets and avoid running guard polls in idle.
+	 *   1 (forced): Always active.
+	 * If auto (-1):
+	 *   Follow profile tune (Performance = bypass with screen on, others = active).
 	 */
-	enable_thermal_throttle = t->thermal_throttle || !screen_on;
+	user_throt = READ_ONCE(ki_user_thermal_throttle);
+	if (user_throt == 0)
+		enable_thermal_throttle = !screen_on;
+	else if (user_throt == 1)
+		enable_thermal_throttle = true;
+	else
+		enable_thermal_throttle = t->thermal_throttle || !screen_on;
 
 	/* Atomic thermal & active mode state switch under spinlock */
 	spin_lock_irqsave(&ki_guard_lock, flags);
@@ -478,6 +518,8 @@ static int apply_ki_profile(int mode, bool force)
 	ki_guard_tripped = false;
 	ki_guard_parked = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
+
+	ki_thermal_applied = enable_thermal_throttle;
 
 	/* Thermal auto-guard runs only while screen is on and thermal bypass is active */
 	if (!enable_thermal_throttle)
@@ -540,12 +582,22 @@ static bool ki_apply_incomplete;	/* protected by ki_profile_mutex */
 static int ki_apply_effective(bool force)
 {
 	int mode = ki_effective_mode();
-	int ret;
+	int ret, user_throt;
 	bool screen_on = READ_ONCE(ki_screen_on);
+	bool expected_throttle;
+
+	user_throt = READ_ONCE(ki_user_thermal_throttle);
+	if (user_throt == 0)
+		expected_throttle = !screen_on;
+	else if (user_throt == 1)
+		expected_throttle = true;
+	else
+		expected_throttle = ki_tunes[mode].thermal_throttle || !screen_on;
 
 	force |= ki_force_pending;
 	if (!force && !ki_apply_incomplete && mode == READ_ONCE(ki_active_mode) &&
 	    (ki_tunes[mode].gpu_perf && screen_on) == ki_gpu_perf_applied &&
+	    expected_throttle == ki_thermal_applied &&
 	    !READ_ONCE(ki_guard_parked))
 		return 0;
 
@@ -787,32 +839,65 @@ static ssize_t screen_state_show(struct kobject *kobj, struct kobj_attribute *at
 
 static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
+	int user_throt = READ_ONCE(ki_user_thermal_throttle);
+
+	if (user_throt >= 0)
+		return scnprintf(buf, PAGE_SIZE, "%d\n", user_throt);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 ki_tunes[ki_effective_mode()].thermal_throttle ? 1 : 0);
 }
 
 static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribute *attr,
 				      const char *buf, size_t count)
 {
 	bool val;
-	int ret;
-	unsigned long flags;
+	int user_val;
+	char str[16];
+	char *trimmed;
+	size_t len;
 
-	ret = kstrtobool(buf, &val);
-	if (ret)
-		return ret;
+	len = min(count, sizeof(str) - 1);
+	memcpy(str, buf, len);
+	str[len] = '\0';
+	trimmed = strim(str);
 
-	spin_lock_irqsave(&ki_guard_lock, flags);
-	WRITE_ONCE(ki_thermal_throttle_enabled, val);
-	ki_guard_tripped = false;
-	ki_guard_parked = false;
-	spin_unlock_irqrestore(&ki_guard_lock, flags);
+	if (!strcasecmp(trimmed, "auto") || !strcmp(trimmed, "-1") || !strcasecmp(trimmed, "default")) {
+		user_val = -1;
+	} else if (!kstrtobool(trimmed, &val)) {
+		user_val = val ? 1 : 0;
+	} else {
+		return -EINVAL;
+	}
 
-	if (!val && READ_ONCE(ki_screen_on))
-		mod_delayed_work(system_highpri_wq, &ki_guard_work, 0);
-	else
-		cancel_delayed_work_sync(&ki_guard_work);
+	mutex_lock(&ki_profile_mutex);
+	WRITE_ONCE(ki_user_thermal_throttle, user_val);
+	ki_apply_effective(true);
+	mutex_unlock(&ki_profile_mutex);
 
 	return count;
+}
+
+static ssize_t thermal_throttle_active_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
+}
+
+static ssize_t thermal_guard_active_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned long flags;
+	bool active;
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	active = !ki_guard_should_stop_locked();
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", active ? 1 : 0);
+}
+
+static ssize_t thermal_guard_tripped_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_guard_tripped) ? 1 : 0);
 }
 
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
@@ -873,6 +958,9 @@ static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
 static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
+static struct kobj_attribute thermal_throttle_active_attr = __ATTR_RO(thermal_throttle_active);
+static struct kobj_attribute thermal_guard_active_attr = __ATTR_RO(thermal_guard_active);
+static struct kobj_attribute thermal_guard_tripped_attr = __ATTR_RO(thermal_guard_tripped);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
@@ -963,6 +1051,9 @@ static struct attribute *ki_profile_attrs[] = {
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
 	&thermal_throttle_attr.attr,
+	&thermal_throttle_active_attr.attr,
+	&thermal_guard_active_attr.attr,
+	&thermal_guard_tripped_attr.attr,
 	&active_profile_attr.attr,
 	&screen_off_battery_attr.attr,
 	&max_freq_silver_attr.attr,
@@ -973,8 +1064,23 @@ static struct attribute *ki_profile_attrs[] = {
 	NULL,
 };
 
+static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
+{
+	if (attr == &mode_attr.attr ||
+	    attr == &thermal_throttle_attr.attr ||
+	    attr == &screen_off_battery_attr.attr ||
+	    attr == &max_freq_silver_attr.attr ||
+	    attr == &max_freq_gold_attr.attr ||
+	    attr == &max_freq_prime_attr.attr ||
+	    attr == &reapply_attr.attr)
+		return 0666;
+
+	return attr->mode;
+}
+
 static const struct attribute_group ki_profile_attr_group = {
 	.attrs = ki_profile_attrs,
+	.is_visible = ki_profile_is_visible,
 };
 
 static struct kobject *ki_profile_kobj;
