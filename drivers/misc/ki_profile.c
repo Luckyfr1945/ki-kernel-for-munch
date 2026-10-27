@@ -142,30 +142,32 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
 	 * Balanced (Daily Driver - v1.3 Adem Anyem & Smooth 120Hz Efficiency):
 	 * Restored v1.3 thermal comfort and battery efficiency with butter-smooth 120Hz UI.
-	 * Tasks balanced on Silver cluster (up_migrate = 95/85, grp = 95/85) so casual
-	 * multitasking (WhatsApp, YouTube, TikTok, Maps) stays on cool LITTLE cores.
-	 * Down-rate hold 1000us (1ms) quickly recovers 300MHz idle floor when touch stops,
-	 * eliminating thermal accumulation and excessive active battery drain.
-	 * Up-rate (Silver 1000us, Gold 2000us, Prime 4000us) mirrors v1.3 sweet spot,
-	 * ensuring Prime core only wakes on heavy sustained load.
+	 * Tasks balanced on Silver cluster (up_migrate = 90/82, grp = 90/82) so casual
+	 * multitasking (WhatsApp, YouTube, TikTok, Maps) stays on cool LITTLE cores,
+	 * while smoothly migrating rendering threads to Big cores on heavy demand.
+	 * Down-rate hold 5000us (5ms) holds clocks across consecutive frames (60Hz/90Hz/120Hz),
+	 * completely eliminating mid-frame frequency dips, stutter, and dropped frames,
+	 * while still enabling fast idle drop to 300MHz baseline when touch stops.
+	 * Up-rate (Silver 850us, Gold 2850us, Prime 3850us) ensures smooth, rapid ramp-up.
+	 * Hispeed load thresholds (Silver 82%, Gold 82%, Prime 84%) trigger power bursts when needed.
 	 * Valid SM8250 OPP frequencies:
 	 *   - Silver: hispeed 1.17GHz, rtg_boost 1.17GHz, floor 0, max 1.80GHz (1804800)
 	 *   - Gold:   hispeed 1.47GHz, rtg_boost 1.47GHz, floor 0, max 2.05GHz (2054400)
 	 *   - Prime:  hispeed 1.61GHz, rtg_boost 1.61GHz, floor 0, max 2.36GHz (2361600)
-	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
-	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
+	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz baseline.
+	 * Moderate I/O wait boost (iowait_boost_max = 5) prevents app launch and storage lag.
 	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
 	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 1000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 85, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1804800 },
-			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
-			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
+			{ .up_us = 850,  .down_us = 5000, .hispeed_freq = 1171200, .hispeed_load = 82, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 5, .max_freq = 1804800 },
+			{ .up_us = 2850, .down_us = 5000, .hispeed_freq = 1478400, .hispeed_load = 82, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 5, .max_freq = 2054400 },
+			{ .up_us = 3850, .down_us = 5000, .hispeed_freq = 1612800, .hispeed_load = 84, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
 		},
 		.thermal_throttle = true,
-		.up_migrate = 95, .down_migrate = 85,
-		.grp_up_migrate = 95, .grp_down_migrate = 85,
+		.up_migrate = 90, .down_migrate = 82,
+		.grp_up_migrate = 90, .grp_down_migrate = 82,
 		.window_stats_policy = 2,
 		.swappiness = 50, .wmark_scale = 12, .vfs_cache_pressure = 70,
 	},

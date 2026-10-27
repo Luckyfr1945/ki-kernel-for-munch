@@ -869,13 +869,32 @@ btnApply?.addEventListener("click", () => {
 // Daemon Listeners
 toggleDaemonMaster?.addEventListener("change", async (e) => {
   const enabled = e.target.checked ? "1" : "0";
-  await setDaemonConfig("DAEMON_ENABLED", enabled);
-  if (e.target.checked) {
-    await exec("nohup /data/adb/modules/ki_optimizer/bin/ki_daemon run >/dev/null 2>&1 &");
-  } else {
-    await exec("if command -v ki_daemon >/dev/null 2>&1; then ki_daemon stop; else /data/adb/modules/ki_optimizer/bin/ki_daemon stop; fi");
+  try {
+    if (e.target.checked) {
+      await exec(`
+        if command -v ki_daemon >/dev/null 2>&1; then
+          ki_daemon set DAEMON_ENABLED 1
+          ki_daemon start
+        elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
+          /data/adb/modules/ki_optimizer/bin/ki_daemon set DAEMON_ENABLED 1
+          /data/adb/modules/ki_optimizer/bin/ki_daemon start
+        fi
+      `);
+      showToast("Auto Game Turbo activated");
+    } else {
+      await exec(`
+        if command -v ki_daemon >/dev/null 2>&1; then
+          ki_daemon set DAEMON_ENABLED 0
+        elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
+          /data/adb/modules/ki_optimizer/bin/ki_daemon set DAEMON_ENABLED 0
+        fi
+      `);
+      showToast("Auto Game Turbo paused");
+    }
+  } catch (err) {
+    showToast("Failed to toggle Auto Game Turbo", true);
   }
-  refreshDaemonState();
+  setTimeout(refreshDaemonState, 350);
 });
 
 toggleAutoBypass?.addEventListener("change", (e) => {

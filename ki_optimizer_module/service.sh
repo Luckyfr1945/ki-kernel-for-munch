@@ -53,5 +53,7 @@ fi
 # Launch Ki-Daemon (Rust Auto Game Turbo & Background Controller)
 if [ -x "$MODDIR/bin/ki_daemon" ]; then
     killall ki_daemon 2>/dev/null
-    nohup "$MODDIR/bin/ki_daemon" run >/dev/null 2>&1 &
+    rm -f /data/adb/modules/ki_optimizer/daemon.pid /data/adb/modules/ki_optimizer/daemon.status 2>/dev/null
+    "$MODDIR/bin/ki_daemon" start >/dev/null 2>&1 || ( "$MODDIR/bin/ki_daemon" run >/dev/null 2>&1 & )
 fi
+

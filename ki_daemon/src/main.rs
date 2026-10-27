@@ -48,7 +48,20 @@ const DEFAULT_GAMES: &[&str] = &[
     "com.HoYoverse.nap",
     "com.miHoYo.nap",
     "com.dts.freefireth",
+    "com.dts.freefiremax",
+    "com.tgc.sky.android",
+    "com.roblox.client",
+    "com.mojang.minecraftpe",
+    "jp.konami.pesam",
+    "com.ea.gp.fifamobile",
+    "com.netease.bloodstrike",
+    "com.carxtech.sr",
+    "com.levelinfinite.sgameGlobal",
+    "com.tencent.tmgp.sgame",
     "com.tencent.ig",
+    "com.vng.pubgmobile",
+    "com.pubg.krmobile",
+    "com.rekoo.pubgm",
     "com.activision.callofduty.shooter",
     "com.garena.game.codm",
     "com.riotgames.league.wildrift",
@@ -58,8 +71,16 @@ const DEFAULT_GAMES: &[&str] = &[
     "com.levelinfinite.hotta.gp",
     "com.kurogame.wutheringwaves.global",
     "com.HoYoverse.hkrpgoversea",
+    "com.miHoYo.hkrpgoversea",
     "com.miHoYo.Yuanshen",
     "com.garena.game.kgid",
+    "com.garena.game.kgvn",
+    "com.garena.game.kgtw",
+    "com.miHoYo.bh3oversea",
+    "com.miHoYo.bh3global",
+    "com.netease.idv.googleplay",
+    "com.kitkagames.fallbuddies",
+    "it.rortos.realflightsimulator",
     "org.citra.citra_emu",
     "org.yuzu.yuzu_emu",
     "skyline.emu",
@@ -740,10 +761,11 @@ fn run_daemon() {
     if let Some(other) = read_pid_file() {
         if other != me.to_string() && is_ki_daemon_pid(&other) {
             eprintln!("[Ki-Daemon] Sudah berjalan (PID {other}), keluar.");
-            exit(1);
+            exit(0);
         }
     }
     let _ = fs::write(PID_FILE, me.to_string());
+    let _ = Command::new("chmod").args(["666", PID_FILE]).status();
 
     // SIGTERM/SIGINT -> set flag + bangunkan main thread.
     let stop = Arc::new(AtomicBool::new(false));
@@ -779,6 +801,12 @@ fn run_daemon() {
     let mut exit_misses = 0u32;
     let mut screen_off_since: Option<Instant> = None;
     let mut last_game_pkg = String::new();
+
+    // Tulis status inisial seawal mungkin agar WebUI langsung mendeteksi daemon berjalan
+    let cur_bypass = read_u32_node(&BYPASS_NODES) == Some(1);
+    let init_fg = if cfg.enabled { "initializing" } else { "disabled" };
+    status.write(build_status(init_fg, false, current_profile, cur_bypass, &cfg));
+    let _ = Command::new("chmod").args(["666", STATUS_FILE]).status();
 
     while !stop.load(Ordering::Relaxed) {
         // Reload config every 3 seconds
@@ -894,7 +922,44 @@ fn print_status() {
         println!("  \"games\": {:?}", games_vec);
         println!("}}");
     } else {
-        println!("{{\"running\": true, \"status\": \"initializing\"}}");
+        let cfg = DaemonConfig::load();
+        let mut games_vec: Vec<_> = cfg.games.iter().cloned().collect();
+        games_vec.sort();
+        println!("{{\"running\": true, \"status\": \"initializing\", \"daemon_enabled\": {}, \"games\": {:?}}}", cfg.enabled, games_vec);
+    }
+}
+
+fn start_daemon() {
+    let me = std::process::id();
+    if let Some(pid) = read_pid_file() {
+        if pid != me.to_string() && is_ki_daemon_pid(&pid) {
+            println!("Ki-Daemon already running (PID {pid}).");
+            return;
+        }
+    }
+
+    let _ = fs::remove_file(PID_FILE);
+    let _ = fs::remove_file(STATUS_FILE);
+
+    let exe_path = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("/data/adb/modules/ki_optimizer/bin/ki_daemon"));
+
+    match Command::new(exe_path)
+        .arg("run")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            let pid = child.id();
+            println!("Ki-Daemon started in background (PID {pid}).");
+            sleep(Duration::from_millis(50));
+        }
+        Err(e) => {
+            eprintln!("Failed to spawn Ki-Daemon in background: {e}");
+            exit(1);
+        }
     }
 }
 
@@ -967,11 +1032,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         println!("Ki-Daemon v1.1 (Auto Game Turbo & Optimization)");
-        println!("Usage: ki_daemon <run|status|stop|add-game|remove-game|set>");
+        println!("Usage: ki_daemon <start|run|status|stop|add-game|remove-game|set>");
         return;
     }
 
     match args[1].as_str() {
+        "start" => start_daemon(),
         "run" => run_daemon(),
         "status" => print_status(),
         "stop" => stop_daemon(),
