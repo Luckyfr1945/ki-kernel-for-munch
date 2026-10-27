@@ -19,7 +19,7 @@
 
 #define DYN_FSYNC_VERSION "2.0"
 
-bool dyn_fsync_active = true;
+bool dyn_fsync_active = false;
 EXPORT_SYMBOL(dyn_fsync_active);
 
 static bool screen_is_on = true;
