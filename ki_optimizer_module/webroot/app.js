@@ -600,12 +600,37 @@ async function applyChanges(silent = false) {
 async function refreshDaemonState() {
   try {
     const { stdout } = await exec(`
+      OUT=""
       if command -v ki_daemon >/dev/null 2>&1; then
-        ki_daemon status
+        OUT="$(ki_daemon status 2>/dev/null)"
       elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-        /data/adb/modules/ki_optimizer/bin/ki_daemon status
+        OUT="$(/data/adb/modules/ki_optimizer/bin/ki_daemon status 2>/dev/null)"
+      fi
+      if echo "$OUT" | grep -q '"games"'; then
+        echo "$OUT"
       else
-        echo '{"running": false}'
+        CONF="/sdcard/ki_daemon.conf"
+        [ ! -f "$CONF" ] && CONF="/data/adb/modules/ki_optimizer/ki_daemon.conf"
+        ENABLED=1
+        DEF_PROF=1
+        GAME_PROF=2
+        AUTO_BYPASS=1
+        AUTO_MGLRU=1
+        GAMES_JSON="[]"
+        if [ -f "$CONF" ]; then
+          [ "$(grep -E '^DAEMON_ENABLED=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && ENABLED=0
+          dp="$(grep -E '^DEFAULT_PROFILE=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')"
+          [ -n "$dp" ] && DEF_PROF=$dp
+          gp="$(grep -E '^GAME_PROFILE=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')"
+          [ -n "$gp" ] && GAME_PROF=$gp
+          [ "$(grep -E '^AUTO_BYPASS(_CHARGING)?=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && AUTO_BYPASS=0
+          [ "$(grep -E '^AUTO_MGLRU=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && AUTO_MGLRU=0
+          g_raw="$(grep -E '^GAMES=' "$CONF" | cut -d'=' -f2- | tr -d ' \"\r')"
+          if [ -n "$g_raw" ]; then
+            GAMES_JSON=$(echo "$g_raw" | awk -F',' '{for(i=1;i<=NF;i++) if($i!="") printf "\\"%s\\"%s", $i, (i<NF?",":"")}' | sed 's/^/[/' | sed 's/$/]/')
+          fi
+        fi
+        echo "{\\"running\\":false,\\"daemon_enabled\\":$([ $ENABLED -eq 1 ] && echo true || echo false),\\"default_profile\\":$DEF_PROF,\\"game_profile\\":$GAME_PROF,\\"auto_bypass\\":$([ $AUTO_BYPASS -eq 1 ] && echo true || echo false),\\"auto_mglru\\":$([ $AUTO_MGLRU -eq 1 ] && echo true || echo false),\\"games\\":$GAMES_JSON}"
       fi
     `);
 
