@@ -237,7 +237,7 @@ chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 # Kernel tweak nodes permissions (controlled by user via Ki-Kernel Settings module)
-# Note: ki_profile maintains secure 0644/0200 root permissions; root apps access directly.
+chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null

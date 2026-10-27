@@ -7,6 +7,20 @@
 
 ---
 
+## Ki-kernel v1.5.1 :
+- Tuned Balanced profile WALT migration margins to 90/82 (fixed severe FPS drop & stutter in 120Hz/90Hz)
+- Raised Balanced profile down-rate hold duration (down_us) to 5000us (5ms) to eliminate mid-frame dips
+- Accelerated Balanced profile ramp-up (up_us) to 850us / 2850us / 3850us for smooth touch response
+- Optimized Balanced hispeed load thresholds to 82% / 82% / 84% for responsive mid-load transitions
+- Added modest I/O wait boost (iowait_boost_max = 5) in Balanced mode to eliminate storage lag
+- Retained 1.80GHz / 2.05GHz / 2.36GHz frequency ceilings in Balanced profile for maximum thermal comfort
+- Fixed Auto Game Turbo toggle lifecycle bug in WebUI & Ki-Daemon (prevented toggling back ON)
+- Added native 'ki_daemon start' command to spawn detached background processes without external nohup dependency
+- Implemented graceful pause state (DAEMON_ENABLED=0) in Ki-Daemon instead of abrupt SIGKILL/stale PID traps
+- Added instant status file generation with 0666 permissions on Ki-Daemon startup to prevent WebUI race conditions
+- Expanded built-in Auto Game Turbo game detections (Sky: Children of the Light, Free Fire MAX, Roblox, Minecraft, eFootball, CarX Street, Blood Strike, Honor of Kings, Honkai Impact 3, etc.)
+- Hardened kernel Universal Thermal Auto-Guard with persistent user override and pocket safety
+
 ## Ki-kernel v1.5 :
 - Updated BakaSU and ReSukiSU to UAPI v6
 - Added full FinaSU Manager support
