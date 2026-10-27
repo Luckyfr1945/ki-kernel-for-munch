@@ -43,6 +43,7 @@ chmod 666 /sys/class/power_supply/battery/bypass_charging 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/input_suspend 2>/dev/null
 chmod 666 /sys/kernel/wakelock_blocker/* 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/* 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 
 # Apply configured tweaks
 if [ -x "$MODDIR/bin/ki" ]; then

@@ -790,6 +790,31 @@ static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute
 	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
 }
 
+static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribute *attr,
+				      const char *buf, size_t count)
+{
+	bool val;
+	int ret;
+	unsigned long flags;
+
+	ret = kstrtobool(buf, &val);
+	if (ret)
+		return ret;
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	WRITE_ONCE(ki_thermal_throttle_enabled, val);
+	ki_guard_tripped = false;
+	ki_guard_parked = false;
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
+
+	if (!val && READ_ONCE(ki_screen_on))
+		mod_delayed_work(system_highpri_wq, &ki_guard_work, 0);
+	else
+		cancel_delayed_work_sync(&ki_guard_work);
+
+	return count;
+}
+
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 {
 	unsigned int val;
@@ -847,7 +872,7 @@ static ssize_t max_freq_prime_store(struct kobject *kobj, struct kobj_attribute 
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
-static struct kobj_attribute thermal_throttle_attr = __ATTR_RO(thermal_throttle);
+static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
