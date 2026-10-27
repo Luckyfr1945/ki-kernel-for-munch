@@ -660,12 +660,22 @@ static DEVICE_ATTR(quick_charge_type, 0444, usb_quick_charge_type_show, NULL);
 
 static void try_add_usb_attr(void) {
 	struct power_supply *usb_psy;
+	struct kernfs_node *kn;
 
 	if (usb_attr_added) return;
 	usb_psy = power_supply_get_by_name("usb");
 	if (!usb_psy) return;
-	if (!device_create_file(&usb_psy->dev, &dev_attr_quick_charge_type))
-		usb_attr_added = true;
+	usb_attr_added = true;
+
+	if (usb_psy->dev.kobj.sd) {
+		kn = sysfs_get_dirent(usb_psy->dev.kobj.sd, dev_attr_quick_charge_type.attr.name);
+		if (kn) {
+			sysfs_put(kn);
+			power_supply_put(usb_psy);
+			return;
+		}
+	}
+	device_create_file(&usb_psy->dev, &dev_attr_quick_charge_type);
 	power_supply_put(usb_psy);
 }
 

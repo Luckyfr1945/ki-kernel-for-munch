@@ -1,105 +1,42 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-25  
+**Build Date:** 2026-10-27  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## Ki-kernel v1.5 (2026-10-25 Update):
-• Overhauled AnyKernel3 Universal ROM Detection & Automated Installer:
-  - Eliminated False-Positive AOSP Match: removed flawed `device_features/munch.xml` check that caused AOSP custom ROMs (Infinity-X, crDroid, LineageOS, PixelOS, etc.) with XiaomiParts/Dirac to be mistakenly flagged as MIUI/HyperOS.
-  - Dual-Region Detection Engine (re404 inspired): implemented strict inspection of official Xiaomi regions (`cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi`) across `ro.vendor.miui.build.region` (vendor) and `ro.miui.build.region` (product) plus exclusive framework APK verification (`miui.jar` / `MiuiSystemUI`).
-  - 100% Automated Seamless Flashing: removed volume button prompts and delays — installer now runs completely automatic and instant across TWRP, OrangeFox, and root managers (KernelSU/ksud/Magisk).
-  - Safe Universal Default: defaults safely to AOSP if no MIUI or OPlus signatures are detected, ensuring zero bootloops or display driver mismatches.
-  - Preserved Partition Architecture: splits kernel Image to `/boot` and dedicated SM8250 DTB to `/vendor_boot` while leaving ROM vendor DTBO intact.
-  - Cross-Flashing Prevention: single-variant packages (AOSP-only or MIUI-only) automatically abort if accidentally flashed on the wrong ROM.
-• Hardened Ki-Profile Kernel Driver & Workqueue Reliability (`drivers/misc/ki_profile.c`):
-  - Fixed Sysfs Store Return (`reapply_store`): resolved bug where failure bitmask was returned as byte count, returning standard byte count on success or `-EAGAIN` on incomplete apply.
-  - Safe Target Max Frequency Cap (`ki_target_max`): user max frequency overrides can no longer exceed or loosen the Battery mode cap during screen-off.
-  - Strict Mode Index Clamping (`ki_effective_mode`): clamped `current_profile_mode` strictly to `[0, KI_PROFILE_MAX)` before indexing `ki_tunes` array to prevent out-of-bounds reads.
-  - Fixed Screen-Off Retry Hang: reset `ki_screen_retry` to 0 upon screen unblank, preventing the profile worker from giving up permanently after screen-off sleep.
-  - Sysfs & Procfs Permission Hardening: enforced 0200 root write-only on `reapply` and 0644 (root RW, user RO) on profile nodes; removed insecure `chmod 666` calls from init/service scripts.
-  - Thermal Guard & Boot Settle Warning: added settlement warning diagnostic and refined thermal guard parking logic.
-• Upstream ReSukiSU / BakaSU & SuSFS Compatibility (UAPI v6 Upgrade):
-  - Upgraded KernelSU to latest upstream BakaSU / ReSukiSU (`d5e9e025b8b49155f8014684d64c91742b465f65`) with native UAPI Version 6 (`KERNEL_SU_UAPI_VERSION = 6`).
-  - Eliminates the "Diperlukan pembaruan kernel / Kernel update required" warning prompt in latest BakaSU Manager apps (v4.2.0-rc3 / v4.2.0-rc2).
-  - Preserved universal multi-manager signature support (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU).
-  - Full support for `KSU_IOCTL_LOOKUP_SYMBOLS`, `module_preinit`, and kernel SuSFS backport using `ksu_close_fd`.
-
-## Ki-kernel v1.5 (2026-10-24 Update):
-• Ported Hardware SDE Exposure Dim Layer from re404 for True AOSP DC Dimming:
-  - Integrated DevriesL's SDE Exposure Dim Layer driver and EcrosoftXiao's calibrated alpha model (`sde_expo_dim_layer.c`, `sde_expo_dim_layer.h`, `sde_crtc.c`, `sde_crtc.h`) from re404 kernel.
-  - Clamps physical AMOLED backlight to 440 (`DIM_THRES_LEVEL`) to completely eliminate low-brightness PWM flicker.
-  - SDE CRTC hardware stage automatically blends `{0, 0, 0, alpha}` digital dimming over the display pipeline without requiring MIUI SurfaceFlinger.
-  - Multi-node sysfs bridge automatically synchronizes `dimlayer_exposure`, `dc_dimming`, `dimming`, and `disp_param`.
-• Native Kernel SELinux Bypass for Display Sysfs:
-  - Implemented direct LSM policy bypass in `inode_has_perm` and `selinux_inode_permission` (`security/selinux/hooks.c`) for `system_app` (LineageOS / Infinity-X Settings / XiaomiParts) and `system_server` on `vendor_sysfs_graphics` and `sysfs_graphics`.
-  - Fixes SELinux denials (`comm="eageos.settings" name="dimlayer_exposure"`) natively inside the kernel without relying on any Magisk/KernelSU `sepolicy.rule` module.
-• Fixed USB Tethering DHCP & Host IP Assignment:
-  - Enabled `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y`: resolves `Warning: Extension CHECKSUM revision 0 not supported` in Android's TetherController, enabling `--checksum-fill` so host PCs accept UDP port 68 DHCP offers.
-  - Enabled `CONFIG_USB_CONFIGFS_RNDIS=y` and `CONFIG_USB_CONFIGFS_ECM=y`: restores standard RNDIS and ECM tethering gadget function creation.
-  - Fixed NCM/RNDIS Interface Naming (`f_ncm.c`, `f_rndis.c`, `f_ecm.c`): named network devices `ncm%d`, `rndis%d`, and `ecm%d` instead of generic `usb%d`. Resolves `ERROR could not enable IpServer for function NCM` where Android 14+ Tethering rejected `usb0` (expecting `ncm\d`), which previously caused Android to fail to start its DHCP server and left host PCs stuck on "Configuring network address".
-• MGLRU Stability & `mmap_sem` Lock Contention Fix:
-  - Mapped sysfs writes of `1` in `mm/vmscan.c` to `0x0001` (`LRU_GEN_CORE` only), disabling `LRU_GEN_MM_WALK` table walker lock contention on `mmap_sem` that previously caused app freezes under memory pressure.
-• Fixed Screen-Off Wakeup Freeze & Deep Eco Black Screen:
-  - Added retry workqueue in `drivers/misc/ki_profile.c` when secondary CPUs are offline during screen-on resume, preventing system lockups.
-  - Treated AOD LP1/LP2 low-power display modes as active display to prevent throttling governor frequencies while interacting with lockscreen.
-  - Rebalanced Battery profile CPU frequencies and set `SCREEN_OFF_BATTERY=0` default.
-• Overhauled Thermal & Performance Profiles for Outdoor Stability:
-  - Rebalanced Balanced and Battery profiles for efficient daily multitasking with schedutil down-hold and WALT migration tuning, keeping temperatures cool under direct sunlight.
-
-## Ki-kernel v1.5 (Initial Release):
-• Fixed Force Fast Charge and Restored Peak 67W / PPS Turbo Charging ("Gacor"):
-  - Fixed Force Fast Charge having no effect on Wall Chargers (DCP/HVDCP/QC): previous implementation only updated `usb_icl_votable` for PC USB ports (`POWER_SUPPLY_TYPE_USB` / CDP), leaving wall adapters hardcoded to 1.5A. `smblib_set_force_fast_charge()` and plugin handlers now un-throttle `SW_ICL_MAX_VOTER`, `DCP_VOTER`, and `HVDCP2_ICL_VOTER` across all charger types up to 3.5A.
-  - Eliminated PPS Thermal Postponement & Starvation: `mi_thermald` writes to `system_temp_level` every 1–2s previously rescheduled a 3-second delayed worker continuously, starving PPS thermal level updates and locking charging to throttled levels (~15W–30W).
-  - Instant PPS Thermal Clamping: Re-introduced instantaneous PPS thermal clamping to Level 0 (12.4A / 67W) and canceled the delayed worker whenever Force Fast Charge or Screen-On Fast Charge is active.
-  - Unlocked Dual Charge Pump (Master + Slave BQ): Clamping thermal level to 0 at entry prevents lockout (`MAX_THERMAL_LEVEL_FOR_DUAL_BQ`), allowing dual charge pump to engage full 12.4A turbo power while retaining hardware emergency thermal protection at 49.0°C.
-• Fixed Notorious POCO F4 (munch) Auto-Shutdown While Charging Bug:
-  - Root Cause: Stock Xiaomi driver (`bq27z561_fg_munch.c`) live-polled hardware I2C registers on every sysfs read whenever USB was connected (`usb_in`). High-wattage fast charging (67W / 6A) switching noise and EMI induced intermittent I2C read spikes or 0xFFFF returns (6280.5°C), prompting Android's BatteryService to trigger an emergency thermal shutdown (`ro.boot.bootreason = shutdown,thermal,battery`).
-  - I2C Polling Rate-Limiter: Capped I2C temperature sampling to at most once per 1000ms, eliminating 95% of unnecessary bus traffic and preventing bus collisions.
-  - Sanity Check & Auto-Retry: Rejects raw Kelvin anomalies (< -20°C or > 65°C, 0x0000, 0xFFFF) with immediate retry on bus contention, falling back to last valid temperature instead of injecting fake error spikes.
-  - Slew-Rate Transient Filter: Rejects physically impossible single-sample jumps (> 4.0°C/s), eliminating single-frame thermal spikes.
-  - Safe Temperature Clamp (56.0°C): Guarantees reported battery temperature never trips Android's shutdown threshold while preserving hardware JEITA current cutoffs.
-  - Dual-Layer Defense: Added fallback temperature validation in SMB5 PMIC charger (`smblib_get_prop_from_bms`).
-• Restored Balanced Profile to cool, ultra-efficient daily multitasking sweet-spot:
-  - Capped Prime to 2.84GHz and Gold to 2.21GHz (avoids power-hungry 1.15V+ voltage spike while keeping 120Hz butter-smooth)
-  - Schedutil 10ms down-hold & 1500us Prime ramp-up delay (eliminates -1000mA to -1500mA active drain, drops multitasking current to -300mA ~ -600mA)
-  - Restored WALT group migration to 95/85 to retain background multitasking threads on power-efficient Silver cluster
-• Supercharged Performance / Gaming Turbo Profile for maximum competitive gaming (MLBB/Genshin/COD):
-  - Peak hardware clocks unlocked (Prime 3.19GHz, Gold 2.42GHz) with zero-lag ramp-up (0us) and 20ms frame hold
-  - Boosted Prime RTG render thread frequency to 2.84GHz (delivers rock-solid 120 FPS in intense teamfights)
-  - Eager gaming thread promotion (up_migrate 60/45, grp 70/55) to prevent any render threads from staying on LITTLE cores
-  - Tuned swappiness (50) and vfs_cache_pressure (60) to eliminate asset streaming micro-stutters
-• Defaulted blk-mq I/O scheduler to low-latency BFQ / Maple (eliminated ADIOS barrier flush stalls)
-• Perfected OPlus / ColorOS subsystem: added robust hardware fallback for Project ID (20807), PCB (T6), boot mode, modem, and operator when SMEM 135 is absent on Xiaomi bootloader
-• Fixed OPlus NWPower & IPv6 RTO netlink initialization failure by raising MAX_LINKS to 48 in `netlink.h` and `af_netlink.c`
-• Implemented OPlus Frame Boost & SchedAssist emulation nodes (`/proc/oplus_frame_boost/{ctrl,sys_ctrl}`, `/proc/oplus_scheduler/sched_assist/{ux_task_app,audio/status}`, `/proc/oplus_binder/ux_flag`, `/proc/sys/fbg/frame_boost_enabled`, and per-task `/proc/<pid>/task/<tid>/ux_state`), eliminating SchedAssist ENOENT errors
-• Added dummy ioctl handler for OPlus procfs nodes to prevent launcher and service ioctl rejections
-• Fixed potential kernel panic in `get_serialID()` by adding null checks on `saved_command_line`
-• Eliminated 4KB memory leak in `oemports10t.c` and implemented proper module exit cleanup
-• Configured system group ownership (1000) and read permissions for `/proc/oplusVersion/*` and `/proc/oplus_charger/*`
-• Updated ReSuKSU / BakaSU to latest upstream (`v4.2.0-rc3-70`):
-  - Added 32-bit userspace compat support on 64-bit kernel
-  - Improved SELinux hide time side-channel defense and hash-indexed sidtab checking
-  - Synced SuSFS inline hooks with latest KernelSU changes
-  - Retained multi-manager signature support (KernelSU Official, KernelSU-Next, SukiSU, RKSU, MKSU, and BakaSU)
-  - Implemented KernelSU `KSU_IOCTL_LOOKUP_SYMBOLS` & `KSU_GET_INFO_FLAG_PREINIT` while maintaining UAPI 5 compatibility for BakaSU / ReSukiSU manager, Zygisk, and `ksud` modules
-• Resolved Turbo Gaming GPU Power Collapse & Adreno GMU lockup (anti-freeze & anti-Sleep of Death)
-• Removed dangerous force_on flags (`KGSL_PWRFLAGS_CLK_ON` / `AXI_ON`) that stalled system suspend
-• Auto-disarmed GPU Performance mode when screen is OFF to ensure complete SoC low-power sleep
-• Restored CPU relaxation (`cpu_relax`) in `rwsem_spin_on_owner` loop to prevent lock contention
-• Allowed Screen-Off Battery profile to engage cleanly during screen-off under Performance mode
-• Tuned Adreno GPU interval timeout (200ms) for frame-pacing without breaking power collapse
-• Introduced Ki-Daemon (Rust Native Auto Game Turbo & Automation) & Ki-Kernel Settings v1.2:
-  - Ultra-lightweight native Rust daemon (<500KB stripped, ~1MB RAM usage, zero GC overhead)
-  - Zero-overhead in-memory top-app cgroup detection with robust `:sub_process` suffix stripping and game priority matching
-  - Automated Game Turbo switching: jumps to Performance mode in games, seamlessly reverts to Balanced on exit
-  - Intelligent Auto Bypass Charging: engages direct charger power only while actively gaming, disarms on exit
-  - Automated MGLRU Depth scaling: shifts to Mode 7 Gaming Turbo in games, restores Mode 1 for daily multitasking
-  - Pocket power preservation: enters 4s sleep when display panel is dark
-  - Ki-Setting WebUI Tab 2 "Auto Game Turbo": toggle daemon, customize game/exit profiles, auto-bypass, auto-MGLRU, clean responsive layout, and add/remove game packages dynamically
+## Ki-kernel v1.5 :
+- Updated BakaSU and ReSukiSU to UAPI v6
+- Added full FinaSU Manager support
+- Added 32-bit userspace KernelSU compatibility
+- Added kernel-side per-app network isolation
+- Synced SuSFS v2.3.0 inline hooks and bugfixes
+- Added automated SuSFS early-boot spoofing
+- Added SuSFS priority UID filter protection
+- Updated NoMount kernel integration to v2.2.0
+- Fixed Kernel Manager sysfs SELinux denials
+- Ported hardware AOSP DC Dimming support
+- Fixed display sysfs SELinux permission issues
+- Improved SDE KCAL hardware color calibration
+- Fixed Force Fast Charge on wall adapters
+- Restored full 67W PPS turbo charging
+- Fixed random thermal shutdowns while charging
+- Fixed duplicate charger sysfs registration warnings
+- Tuned Battery, Balanced, and Performance profiles
+- Tuned CPU scheduling and gaming frame pacing
+- Fixed screen-off wakeup freezes and AOD issues
+- Hardened Ki-Profile sysfs and worker stability
+- Fixed Adreno GPU freezes and Sleep of Death
+- Fixed MGLRU lock contention and app freezes
+- Set BFQ and Maple as default I/O schedulers
+- Improved BBRv3 network congestion control
+- Fixed USB tethering and DHCP connection issues
+- Improved Droidspaces and Linux container support
+- Added OPlus Frame Boost and SchedAssist support
+- Fixed OPlus port netlink and driver issues
+- Improved AnyKernel3 universal Multi-ROM detection
 
 ## Ki-kernel v1.4.1:
 • Backported modern eBPF features for Android 16 and 17

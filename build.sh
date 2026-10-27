@@ -98,12 +98,12 @@ case "$2" in
         SUSFS_ENABLE=1
         VARIANT_TAG="KSU+SUSFS"
         ;;
-    ksu-nosusfs|nosusfs|plain)
+    ksu-nosusfs|nosusfs|plain|onlyksu|ksu-only|only-ksu)
         KSU_ENABLE=1
         SUSFS_ENABLE=0
         VARIANT_TAG="KSU"
         ;;
-    noksu|vanilla|none)
+    noksu|vanilla|none|no-ksu)
         KSU_ENABLE=0
         SUSFS_ENABLE=0
         VARIANT_TAG="NOKSU"
@@ -163,7 +163,8 @@ apply_ksu_config() {
                 -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                 -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -e KSU_SUSFS_OPEN_REDIRECT \
-                -e KSU_SUSFS_SUS_OVERLAYFS
+                -e KSU_SUSFS_SUS_OVERLAYFS \
+                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
         else
             scripts/config --file out/.config \
                 -e KSU_MANUAL_HOOK \
@@ -183,7 +184,8 @@ apply_ksu_config() {
                 -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                 -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -d KSU_SUSFS_OPEN_REDIRECT \
-                -d KSU_SUSFS_SUS_OVERLAYFS
+                -d KSU_SUSFS_SUS_OVERLAYFS \
+                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
         fi
     else
         scripts/config --file out/.config \
@@ -204,7 +206,8 @@ apply_ksu_config() {
             -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             -d KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_OVERLAYFS
+            -d KSU_SUSFS_SUS_OVERLAYFS \
+            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
     fi
 }
 
@@ -227,6 +230,8 @@ apply_droidspaces_config() {
         -e CGROUP_FREEZER \
         -e CGROUP_NET_PRIO \
         -e MEMCG \
+        -e MEMCG_SWAP \
+        -e MEMCG_SWAP_ENABLED \
         -e CFS_BANDWIDTH \
         -e CGROUP_PIDS \
         -e CGROUP_CPUACCT \
@@ -238,6 +243,10 @@ apply_droidspaces_config() {
         -e FW_LOADER_USER_HELPER \
         -e NET_NS \
         -e VETH \
+        -e MACVLAN \
+        -e MACVTAP \
+        -e IPVLAN \
+        -e IPVTAP \
         -e BRIDGE \
         -e NETFILTER \
         -e BRIDGE_NETFILTER \
@@ -293,6 +302,7 @@ apply_droidspaces_config() {
         -e NETFILTER_XT_TARGET_CHECKSUM \
         -e USB_CONFIGFS_RNDIS \
         -e USB_CONFIGFS_ECM \
+        --set-val BLK_DEV_LOOP_MIN_COUNT 32 \
         -d ANDROID_PARANOID_NETWORK
 }
 
