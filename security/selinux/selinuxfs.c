@@ -130,14 +130,13 @@ static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 	ssize_t length;
 #if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
 	if (early_rom_type == 3) {
-		bool hide = false;
-
-		if (current->cred->uid.val >= 10000)
-			hide = true;
-		else if (strstr(current->comm, ".gms") != NULL)
-			hide = true;
-
-		length = scnprintf(tmpbuf, TMPBUFLEN, "%d", hide ? 1 : 0);
+		/*
+		 * Always report Enforcing (1) for OPlus ports.
+		 * Eliminates UID/comm checks that leaked Permissive (0) to
+		 * Keystore2 (UID 1017), SystemServer (UID 1000), and GMS worker threads,
+		 * restoring Google Play Strong Integrity.
+		 */
+		length = scnprintf(tmpbuf, TMPBUFLEN, "1");
 	} else {
 		length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
 				   enforcing_enabled(fsi->state));

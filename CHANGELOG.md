@@ -1,11 +1,27 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-27  
+**Build Date:** 2026-10-28  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.6.0 :
+- Ported task_is_critical() (oom_score_adj <= -900) to mm/vmscan.c to skip direct reclaim throttling on SurfaceFlinger, display composer, and camera (eliminates video stuttering, camera lag, and UI rendering stalls)
+- Fixed OPlus Enforcing Spoofing in selinuxfs.c, status.c, and avc.c to report Enforcing (1) consistently across libselinux mmap status page, Keystore2, and SystemServer (restores Google Play Strong Integrity on ColorOS / OxygenOS / RealmeUI ports)
+- Added silent kernel AVC grant for missing SELinux rules on OPlus ports (early_rom_type == 3) to prevent hardware driver denials (camera, audio, fingerprint, sensors)
+- Fixed AnyKernel3 auto-detection order to properly identify ColorOS / OxygenOS / RealmeUI ports instead of misidentifying them as MIUI due to Xiaomi vendor region properties
+- Added 2000ms debounce (KI_PSY_SETTLE_MS) in power supply notifier to eliminate SMB5 IRQ storms and severe thermal/profile throttling lag when connecting a charger
+- Added 2-second debounce in ki_daemon bypass charging controller to eliminate charger flapping during plug-in
+- Removed kernel-side vm_swappiness overrides in ki_profile to let ROM defaults manage swap behavior
+- Disabled CONFIG_PROC_CHILDREN in defconfig to eliminate useless task traversal overhead
+- Completely eliminated redundant ki_profile dmesg log spam by tracking last applied profile mode
+- Fixed screen-off suspend aborts (alarmtimer.0.auto error -16) by lengthening daemon poll interval to 10s when display is asleep (fixes heavy battery drain)
+- Optimized daemon polling lifecycle (1.5s during gaming, 3.0s during regular usage, 10.0s when screen is off)
+- Corrected MGLRU presets in WebUI (Mode 1: Safe/Gaming vs Mode 7: Aggressive/Multitasking) to prevent page-table lock stalls while gaming
+- Added Fast Reboot (Zygote restart) in WebUI for AOSP with automatic detection and safe reboot on HyperOS/MIUI
+- Added Android system notifications when Game Turbo activates and deactivates
 
 ## Ki-kernel v1.5.1 :
 - Tuned Balanced profile WALT migration margins to 90/82 (fixed severe FPS drop & stutter in 120Hz/90Hz)

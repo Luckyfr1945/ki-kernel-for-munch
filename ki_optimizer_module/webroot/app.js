@@ -467,9 +467,8 @@ async function refreshState() {
     updateFeatureRow(rowDynFsync, toggleDynFsync, badgeDynFsync, props["HAS_DYNSYNC"] === "1", props["VAL_DYNSYNC"] === "1", "Active", "Off");
     updateFeatureRow(rowThermal, toggleThermal, badgeThermal, props["HAS_THERMAL"] === "1", props["VAL_THERMAL"] === "1", "Active", "Bypass");
 
-    if (rangeSwappiness && props["VAL_SWAP"]) {
-      rangeSwappiness.value = props["VAL_SWAP"];
-      if (valSwappiness) valSwappiness.textContent = props["VAL_SWAP"];
+    if (badgeSwappiness && props["VAL_SWAP"]) {
+      badgeSwappiness.textContent = `Default (${props["VAL_SWAP"]})`;
     }
 
     if (selectTcp && props["VAL_TCP"]) {
@@ -495,7 +494,6 @@ async function applyChanges(silent = false) {
   const wakelock = toggleWakelock?.checked ? 1 : 0;
   const dynfsync = toggleDynFsync?.checked ? 1 : 0;
   const thermal = toggleThermal?.checked ? 1 : 0;
-  const swap = rangeSwappiness ? rangeSwappiness.value : 130;
   const tcp = selectTcp ? selectTcp.value : "cubic";
 
   const script = `
@@ -541,10 +539,7 @@ async function applyChanges(silent = false) {
     # 9. Apply TCP Congestion
     echo "${tcp}" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
 
-    # 10. Apply Swappiness
-    echo ${swap} > /proc/sys/vm/swappiness 2>/dev/null
-
-    # 11. Persist to /sdcard/ki_optimizer.conf
+    # 10. Persist to /sdcard/ki_optimizer.conf (Swappiness left at ROM default)
     CONF="/sdcard/ki_optimizer.conf"
     if [ -f "$CONF" ]; then
       sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${prof}/" "$CONF" 2>/dev/null
@@ -558,7 +553,6 @@ async function applyChanges(silent = false) {
       sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=${thermal}/" "$CONF" 2>/dev/null
       sed -i -E "s/^DYNAMIC_FSYNC=.*/DYNAMIC_FSYNC=${dynfsync}/" "$CONF" 2>/dev/null
       sed -i -E "s/^TCP_CONGESTION=.*/TCP_CONGESTION=\\"${tcp}\\"/" "$CONF" 2>/dev/null
-      sed -i -E "s/^SWAPPINESS=.*/SWAPPINESS=${swap}/" "$CONF" 2>/dev/null
     fi
   `;
 
@@ -864,6 +858,30 @@ selectTcp?.addEventListener("change", (e) => {
 
 btnApply?.addEventListener("click", () => {
   applyChanges(false);
+});
+
+const btnSoftReboot = document.getElementById("btn-soft-reboot");
+btnSoftReboot?.addEventListener("click", async () => {
+  try {
+    const { stdout } = await exec(`
+      if grep -qiE "hyper|miui" /system/build.prop 2>/dev/null || [ -n "$(getprop ro.miui.ui.version.name)" ] || [ -n "$(getprop ro.mi.os.version.name)" ]; then
+        echo "miui"
+      else
+        echo "aosp"
+      fi
+    `);
+    const isMiui = stdout.trim() === "miui";
+    if (isMiui) {
+      showToast("Fast reboot dinonaktifkan di HyperOS/MIUI (hindari bootloop). Gunakan reboot sistem bila perlu.", true);
+      return;
+    }
+    showToast("Memulai Fast Reboot (Restart Zygote AOSP)...");
+    setTimeout(async () => {
+      await exec("setprop ctl.restart zygote || svc power reboot userspace");
+    }, 700);
+  } catch (err) {
+    showToast("Gagal melakukan Fast Reboot", true);
+  }
 });
 
 // Daemon Listeners

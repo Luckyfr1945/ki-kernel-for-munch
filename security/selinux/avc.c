@@ -30,6 +30,9 @@
 #include <linux/audit.h>
 #include <linux/ipv6.h>
 #include <net/ipv6.h>
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+#include <linux/e404_attributes.h>
+#endif
 #include "avc.h"
 #include "avc_ss.h"
 #include "classmap.h"
@@ -1042,6 +1045,14 @@ static noinline int avc_denied(struct selinux_state *state,
 {
 	if (flags & AVC_STRICT)
 		return -EACCES;
+
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+	if (early_rom_type == 3) {
+		avc_update_node(state->avc, AVC_CALLBACK_GRANT, requested, driver,
+				xperm, ssid, tsid, tclass, avd->seqno, NULL, flags);
+		return 0;
+	}
+#endif
 
 	if (enforcing_enabled(state) &&
 	    !(avd->flags & AVD_FLAGS_PERMISSIVE))

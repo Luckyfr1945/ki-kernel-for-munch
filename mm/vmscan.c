@@ -6215,6 +6215,10 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 	if (!pgdat)
 		goto out;
 
+	/* Critical UI / camera / system tasks must not be throttled */
+	if (task_is_critical())
+		goto out;
+
 	/* Account for the throttling */
 	count_vm_event(PGSCAN_DIRECT_THROTTLE);
 

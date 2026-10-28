@@ -136,31 +136,23 @@
                 <h3>Multi-Gen LRU (MGLRU)</h3>
                 <span class="setting-status" id="badge-mglru">Checking...</span>
               </div>
-              <p>Modern memory page reclaiming algorithm. Controls page table scanning depth.</p>
+              <p>Next-gen page aging. Mode 1 (Standard) is recommended for smooth gaming. Mode 7 (Aggressive) maximizes app caching but can cause micro-stutters during heavy gaming.</p>
             </div>
             <div class="mglru-segmented" id="mglru-group">
               <button type="button" class="mglru-btn" data-mode="0" id="btn-mglru-0">Off</button>
-              <button type="button" class="mglru-btn" data-mode="1" id="btn-mglru-1">Standard</button>
-              <button type="button" class="mglru-btn" data-mode="7" id="btn-mglru-7">Gaming</button>
+              <button type="button" class="mglru-btn" data-mode="1" id="btn-mglru-1">Standard (Safe)</button>
+              <button type="button" class="mglru-btn" data-mode="7" id="btn-mglru-7">Aggressive</button>
             </div>
           </div>
 
-          <!-- Swappiness Slider -->
-          <div class="setting-row setting-row-stack" id="row-swappiness">
+          <!-- Swappiness Status -->
+          <div class="setting-row" id="row-swappiness">
             <div class="setting-copy">
               <div class="setting-title-line">
                 <h3>zRAM Swappiness</h3>
-                <span class="setting-status" id="badge-swappiness">Supported</span>
+                <span class="setting-status" id="badge-swappiness">Default</span>
               </div>
-              <p>Controls kernel aggressiveness in paging inactive memory pages into compressed zRAM.</p>
-            </div>
-            <div class="range-container">
-              <div class="range-header">
-                <label for="range-swappiness">Swappiness Level</label>
-                <output class="range-val" id="val-swappiness" for="range-swappiness">130</output>
-              </div>
-              <input type="range" id="range-swappiness" min="0" max="200" step="5" value="130">
-              <div class="range-scale"><span>0 (Low)</span><span>100 (Default)</span><span>200 (Aggressive)</span></div>
+              <p>Preserved at Android ROM default (no kernel override) to eliminate memory latency and keep system responsive.</p>
             </div>
           </div>
         </div>
@@ -441,6 +433,7 @@
   <!-- Floating Apply Bar -->
   <div class="bottom-bar">
     <button class="btn-apply" id="btn-apply" type="button">Apply & Save Settings</button>
+    <button class="btn-soft-reboot" id="btn-soft-reboot" type="button" title="Fast userspace soft-reboot (AOSP only)">⚡ Fast Reboot</button>
   </div>
 
   <!-- Toast Notice -->

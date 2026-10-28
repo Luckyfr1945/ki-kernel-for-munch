@@ -34,7 +34,7 @@ NO_BLOCK_DISPLAY=1;
 
 ui_print " ";
 ui_print "  ===========================================";
-ui_print "  |          Ki-Kernel v1.5 | munch         |";
+ui_print "  |         Ki-Kernel v1.6.0 | munch        |";
 ui_print "  |                                         |";
 ui_print "  ===========================================";
 ui_print " ";
@@ -54,7 +54,10 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
     elif [ -f /tmp/miui ] || [ -f /tmp/hyperos ] || [ -f /sdcard/miui ] || [ -f /sdcard/hyperos ] || [ -f /data/miui ]; then
         IS_MIUI=1;
         ROM_TYPE="MIUI / HyperOS (Manual Override)";
-    elif [ -f /tmp/oplus ] || [ -f /tmp/oos ] || [ -f /tmp/coloros ] || [ -f /sdcard/oplus ] || [ -f /data/oplus ]; then
+    elif [ -f /tmp/oplus ] || [ -f /tmp/oos ] || [ -f /tmp/coloros ] || \
+         [ -f /sdcard/oplus ] || [ -f /sdcard/coloros ] || [ -f /sdcard/oos ] || \
+         [ -f /sdcard/Download/oplus ] || [ -f /sdcard/Download/coloros ] || \
+         [ -f /data/oplus ] || [ -f /data/coloros ]; then
         IS_OPLUS=1;
         ROM_TYPE="ColorOS / OxygenOS (Manual Override)";
     fi;
@@ -73,51 +76,58 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
         fi;
     fi;
 
-    # 3. E404 Auto Configuration ROM Detection
+    # 3. Auto Configuration ROM Detection
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
         # Mount vendor and product if available in recovery
         mount -o ro /vendor 2>/dev/null || mount /vendor 2>/dev/null;
         mount -o ro /product 2>/dev/null || mount /product 2>/dev/null;
 
-        # Oplus Port ROM detection (E404 method)
+        # Oplus / ColorOS / OxygenOS Port ROM detection
+        # Must check BEFORE MIUI because ColorOS ports on Xiaomi devices retain stock Xiaomi vendor props!
         oplus=0;
         if [ -f /vendor/OemPorts10T.prop ] || [ -f /vendor/etc/init/OemPorts10T.rc ] || \
-           [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ]; then
-            ui_print " ! Detected OPLUS Port ROM by Dandaa !";
+           [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ] || \
+           [ -d /data/data/com.oplus.safecenter ] || [ -d /data/data/com.coloros.phonemanager ] || \
+           [ -d /data/data/oplus ] || [ -f /data/oplusbootstats ] || [ -d /data/oplus_lib ] || \
+           [ -d /data/data/com.oplus.camera ] || [ -d /data/persist_log/oplusreserve ] || \
+           [ -d /vendor/oplus ] || [ -d /vendor/euclid/oplus ] || [ -d /my_product ] || \
+           grep -iq "coloros\|oplus" /vendor/build.prop 2>/dev/null; then
+            ui_print " ! Detected OPLUS / ColorOS / OxygenOS Port !";
             oplus=1;
         fi;
 
-        # MIUI / HyperOS region detection (E404 method)
-        miprops="$(file_getprop /vendor/build.prop "ro.vendor.miui.build.region" 2>/dev/null)";
-        if [ -z "$miprops" ]; then
-            miprops="$(file_getprop /product/etc/build.prop "ro.miui.build.region" 2>/dev/null)";
-        fi;
-        if [ -z "$miprops" ]; then
-            miprops="$(getprop ro.vendor.miui.build.region 2>/dev/null)";
-        fi;
-        if [ -z "$miprops" ]; then
-            miprops="$(getprop ro.miui.build.region 2>/dev/null)";
-        fi;
+        if [ "$oplus" -eq 1 ]; then
+            ui_print "--> Oplus Port ROM detected, configuring...";
+            IS_OPLUS=1;
+            ROM_TYPE="OPlus Port (ColorOS / OxygenOS / RealmeUI)";
+            ROM_DETAIL="ColorOS / OxygenOS / RealmeUI";
+        else
+            # MIUI / HyperOS region detection (E404 method)
+            miprops="$(file_getprop /vendor/build.prop "ro.vendor.miui.build.region" 2>/dev/null)";
+            if [ -z "$miprops" ]; then
+                miprops="$(file_getprop /product/etc/build.prop "ro.miui.build.region" 2>/dev/null)";
+            fi;
+            if [ -z "$miprops" ]; then
+                miprops="$(getprop ro.vendor.miui.build.region 2>/dev/null)";
+            fi;
+            if [ -z "$miprops" ]; then
+                miprops="$(getprop ro.miui.build.region 2>/dev/null)";
+            fi;
 
-        case "$miprops" in
-            cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
-                ui_print "--> Miui/HyperOS ROM detected, configuring...";
-                IS_MIUI=1;
-                ROM_TYPE="Xiaomi MIUI / HyperOS";
-                ROM_DETAIL="Region: $miprops";
-                ;;
-            *)
-                if [ "$oplus" -ne 1 ]; then
+            case "$miprops" in
+                cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
+                    ui_print "--> Miui/HyperOS ROM detected, configuring...";
+                    IS_MIUI=1;
+                    ROM_TYPE="Xiaomi MIUI / HyperOS";
+                    ROM_DETAIL="Region: $miprops";
+                    ;;
+                *)
                     ui_print "--> AOSP/CLO ROM detected, configuring...";
                     IS_AOSP=1;
                     ROM_TYPE="AOSP / Custom ROM";
-                else
-                    ui_print "--> Oplus Port ROM detected, configuring...";
-                    IS_OPLUS=1;
-                    ROM_TYPE="OPlus Port (ColorOS / OxygenOS / RealmeUI)";
-                fi;
-                ;;
-        esac;
+                    ;;
+            esac;
+        fi;
     fi;
 
 

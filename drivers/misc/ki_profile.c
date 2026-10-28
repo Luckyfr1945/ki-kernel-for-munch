@@ -33,6 +33,12 @@ EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
 static DEFINE_SPINLOCK(ki_guard_lock);
 
+/*
+ * Profile switch debounce: prevent re-application spam.
+ * Tracks last applied mode and timestamp to skip redundant applies.
+ */
+static int ki_last_logged_mode = -1;
+
 /* Profile actually applied right now (differs while screen is off) */
 static int ki_active_mode = -1;
 
@@ -543,7 +549,7 @@ static int apply_ki_profile(int mode, bool force)
 		ut = &ki_tunes[user_mode];
 
 		ki_cpufreq_reset_idle_floors(user_mode);
-		vm_swappiness = ut->swappiness;
+		/* Swappiness left at default as requested: do not override vm_swappiness */
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
@@ -551,7 +557,11 @@ static int apply_ki_profile(int mode, bool force)
 		setup_per_zone_wmarks();
 	}
 
-	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
+	/* Only log actual profile transitions to avoid dmesg spam */
+	if (mode != ki_last_logged_mode) {
+		pr_info("ki_profile: %s profile active\n", profile_names[mode]);
+		ki_last_logged_mode = mode;
+	}
 	return err;
 }
 
@@ -707,6 +717,16 @@ static struct notifier_block ki_display_nb = {
 
 static struct delayed_work ki_psy_work;
 
+/*
+ * Charging transient suppression:
+ * When charger is plugged/unplugged, the SMB5 driver fires a burst of IRQs
+ * (usbin-uv, chg-state-change) over 1-3 seconds. During this transient,
+ * thermals spike briefly and profile re-evaluation can cause severe lag.
+ * We defer re-evaluation by 2 seconds after the last PSY event to let
+ * the power path stabilize.
+ */
+#define KI_PSY_SETTLE_MS	2000
+
 static void ki_psy_work_fn(struct work_struct *work)
 {
 	static int last_supplied = -1;
@@ -739,10 +759,14 @@ static int ki_psy_notifier_cb(struct notifier_block *nb,
 
 	/*
 	 * Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events.
-	 * Defer evaluation to ki_psy_work to keep the notifier callback fast and lightweight.
+	 * Defer evaluation by KI_PSY_SETTLE_MS to let SMB5 IRQ storm and thermal
+	 * transients stabilize before any profile re-evaluation.
+	 * mod_delayed_work resets the timer on each new event, so the actual
+	 * evaluation only fires KI_PSY_SETTLE_MS after the LAST event in the burst.
 	 */
 	if (strcmp(psy->desc->name, "usb") == 0)
-		queue_delayed_work(system_power_efficient_wq, &ki_psy_work, 0);
+		mod_delayed_work(system_power_efficient_wq, &ki_psy_work,
+				 msecs_to_jiffies(KI_PSY_SETTLE_MS));
 
 	return NOTIFY_OK;
 }

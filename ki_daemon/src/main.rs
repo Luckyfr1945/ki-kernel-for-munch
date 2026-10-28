@@ -35,6 +35,9 @@ const PLUG_DEBOUNCE_POLLS: u32 = 3;
 const SCREEN_OFF_GRACE: Duration = Duration::from_secs(30);
 /// Jarak minimum antar pemanggilan `dumpsys` (fork mahal).
 const DUMPSYS_MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// Charging transient hold: delay after charger plug/unplug before allowing bypass changes.
+/// SMB5 fires IRQ storms for 1-3 seconds during plug events; this prevents profile thrashing.
+const CHARGE_SETTLE: Duration = Duration::from_secs(2);
 
 const DEFAULT_GAMES: &[&str] = &[
     "com.mobile.legends",
@@ -300,7 +303,18 @@ fn write_any(nodes: &[&str], val: &str, what: &str) -> bool {
 }
 
 fn set_kernel_profile(mode: u32) -> bool {
-    write_any(&PROFILE_NODES, &mode.to_string(), "profile")
+    let ok = write_any(&PROFILE_NODES, &mode.to_string(), "profile");
+    if ok {
+        // Verify write-back: read the profile to confirm kernel accepted the change
+        if let Some(actual) = read_u32_node(&PROFILE_NODES) {
+            if actual != mode {
+                eprintln!("[Ki-Daemon] WARN: profile write mismatch! wrote {mode}, kernel has {actual}");
+                // Retry once
+                write_any(&PROFILE_NODES, &mode.to_string(), "profile_retry");
+            }
+        }
+    }
+    ok
 }
 
 fn set_bypass_charging(enabled: bool) -> bool {
@@ -402,6 +416,27 @@ fn is_screen_on() -> bool {
         return val == "active";
     }
     true
+}
+
+// ---------------------------------------------------------------------------
+// Toast / Notification helpers
+// ---------------------------------------------------------------------------
+
+/// Show an Android notification for game turbo state changes.
+/// Uses `cmd notification post` which works without a running Activity.
+fn notify_game_turbo(engaged: bool, game_pkg: &str) {
+    let msg = if engaged {
+        format!("🎮 Game Turbo: ON — {}", game_pkg.split('.').last().unwrap_or(game_pkg))
+    } else {
+        "🎮 Game Turbo: OFF — Restored".to_string()
+    };
+    // Fire and forget — don't block the main loop
+    let _ = Command::new("cmd")
+        .args(["notification", "post", "-t", "Ki-Kernel", "ki_turbo", &msg])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 // ---------------------------------------------------------------------------
@@ -540,6 +575,7 @@ struct Engaged {
     // runtime-only
     last_mglru: Option<u32>,
     plug: Debounce,
+    last_plug_change: Option<Instant>,
 }
 
 fn fmt_opt(v: Option<u32>) -> String {
@@ -642,10 +678,14 @@ fn begin_game(cfg: &DaemonConfig) -> Engaged {
 }
 
 fn tick_game(st: &mut Engaged, cfg: &DaemonConfig, current_profile: &mut u32) {
-    if *current_profile != cfg.game_profile {
+    // Profile sync verification: read kernel's actual profile and fix mismatch
+    let kernel_profile = read_u32_node(&PROFILE_NODES).unwrap_or(cfg.game_profile);
+    if kernel_profile != cfg.game_profile {
         set_kernel_profile(cfg.game_profile);
         *current_profile = cfg.game_profile;
-        println!("[Ki-Daemon] Game profile synchronized to {}", cfg.game_profile);
+        println!("[Ki-Daemon] Profile sync corrected: kernel had {kernel_profile}, forced to {}", cfg.game_profile);
+    } else if *current_profile != cfg.game_profile {
+        *current_profile = cfg.game_profile;
     }
 
     // Tulis MGLRU hanya saat nilainya memang berubah.
@@ -662,10 +702,19 @@ fn tick_game(st: &mut Engaged, cfg: &DaemonConfig, current_profile: &mut u32) {
     if cfg.auto_bypass_charging {
         let is_bypass = st.bypass_owned || read_u32_node(&BYPASS_NODES) == Some(1);
         let sample = is_charger_connected(is_bypass);
-        if st.plug.feed(sample, PLUG_DEBOUNCE_POLLS) {
-            claim_bypass(st);
-        } else {
-            release_bypass(st);
+        let prev_stable = st.plug.stable;
+        let new_stable = st.plug.feed(sample, PLUG_DEBOUNCE_POLLS);
+        if prev_stable != new_stable {
+            st.last_plug_change = Some(Instant::now());
+        }
+        // Pastikan transien PMIC/SMB5 telah stabil selama CHARGE_SETTLE sebelum claim/release
+        let settled = st.last_plug_change.map_or(true, |t| t.elapsed() >= CHARGE_SETTLE);
+        if settled {
+            if new_stable {
+                claim_bypass(st);
+            } else {
+                release_bypass(st);
+            }
         }
     } else {
         release_bypass(st); // dimatikan lewat config saat sedang aktif
@@ -836,7 +885,7 @@ fn run_daemon() {
             }
             let bypass = read_u32_node(&BYPASS_NODES) == Some(1);
             status.write(build_status("screen_off", engaged.is_some(), current_profile, bypass, &cfg));
-            nap(Duration::from_secs(4), &stop);
+            nap(Duration::from_secs(10), &stop);
             continue;
         }
         screen_off_since = None;
@@ -849,6 +898,7 @@ fn run_daemon() {
             match engaged.as_mut() {
                 None => {
                     println!("[Ki-Daemon] Game detected: {fg_pkg} -> Engaging Game Turbo!");
+                    notify_game_turbo(true, &fg_pkg);
                     engaged = Some(begin_game(&cfg));
                     current_profile = cfg.game_profile;
                 }
@@ -861,6 +911,7 @@ fn run_daemon() {
                 if let Some(st) = engaged.take() {
                     current_profile = restore(&st, &cfg);
                     println!("[Ki-Daemon] Game exited: {last_game_pkg} -> Restored (profile {current_profile})");
+                    notify_game_turbo(false, &last_game_pkg);
                 }
                 exit_misses = 0;
             } else if let Some(st) = engaged.as_mut() {
@@ -871,7 +922,14 @@ fn run_daemon() {
         let bypass = read_u32_node(&BYPASS_NODES) == Some(1);
         status.write(build_status(&fg_pkg, engaged.is_some(), current_profile, bypass, &cfg));
 
-        nap(Duration::from_millis(cfg.poll_interval_ms), &stop);
+        // Saat main game: pakai poll_interval_ms (1.5s) agar reaksi cepat.
+        // Saat buka sosmed/idle: perlambat ke 3s untuk menghemat baterai secara drastis.
+        let sleep_ms = if engaged.is_some() {
+            cfg.poll_interval_ms
+        } else {
+            (cfg.poll_interval_ms * 2).max(3000)
+        };
+        nap(Duration::from_millis(sleep_ms), &stop);
     }
 
     println!("[Ki-Daemon] Stop signal received, cleaning up...");
