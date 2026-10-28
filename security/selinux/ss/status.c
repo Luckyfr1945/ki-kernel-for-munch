@@ -13,9 +13,6 @@
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/mutex.h>
-#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-#include <linux/e404_attributes.h>
-#endif
 #include "avc.h"
 #include "services.h"
 
@@ -59,14 +56,7 @@ struct page *selinux_kernel_status_page(struct selinux_state *state)
 
 			status->version = SELINUX_KERNEL_STATUS_VERSION;
 			status->sequence = 0;
-#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-			if (early_rom_type == 3)
-				status->enforcing = 1;
-			else
-				status->enforcing = enforcing_enabled(state);
-#else
 			status->enforcing = enforcing_enabled(state);
-#endif
 			/*
 			 * NOTE: the next policyload event shall set
 			 * a positive value on the status->policyload,
@@ -101,14 +91,7 @@ void selinux_status_update_setenforce(struct selinux_state *state,
 		status->sequence++;
 		smp_wmb();
 
-#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-		if (early_rom_type == 3)
-			status->enforcing = 1;
-		else
-			status->enforcing = enforcing;
-#else
 		status->enforcing = enforcing;
-#endif
 
 		smp_wmb();
 		status->sequence++;

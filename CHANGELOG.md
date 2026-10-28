@@ -9,8 +9,7 @@
 
 ## Ki-kernel v1.6.0 :
 - Ported task_is_critical() (oom_score_adj <= -900) to mm/vmscan.c to skip direct reclaim throttling on SurfaceFlinger, display composer, and camera (eliminates video stuttering, camera lag, and UI rendering stalls)
-- Fixed OPlus Enforcing Spoofing in selinuxfs.c, status.c, and avc.c to report Enforcing (1) consistently across libselinux mmap status page, Keystore2, and SystemServer (restores Google Play Strong Integrity on ColorOS / OxygenOS / RealmeUI ports)
-- Added silent kernel AVC grant for missing SELinux rules on OPlus ports (early_rom_type == 3) to prevent hardware driver denials (camera, audio, fingerprint, sensors)
+- Optimized OPlus Enforcing Spoofing in selinuxfs.c targeting Play Integrity / GMS and user apps while preserving permissive state for system service daemons to prevent hardware service denials (URCC, RIL, camera, audio, sensors)
 - Fixed AnyKernel3 auto-detection order to properly identify ColorOS / OxygenOS / RealmeUI ports instead of misidentifying them as MIUI due to Xiaomi vendor region properties
 - Added 2000ms debounce (KI_PSY_SETTLE_MS) in power supply notifier to eliminate SMB5 IRQ storms and severe thermal/profile throttling lag when connecting a charger
 - Added 2-second debounce in ki_daemon bypass charging controller to eliminate charger flapping during plug-in
