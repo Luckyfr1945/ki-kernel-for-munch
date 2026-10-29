@@ -233,40 +233,41 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         GETEVENT_CMD="/sbin/getevent";
     fi;
 
-    if [ "$IS_RECOVERY" -eq 1 ] && [ -n "$GETEVENT_CMD" ] && [ -n "$TIMEOUT_CMD" ]; then
+    if [ "$IS_RECOVERY" -eq 1 ]; then
         ui_print " ";
         ui_print "----------------------------------------";
         ui_print " Profil GPU & Voltase:";
-        ui_print "   Vol(+) = OC + UV (683 MHz, Undervolt)";
-        ui_print "   Vol(-) = Stock   (670 MHz, Safe Volt)";
+        ui_print "   (Vol +) OC + UV (683 MHz, Undervolt)";
+        ui_print "   (Vol -) Stock   (670 MHz, Safe Volt)";
         ui_print "----------------------------------------";
-        ui_print " Menunggu input tombol (timeout 15s, default: OC)...";
+        ui_print " Menunggu input tombol (timeout 15 detik, default: OC)...";
 
+        timeout=15;
         start=$(date +%s 2>/dev/null || echo 0);
-        loop_count=0;
+
         while :; do
-            key_event=$($TIMEOUT_CMD 0.3 $GETEVENT_CMD -q -l -c 2 2>/dev/null);
-            case "$key_event" in
-                *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*|*"0073"*"00000001"*)
-                    ui_print " -> Terpilih: OC + Undervolt (683 MHz)";
+            key_event=$(timeout 0.2 getevent -qlc 1 2>/dev/null);
+
+            if [ -n "$key_event" ]; then
+                if echo "$key_event" | grep -qiE "KEY_VOLUMEUP|0073"; then
+                    ui_print "  Selected : OC + Undervolt (683 MHz)" " ";
                     CHOSEN_DTB="oc";
                     break;
-                    ;;
-                *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*|*"0072"*"00000001"*)
-                    ui_print " -> Terpilih: Stock Default (670 MHz)";
+                fi;
+
+                if echo "$key_event" | grep -qiE "KEY_VOLUMEDOWN|0072"; then
+                    ui_print "  Selected : Stock Default (670 MHz)" " ";
                     CHOSEN_DTB="stock";
                     break;
-                    ;;
-            esac;
+                fi;
+            fi;
 
             now=$(date +%s 2>/dev/null || echo 0);
-            loop_count=$((loop_count + 1));
-            if { [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 15 ]; } || [ "$loop_count" -ge 40 ]; then
-                ui_print " -> Waktu habis, memakai default: OC + Undervolt (683 MHz)";
+            if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge $timeout ]; then
+                ui_print "  ! Timeout reached, memakai default: OC + Undervolt (683 MHz)" " ";
                 CHOSEN_DTB="oc";
                 break;
             fi;
-            sleep 0.1;
         done;
     else
         # Flashing dari Android menyala (KernelSU / Magisk / FKM app)
