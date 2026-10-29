@@ -52,7 +52,10 @@ endif
 KBUILD_CFLAGS	+= -mgeneral-regs-only
 ifeq ($(cc-name),clang)
 KBUILD_CFLAGS	+= -mno-implicit-float
+KBUILD_CFLAGS	+= $(call cc-option,-march=armv8.2-a+crypto+dotprod)
 KBUILD_CFLAGS	+= $(call cc-option,-mtune=cortex-a77)
+KBUILD_CFLAGS	+= $(call cc-option,-fno-builtin-bcmp)
+KBUILD_CFLAGS	+= $(call cc-option,-fomit-frame-pointer)
 endif
 KBUILD_CFLAGS	+= $(lseinstr) $(brokengasinst) $(compat_vdso)
 KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables
