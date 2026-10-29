@@ -240,7 +240,7 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         ui_print "   Vol(+) = OC + UV (683 MHz, Undervolt)";
         ui_print "   Vol(-) = Stock   (670 MHz, Safe Volt)";
         ui_print "----------------------------------------";
-        ui_print " Menunggu input tombol (timeout 5s, default: OC)...";
+        ui_print " Menunggu input tombol (timeout 15s, default: OC)...";
 
         start=$(date +%s 2>/dev/null || echo 0);
         loop_count=0;
@@ -261,7 +261,7 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
 
             now=$(date +%s 2>/dev/null || echo 0);
             loop_count=$((loop_count + 1));
-            if { [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 5 ]; } || [ "$loop_count" -ge 20 ]; then
+            if { [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 15 ]; } || [ "$loop_count" -ge 40 ]; then
                 ui_print " -> Waktu habis, memakai default: OC + Undervolt (683 MHz)";
                 CHOSEN_DTB="oc";
                 break;
