@@ -1,11 +1,25 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-28  
+**Build Date:** 2026-10-29  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.6.1 (Beta-Test) :
+- Upgraded Compiler Optimization to -O3 (`CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y`) for aggressive loop unrolling, SIMD auto-vectorization, and superior instruction per clock (IPC) execution
+- Enabled Native ARMv8.2-A Architecture Extensions (`-march=armv8.2-a+crypto+dotprod`) to leverage hardware crypto engines and dot-product vector computation units on Snapdragon 870
+- Optimized Kryo 585 / Cortex-A77 Instruction Pipeline (`-mtune=cortex-a77`) for lower CPU execution latency and smoother 120 FPS frame pacing
+- Added Zero-Overhead Fast-Path Flags (`-fno-builtin-bcmp` and `-fomit-frame-pointer`) to free up general-purpose arm64 registers for active computation
+- Embedded Native AArch64 Static `keycheck` Binary in AnyKernel3: Directly polls Linux input event nodes to guarantee instantaneous physical volume button response in TWRP/OrangeFox
+- Moved Interactive GPU Profile Selector before `flash_boot` with 15-second timeout for seamless profile choice (OC 683 MHz UV vs Stock 670 MHz)
+- Fixed Recovery OS Detection for ColorOS / OxygenOS / RealmeUI ports by mounting `/system_root` and checking `ro.system.build.fingerprint` and `/system_root/my_product` prior to vendor region checks
+- Fixed Overnight Sleep of Death (SoD) by tuning memory watermark safety buffers (`watermark_scale_factor=100`) and using non-blocking rwsem trylocks in `ki_profile`
+- Protected Dynamic Fsync Screen-Off flush with a dedicated kernel `wakeup_source` to prevent I/O state D hangs during suspend
+- Silenced Screen-Off Highpri Workqueue loops in `ki_profile` to prevent deep sleep aborts and timer wakeups
+- Restored selective UID-based SELinux enforcing spoof for OPlus ports to prevent hardware service denials
+- Fully migrated to standalone non-fork GitHub repository at `Luckyfr1945/ki-kernel-for-munch` on branch `beta-test`
 
 ## Ki-kernel v1.6.0 :
 - Fixed Binder Page Allocation Failure & Overnight Sleep of Death (SoD): Increased default `watermark_scale_factor` from 20 to 100 to ensure an ~80MB safety buffer between MIN and LOW watermarks, unlocked sysctl clamping so ROMs can configure safe memory margins, and allowed `kswapd` across all online CPUs during sleep so background maintenance (dexopt, backup, sync) does not cause direct reclaim failure or freeze Binder IPC
