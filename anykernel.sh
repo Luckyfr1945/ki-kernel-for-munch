@@ -78,22 +78,47 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
 
     # 3. Auto Configuration ROM Detection
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
-        # Mount vendor and product if available in recovery
+        # Mount system, vendor, product, and my_product if available in recovery
+        mount -o ro /system_root 2>/dev/null || mount /system_root 2>/dev/null || mount -o ro /system 2>/dev/null || mount /system 2>/dev/null;
         mount -o ro /vendor 2>/dev/null || mount /vendor 2>/dev/null;
         mount -o ro /product 2>/dev/null || mount /product 2>/dev/null;
+        mount -o ro /my_product 2>/dev/null || mount /my_product 2>/dev/null;
 
         # Oplus / ColorOS / OxygenOS Port ROM detection
         # Must check BEFORE MIUI because ColorOS ports on Xiaomi devices retain stock Xiaomi vendor props!
         oplus=0;
-        if [ -f /vendor/OemPorts10T.prop ] || [ -f /vendor/etc/init/OemPorts10T.rc ] || \
-           [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ] || \
-           [ -d /data/data/com.oplus.safecenter ] || [ -d /data/data/com.coloros.phonemanager ] || \
-           [ -d /data/data/oplus ] || [ -f /data/oplusbootstats ] || [ -d /data/oplus_lib ] || \
-           [ -d /data/data/com.oplus.camera ] || [ -d /data/persist_log/oplusreserve ] || \
-           [ -d /vendor/oplus ] || [ -d /vendor/euclid/oplus ] || [ -d /my_product ] || \
-           grep -iq "coloros\|oplus" /vendor/build.prop 2>/dev/null; then
-            ui_print " ! Detected OPLUS / ColorOS / OxygenOS Port !";
-            oplus=1;
+
+        # 1. Check recovery / system props
+        sys_fp="$(getprop ro.system.build.fingerprint 2>/dev/null)";
+        [ -z "$sys_fp" ] && sys_fp="$(getprop ro.build.fingerprint 2>/dev/null)";
+        case "$sys_fp" in
+            *oplus*|*coloros*|*oxygen*|*realme*|*oppo*) oplus=1 ;;
+        esac;
+
+        # 2. Check getprop dump for any oplus / coloros indicators
+        if [ "$oplus" -eq 0 ]; then
+            if getprop 2>/dev/null | grep -iqE "oplus|coloros|oxygen|my_product"; then
+                oplus=1;
+            fi;
+        fi;
+
+        # 3. Check filesystem markers in system_root / root / vendor / data
+        if [ "$oplus" -eq 0 ]; then
+            if [ -d /system_root/my_product ] || [ -d /my_product ] || \
+               [ -d /system_root/my_manifest ] || [ -d /system_root/my_heytap ] || \
+               [ -d /system_root/my_bigball ] || [ -d /system_root/my_reserve ] || \
+               [ -f /vendor/OemPorts10T.prop ] || [ -f /vendor/etc/init/OemPorts10T.rc ] || \
+               [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ] || \
+               [ -d /data/data/com.oplus.safecenter ] || [ -d /data/data/com.coloros.phonemanager ] || \
+               [ -d /data/data/oplus ] || [ -f /data/oplusbootstats ] || [ -d /data/oplus_lib ] || \
+               [ -d /data/data/com.oplus.camera ] || [ -d /data/persist_log/oplusreserve ] || \
+               [ -d /vendor/oplus ] || [ -d /vendor/euclid/oplus ] || \
+               grep -iqE "coloros|oplus|oxygen|realme" /system_root/system/build.prop 2>/dev/null || \
+               grep -iqE "coloros|oplus|oxygen|realme" /system/build.prop 2>/dev/null || \
+               grep -iqE "coloros|oplus|oxygen|realme" /system_root/my_product/build.prop 2>/dev/null || \
+               grep -iqE "coloros|oplus" /vendor/build.prop 2>/dev/null; then
+                oplus=1;
+            fi;
         fi;
 
         if [ "$oplus" -eq 1 ]; then
@@ -178,30 +203,13 @@ elif [ -f "$AKHOME/Image" ]; then
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
 fi;
 
-# Preserve existing single-kernel dtb for vendor_boot before clearing boot dtb
-if [ ! -f "$AKHOME/dtb_vendor" ] && [ -f "$AKHOME/dtb" ]; then
-    cp -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
-fi;
-
-# DO NOT touch DTBO (preserve panel/touch drivers from ROM)
-# Remove dtb from boot flashing stage (DTB on SM8250 belongs in vendor_boot)
-rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
-
-# Verify that target Image exists before proceeding with flash
-[ -f "$AKHOME/Image" ] || abort "  ! Image tidak ditemukan di $AKHOME (cek folder kernels/ dan paket AnyKernel3)";
-
-# 1. Flash Kernel Image to boot partition with e404 dynamic cmdline
-ui_print "- Flashing kernel (boot)...";
-split_boot;
-patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_port},dtbo_oem,dtb_def,batt_def";
-flash_boot;
-
-# 2. Select & Flash DTB to vendor_boot partition
+# ----------------------------------------------------
+# Interactive GPU & Voltage Profile Selector
+# (Runs BEFORE flashing boot or vendor_boot)
+# ----------------------------------------------------
 CHOSEN_DTB="";
 
-# Interactive Volume Button Selector (Recovery mode)
 if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
-    # Cek apakah di Recovery environment
     IS_RECOVERY=0;
     if [ "$BOOTMODE" = "false" ] || [ -z "$BOOTMODE" ] || [ -d /twres ] || [ -d /sbin ] || [ -f /sbin/recovery ] || grep -q "recovery" /proc/cmdline 2>/dev/null; then
         IS_RECOVERY=1;
@@ -237,7 +245,7 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         start=$(date +%s 2>/dev/null || echo 0);
         loop_count=0;
         while :; do
-            key_event=$($TIMEOUT_CMD 0.2 $GETEVENT_CMD -qlc 1 2>/dev/null);
+            key_event=$($TIMEOUT_CMD 0.3 $GETEVENT_CMD -q -l -c 2 2>/dev/null);
             case "$key_event" in
                 *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*|*"0073"*"00000001"*)
                     ui_print " -> Terpilih: OC + Undervolt (683 MHz)";
@@ -267,7 +275,7 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
     fi;
 fi;
 
-# 2c. Apply chosen DTB to vendor_boot (Default: OC + Undervolt)
+# Apply chosen DTB to vendor_boot
 if [ "$CHOSEN_DTB" = "stock" ] && [ -f "$AKHOME/dtb_stock" ]; then
     cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
 elif [ -f "$AKHOME/dtb_oc" ]; then
@@ -276,8 +284,27 @@ elif [ -f "$AKHOME/dtb_stock" ]; then
     cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
 fi;
 
+# Preserve existing single-kernel dtb for vendor_boot before clearing boot dtb
+if [ ! -f "$AKHOME/dtb_vendor" ] && [ -f "$AKHOME/dtb" ]; then
+    cp -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
+fi;
+
+# DO NOT touch DTBO (preserve panel/touch drivers from ROM)
+# Remove dtb from boot flashing stage (DTB on SM8250 belongs in vendor_boot)
+rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
+
+# Verify that target Image exists before proceeding with flash
+[ -f "$AKHOME/Image" ] || abort "  ! Image tidak ditemukan di $AKHOME (cek folder kernels/ dan paket AnyKernel3)";
+
+# 1. Flash Kernel Image to boot partition with e404 dynamic cmdline
+ui_print "- Flashing kernel (boot)...";
+split_boot;
+patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_port},dtbo_oem,dtb_def,batt_def";
+flash_boot;
+
+# 2. Flash DTB to vendor_boot partition
 if [ -f "$AKHOME/dtb_vendor" ]; then
-    ui_print "- Flashing DTB...";
+    ui_print "- Flashing DTB (vendor_boot)...";
     BLOCK=vendor_boot;
     reset_ak;
     rm -f "$AKHOME/Image";

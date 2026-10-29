@@ -10,7 +10,7 @@
 ## Ki-kernel v1.6.0 :
 - Fixed Binder Page Allocation Failure & Overnight Sleep of Death (SoD): Increased default `watermark_scale_factor` from 20 to 100 to ensure an ~80MB safety buffer between MIN and LOW watermarks, unlocked sysctl clamping so ROMs can configure safe memory margins, and allowed `kswapd` across all online CPUs during sleep so background maintenance (dexopt, backup, sync) does not cause direct reclaim failure or freeze Binder IPC
 - Fixed Sysfs Invalid Permissions Warning: Corrected `ki_profile` group attribute permissions from 0666 to 0664 to eliminate kernel call trace warnings on boot
-- Added Interactive Volume Key Profile Selector in AnyKernel3: Allows users to choose between OC + Undervolt (683 MHz GPU + CPR UV + 150 MHz idle) via Vol(+) or Stock (670 MHz + safe voltage) via Vol(-) during recovery flashing (defaults to OC+UV after 5s or when flashed via app)
+- Added Interactive Volume Key Profile Selector in AnyKernel3: Prompted before flashing boot/vendor_boot to allow users to choose between OC + Undervolt (683 MHz GPU) via Vol(+) or Stock (670 MHz) via Vol(-) with reliable key event parsing (defaults to OC+UV after 5s or when flashed via app)
 - Fixed Bypass Charging on ColorOS / OxygenOS: Ignored non-root / charger-hal-pol polling writes of '0' to bypass_charging and input_suspend in SMB5 driver, keeping bypass charging persistently active during gaming
 - Fixed Sleep of Death (SoD) & ADB Offline on Screen Deep Eco (screen_off_battery): Replaced blocking down_write with down_write_trylock on cpufreq policy rwsem to eliminate deadlocks with secondary CPU offlining during system suspend
 - Fixed Screen-Off Requeue Storm: Silenced highpri_wq 50ms requeue loops in ki_profile when display is asleep and secondary cores are offline, eliminating timer wakeups and deep sleep aborts
@@ -18,7 +18,7 @@
 - Fixed Dynamic Fsync Screen-Off Suspend Hang: Protected ksys_sync() with a kernel wakeup_source (dyn_fsync_ws) so the device cannot enter deep suspend while storage flush is executing, eliminating UFS I/O state D hangs
 - Ported task_is_critical() (oom_score_adj <= -900) to mm/vmscan.c to skip direct reclaim throttling on SurfaceFlinger, display composer, and camera (eliminates video stuttering, camera lag, and UI rendering stalls)
 - Optimized OPlus Enforcing Spoofing in selinuxfs.c targeting Play Integrity / GMS and user apps while preserving permissive state for system service daemons to prevent hardware service denials (URCC, RIL, camera, audio, sensors)
-- Fixed AnyKernel3 auto-detection order to properly identify ColorOS / OxygenOS / RealmeUI ports instead of misidentifying them as MIUI due to Xiaomi vendor region properties
+- Fixed AnyKernel3 auto-detection order: Checks recovery system fingerprint (ro.system.build.fingerprint), /system_root/my_product, and system build.prop before checking vendor region to guarantee ColorOS / OxygenOS / RealmeUI ports are never misdetected as MIUI
 - Added 2000ms debounce (KI_PSY_SETTLE_MS) in power supply notifier to eliminate SMB5 IRQ storms and severe thermal/profile throttling lag when connecting a charger
 - Added 2-second debounce in ki_daemon bypass charging controller to eliminate charger flapping during plug-in
 - Removed kernel-side vm_swappiness overrides in ki_profile to let ROM defaults manage swap behavior
