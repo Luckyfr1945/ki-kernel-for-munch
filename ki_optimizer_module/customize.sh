@@ -5,7 +5,7 @@ SKIPUNZIP=0
 
 KERNEL_VER="$(uname -r)"
 
-ui_print "  Ki-Kernel Settings v1.6.0"
+ui_print "  Ki-Kernel Settings v1.4.0"
 
 # Strict Ki-Kernel Verification
 is_ki_kernel=0

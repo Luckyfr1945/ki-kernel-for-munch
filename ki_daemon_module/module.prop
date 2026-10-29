@@ -4,3 +4,4 @@ version=v1.2.0
 versionCode=120
 author=kiki & Luckyfr1945
 description=Native Rust background daemon for Ki-Kernel: Auto Game Turbo foreground game detection, dynamic GPU/CPU turbo profiles, SMB5 transient protection, and automated thermal bypass.
+

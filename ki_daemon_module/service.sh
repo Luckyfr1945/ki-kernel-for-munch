@@ -37,3 +37,4 @@ if [ -x "$MODDIR/bin/ki_daemon" ]; then
     rm -f /data/adb/modules/ki_daemon/daemon.pid /data/adb/modules/ki_daemon/daemon.status 2>/dev/null
     "$MODDIR/bin/ki_daemon" start >/dev/null 2>&1 || ( "$MODDIR/bin/ki_daemon" run >/dev/null 2>&1 & )
 fi
+
