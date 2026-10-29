@@ -8,26 +8,17 @@
 ---
 
 ## Ki-kernel v1.6.0 :
-- Upgraded Compiler Optimization to -O3 (`CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y`) for aggressive loop unrolling, SIMD auto-vectorization, and superior instruction per clock (IPC) execution
-- Enabled Native ARMv8.2-A Architecture Extensions (`-march=armv8.2-a+crypto+dotprod`) to leverage hardware crypto engines and dot-product vector computation units on Snapdragon 870
-- Optimized Kryo 585 / Cortex-A77 Instruction Pipeline (`-mtune=cortex-a77`) for lower CPU execution latency and smoother 120 FPS frame pacing
-- Added Zero-Overhead Fast-Path Flags (`-fno-builtin-bcmp` and `-fomit-frame-pointer`) to free up general-purpose arm64 registers for active computation
-- Embedded Native AArch64 Static `keycheck` Binary in AnyKernel3: Directly polls Linux input event nodes (`/dev/input/event*`) to guarantee instantaneous physical volume button response in TWRP/OrangeFox
-- Moved Interactive GPU Profile Selector before `flash_boot` with 15-second timeout for seamless profile choice (OC 683 MHz UV vs Stock 670 MHz)
-- Fixed Recovery OS Detection for ColorOS / OxygenOS / RealmeUI ports: Mounts `/system_root` and checks `ro.system.build.fingerprint` and `/system_root/my_product` prior to vendor region checks
-- Fixed Binder Page Allocation Failure & Overnight Sleep of Death (SoD): Increased default `watermark_scale_factor` from 20 to 100 to ensure an ~80MB safety buffer between MIN and LOW watermarks, unlocked sysctl clamping so ROMs can configure safe memory margins, and allowed `kswapd` across all online CPUs during sleep so background maintenance (dexopt, backup, sync) does not cause direct reclaim failure or freeze Binder IPC
-- Fixed Sleep of Death (SoD) & ADB Offline on Screen Deep Eco (`screen_off_battery`): Replaced blocking `down_write` with `down_write_trylock` on cpufreq policy rwsem to eliminate deadlocks with secondary CPU offlining during system suspend
-- Fixed Dynamic Fsync Screen-Off Suspend Hang: Protected `ksys_sync()` with a kernel `wakeup_source` (`dyn_fsync_ws`) so the device cannot enter deep suspend while storage flush is executing, eliminating UFS I/O state D hangs
-- Fixed Screen-Off Requeue Storm: Silenced `highpri_wq` 50ms requeue loops in `ki_profile` when display is asleep and secondary cores are offline, eliminating timer wakeups and deep sleep aborts
-- Fixed Sleep of Death & PCIe Wi-Fi Crash on Wakeup (Boeffla Wakelock Blocker): Removed `wlan_pno_wl` and `wlan_extscan_wl` from default blocked wakelocks and whitelisted `wlan`, `pno`, `dwc3`, and `usb` in `is_critical_wakelock()` to protect active PCIe Wi-Fi PNO scans and prevent ADB going offline during idle
-- Ported `task_is_critical()` (`oom_score_adj <= -900`) to `mm/vmscan.c` to skip direct reclaim throttling on SurfaceFlinger, display composer, and camera (eliminates video stuttering, camera lag, and UI rendering stalls)
-- Optimized OPlus Enforcing Spoofing in `selinuxfs.c`: Targets Play Integrity / GMS and user apps while preserving permissive state for system service daemons to prevent hardware service denials (URCC, RIL, camera, audio, sensors)
-- Fixed Bypass Charging on ColorOS / OxygenOS: Ignored non-root / charger-hal-pol polling writes of '0' to `bypass_charging` and `input_suspend` in SMB5 driver, keeping bypass charging persistently active during gaming
-- Added 2000ms debounce (`KI_PSY_SETTLE_MS`) in power supply notifier to eliminate SMB5 IRQ storms and severe thermal/profile throttling lag when connecting a charger
-- Removed kernel-side `vm_swappiness` overrides in `ki_profile` to let ROM defaults manage swap behavior
-- Fixed Sysfs Invalid Permissions Warning: Corrected `ki_profile` group attribute permissions from 0666 to 0664 to eliminate kernel call trace warnings on boot
-- Completely eliminated redundant `ki_profile` dmesg log spam by tracking last applied profile mode
-- Disabled `CONFIG_PROC_CHILDREN` in defconfig to eliminate useless task traversal overhead
+Enabled -O3, ARMv8.2-A, and Cortex-A77 compiler optimizations
+Added AnyKernel3 GPU selector (683 MHz OC vs 670 MHz Stock) and native keycheck
+Fixed AnyKernel3 ColorOS, OxygenOS, and RealmeUI ROM detection
+Fixed overnight Sleep of Death, Binder page failures, and cpufreq deadlocks
+Fixed Dynamic Fsync suspend hangs and screen-off workqueue wakeups
+Fixed Wakelock Blocker Wi-Fi wakeup crashes and ADB offline issues
+Bypassed direct reclaim on SurfaceFlinger, display, and camera tasks
+Unlocked watermark_scale_factor and removed hardcoded swappiness
+Improved OPlus SELinux spoofing and fixed bypass charging resets
+Fixed charger IRQ storms, sysfs warnings, and Ki-Profile log spam
+Disabled CONFIG_PROC_CHILDREN task traversal overhead
 
 ## Ki-kernel v1.5.1 :
 - Tuned Balanced profile WALT migration margins to 90/82 (fixed severe FPS drop & stutter in 120Hz/90Hz)

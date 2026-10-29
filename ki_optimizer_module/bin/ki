@@ -309,6 +309,7 @@ case "$1" in
   "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
   "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 0),
   "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
+  "tcp_available": "$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)",
   "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),
   "battery_pct": $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0),
   "battery_temp": $(echo $(( $(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 300) / 10 ))),
@@ -345,10 +346,12 @@ EOF
         shift
         if command -v ki_daemon >/dev/null 2>&1; then
             ki_daemon "$@"
+        elif [ -x "/data/adb/modules/ki_daemon/bin/ki_daemon" ]; then
+            /data/adb/modules/ki_daemon/bin/ki_daemon "$@"
         elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
             /data/adb/modules/ki_optimizer/bin/ki_daemon "$@"
         else
-            echo "ki_daemon binary not found."
+            echo "ki_daemon is not installed (Ki-Daemon is now a standalone module)."
         fi
         ;;
     help|--help|-h)

@@ -1,7 +1,7 @@
 /**
- * Ki-Optimizer WebUI Controller
+ * Ki-Kernel Settings WebUI Controller
  * Native JavaScript Bridge for KernelSU WebView
- * Clean, Emoticon-free, Ultra-Responsive UI
+ * Clean, Daemon-free, Ultra-Responsive UI
  */
 
 let callbackCounter = 0;
@@ -53,13 +53,7 @@ function showToast(message, isError = false) {
   }
 }
 
-// UI Elements - Tabs
-const tabKernel = document.getElementById("tab-kernel");
-const tabDaemon = document.getElementById("tab-daemon");
-const panelKernel = document.getElementById("panel-kernel");
-const panelDaemon = document.getElementById("panel-daemon");
-
-// Header Telemetry
+// Header Telemetry Elements
 const elUnsupportedModal = document.getElementById("unsupported-modal");
 const elModalKernelVer = document.getElementById("modal-kernel-ver");
 
@@ -84,8 +78,7 @@ const mglruBtns = [
 let currentMglruMode = 1;
 
 const rowSwappiness = document.getElementById("row-swappiness");
-const rangeSwappiness = document.getElementById("range-swappiness");
-const valSwappiness = document.getElementById("val-swappiness");
+const badgeSwappiness = document.getElementById("badge-swappiness");
 
 const rowBypass = document.getElementById("row-bypass");
 const toggleBypass = document.getElementById("toggle-bypass");
@@ -117,28 +110,8 @@ const badgeTcp = document.getElementById("badge-tcp");
 
 const btnApply = document.getElementById("btn-apply");
 
-// Daemon Elements (Tab 2)
-const elDaemonIndicator = document.getElementById("daemon-indicator");
-const elDaemonStatusBadge = document.getElementById("daemon-status-badge");
-const elDaemonPidBadge = document.getElementById("daemon-pid-badge");
-const elDaemonFgBadge = document.getElementById("daemon-fg-badge");
-const toggleDaemonMaster = document.getElementById("toggle-daemon-master");
-const selectGameProf = document.getElementById("select-game-prof");
-const selectExitProf = document.getElementById("select-exit-prof");
-const badgeGameProf = document.getElementById("badge-game-prof");
-const badgeExitProf = document.getElementById("badge-exit-prof");
-const toggleAutoBypass = document.getElementById("toggle-auto-bypass");
-const badgeAutoBypass = document.getElementById("badge-auto-bypass");
-const toggleAutoMglru = document.getElementById("toggle-auto-mglru");
-const badgeAutoMglru = document.getElementById("badge-auto-mglru");
-const gamesCountEl = document.getElementById("games-count");
-const inputNewGame = document.getElementById("input-new-game");
-const btnAddGame = document.getElementById("btn-add-game");
-const gamesChipsList = document.getElementById("games-chips-list");
-
 let currentProfile = 1;
 let isKiKernelActive = true;
-let activeTab = "panel-kernel";
 
 // Interaction tracking to prevent background telemetry stutter
 let isUserInteracting = false;
@@ -154,27 +127,6 @@ function flagUserInteraction() {
 document.addEventListener("touchstart", flagUserInteraction, { passive: true });
 document.addEventListener("touchmove", flagUserInteraction, { passive: true });
 document.addEventListener("pointerdown", flagUserInteraction, { passive: true });
-
-// Tab Switcher
-function switchTab(target) {
-  activeTab = target;
-  if (target === "panel-daemon") {
-    tabKernel?.classList.remove("active");
-    tabKernel?.setAttribute("aria-selected", "false");
-    tabDaemon?.classList.add("active");
-    tabDaemon?.setAttribute("aria-selected", "true");
-    panelKernel?.classList.add("hidden");
-    panelDaemon?.classList.remove("hidden");
-    refreshDaemonState();
-  } else {
-    tabDaemon?.classList.remove("active");
-    tabDaemon?.setAttribute("aria-selected", "false");
-    tabKernel?.classList.add("active");
-    tabKernel?.setAttribute("aria-selected", "true");
-    panelDaemon?.classList.add("hidden");
-    panelKernel?.classList.remove("hidden");
-  }
-}
 
 // Helper to configure feature row support
 function updateFeatureRow(row, input, badge, isSupported, isEnabled, labelOn, labelOff) {
@@ -250,6 +202,7 @@ async function setProfileInstant(profileId) {
       echo ${id} > /proc/ki_profile 2>/dev/null
       echo ${id} > /sys/kernel/ki_profile/mode 2>/dev/null
       CONF="/sdcard/ki_optimizer.conf"
+      [ ! -f "$CONF" ] && CONF="/sdcard/ki_settings.conf"
       if [ -f "$CONF" ]; then
         sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${id}/" "$CONF" 2>/dev/null
       fi
@@ -297,6 +250,58 @@ function setMglruUI(mode, isSupported = true) {
   }
 }
 
+// Dynamic TCP Algorithm Population
+function populateTcpOptions(availRaw, curTcp) {
+  if (!selectTcp) return;
+
+  let algos = [];
+  if (availRaw && availRaw.trim()) {
+    algos = availRaw.trim().split(/\s+/).filter(Boolean);
+  }
+
+  // Fallback defaults if sysfs query is empty
+  if (algos.length === 0) {
+    algos = ["bbr3", "bbr", "westwood", "cubic", "reno"];
+  }
+
+  if (curTcp && !algos.includes(curTcp)) {
+    algos.unshift(curTcp);
+  }
+
+  const formatLabel = (name) => {
+    switch (name) {
+      case "bbr3": return "bbr3 (Google BBRv3)";
+      case "bbr": return "bbr (Google BBRv1)";
+      case "westwood-sub": return "westwood-sub (Loss-Tolerant)";
+      case "westwood": return "westwood (Loss-Tolerant)";
+      case "cubic": return "cubic (Standard Linux)";
+      case "reno": return "reno (Traditional)";
+      case "bic": return "bic";
+      case "htcp": return "htcp";
+      default: return name;
+    }
+  };
+
+  selectTcp.innerHTML = "";
+  algos.forEach(algo => {
+    const opt = document.createElement("option");
+    opt.value = algo;
+    opt.textContent = formatLabel(algo);
+    if (algo === curTcp) {
+      opt.selected = true;
+    }
+    selectTcp.appendChild(opt);
+  });
+
+  const activeTcp = curTcp || algos[0];
+  selectTcp.value = activeTcp;
+  if (badgeTcp) {
+    badgeTcp.textContent = activeTcp;
+    badgeTcp.classList.remove("is-unsupported");
+    badgeTcp.classList.remove("is-off");
+  }
+}
+
 // Live Battery & Temp Telemetry (Adaptive & Non-blocking)
 async function updateTelemetry() {
   if (!isKiKernelActive || isUserInteracting) return;
@@ -321,10 +326,6 @@ async function updateTelemetry() {
       if (!isNaN(liveProf) && liveProf !== currentProfile) {
         setActiveProfileUI(liveProf);
       }
-    }
-
-    if (activeTab === "panel-daemon") {
-      refreshDaemonState();
     }
   } catch (err) {
     console.warn("updateTelemetry failed:", err);
@@ -399,6 +400,7 @@ async function refreshState() {
 
       VAL_SWAP="$(cat /proc/sys/vm/swappiness 2>/dev/null || echo '130')"
       VAL_TCP="$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo 'cubic')"
+      AVAIL_TCP="$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo 'bbr3 bbr westwood cubic reno')"
 
       echo "IS_KI=$IS_KI"
       echo "KERNEL=$KERNEL"
@@ -422,6 +424,7 @@ async function refreshState() {
       echo "VAL_THERMAL=$VAL_THERMAL"
       echo "VAL_SWAP=$VAL_SWAP"
       echo "VAL_TCP=$VAL_TCP"
+      echo "AVAIL_TCP=$AVAIL_TCP"
     `);
 
     const props = {};
@@ -471,18 +474,14 @@ async function refreshState() {
       badgeSwappiness.textContent = `Default (${props["VAL_SWAP"]})`;
     }
 
-    if (selectTcp && props["VAL_TCP"]) {
-      selectTcp.value = props["VAL_TCP"];
-      if (badgeTcp) badgeTcp.textContent = props["VAL_TCP"];
-    }
-
-    refreshDaemonState();
+    // Dynamic TCP population & detection
+    populateTcpOptions(props["AVAIL_TCP"], props["VAL_TCP"]);
   } catch (err) {
     console.error("refreshState error:", err);
   }
 }
 
-// Apply & Persist Kernel Settings (Tab 1)
+// Apply & Persist Kernel Settings
 async function applyChanges(silent = false) {
   if (!isKiKernelActive) return;
 
@@ -536,24 +535,27 @@ async function applyChanges(silent = false) {
       echo 1 > /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
     fi
 
-    # 9. Apply TCP Congestion
-    echo "${tcp}" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
-
-    # 10. Persist to /sdcard/ki_optimizer.conf (Swappiness left at ROM default)
-    CONF="/sdcard/ki_optimizer.conf"
-    if [ -f "$CONF" ]; then
-      sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${prof}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=${mglru}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^MGLRU_ENABLED=.*/MGLRU_ENABLED=${mglru}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^BYPASS_CHARGING=.*/BYPASS_CHARGING=${bypass}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^SCREEN_ON_FAST_CHARGE=.*/SCREEN_ON_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^FORCE_FAST_CHARGE=.*/FORCE_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^SCREEN_OFF_BATTERY=.*/SCREEN_OFF_BATTERY=${screenoff}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^WAKELOCK_BLOCKER=.*/WAKELOCK_BLOCKER=${wakelock}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=${thermal}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^DYNAMIC_FSYNC=.*/DYNAMIC_FSYNC=${dynfsync}/" "$CONF" 2>/dev/null
-      sed -i -E "s/^TCP_CONGESTION=.*/TCP_CONGESTION=\\"${tcp}\\"/" "$CONF" 2>/dev/null
+    # 9. Apply TCP Congestion Control
+    if [ -n "${tcp}" ]; then
+      echo "${tcp}" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
     fi
+
+    # 10. Persist to configuration file
+    for CONF in /sdcard/ki_optimizer.conf /sdcard/ki_settings.conf; do
+      if [ -f "$CONF" ]; then
+        sed -i -E "s/^KI_PROFILE=.*/KI_PROFILE=${prof}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=${mglru}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^MGLRU_ENABLED=.*/MGLRU_ENABLED=${mglru}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^BYPASS_CHARGING=.*/BYPASS_CHARGING=${bypass}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^SCREEN_ON_FAST_CHARGE=.*/SCREEN_ON_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^FORCE_FAST_CHARGE=.*/FORCE_FAST_CHARGE=${fastcharge}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^SCREEN_OFF_BATTERY=.*/SCREEN_OFF_BATTERY=${screenoff}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^WAKELOCK_BLOCKER=.*/WAKELOCK_BLOCKER=${wakelock}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=${thermal}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^DYNAMIC_FSYNC=.*/DYNAMIC_FSYNC=${dynfsync}/" "$CONF" 2>/dev/null
+        sed -i -E "s/^TCP_CONGESTION=.*/TCP_CONGESTION=\\"${tcp}\\"/" "$CONF" 2>/dev/null
+      fi
+    done
   `;
 
   try {
@@ -568,221 +570,7 @@ async function applyChanges(silent = false) {
   }
 }
 
-// ==========================================
-// KI-DAEMON CONTROLLER FUNCTIONS (TAB 2)
-// ==========================================
-
-async function refreshDaemonState() {
-  try {
-    const { stdout } = await exec(`
-      OUT=""
-      if command -v ki_daemon >/dev/null 2>&1; then
-        OUT="$(ki_daemon status 2>/dev/null)"
-      elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-        OUT="$(/data/adb/modules/ki_optimizer/bin/ki_daemon status 2>/dev/null)"
-      fi
-      if echo "$OUT" | grep -q '"games"'; then
-        echo "$OUT"
-      else
-        CONF="/sdcard/ki_daemon.conf"
-        [ ! -f "$CONF" ] && CONF="/data/adb/modules/ki_optimizer/ki_daemon.conf"
-        ENABLED=1
-        DEF_PROF=1
-        GAME_PROF=2
-        AUTO_BYPASS=1
-        AUTO_MGLRU=1
-        GAMES_JSON="[]"
-        if [ -f "$CONF" ]; then
-          [ "$(grep -E '^DAEMON_ENABLED=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && ENABLED=0
-          dp="$(grep -E '^DEFAULT_PROFILE=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')"
-          [ -n "$dp" ] && DEF_PROF=$dp
-          gp="$(grep -E '^GAME_PROFILE=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')"
-          [ -n "$gp" ] && GAME_PROF=$gp
-          [ "$(grep -E '^AUTO_BYPASS(_CHARGING)?=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && AUTO_BYPASS=0
-          [ "$(grep -E '^AUTO_MGLRU=' "$CONF" | cut -d'=' -f2 | tr -d ' \"\r')" = "0" ] && AUTO_MGLRU=0
-          g_raw="$(grep -E '^GAMES=' "$CONF" | cut -d'=' -f2- | tr -d ' \"\r')"
-          if [ -n "$g_raw" ]; then
-            GAMES_JSON=$(echo "$g_raw" | awk -F',' '{for(i=1;i<=NF;i++) if($i!="") printf "\\"%s\\"%s", $i, (i<NF?",":"")}' | sed 's/^/[/' | sed 's/$/]/')
-          fi
-        fi
-        echo "{\\"running\\":false,\\"daemon_enabled\\":$([ $ENABLED -eq 1 ] && echo true || echo false),\\"default_profile\\":$DEF_PROF,\\"game_profile\\":$GAME_PROF,\\"auto_bypass\\":$([ $AUTO_BYPASS -eq 1 ] && echo true || echo false),\\"auto_mglru\\":$([ $AUTO_MGLRU -eq 1 ] && echo true || echo false),\\"games\\":$GAMES_JSON}"
-      fi
-    `);
-
-    let data;
-    try {
-      data = JSON.parse(stdout);
-    } catch {
-      data = { running: false };
-    }
-
-    updateDaemonUI(data);
-  } catch (err) {
-    console.error("refreshDaemonState error:", err);
-  }
-}
-
-function updateDaemonUI(data) {
-  const isRunning = !!data.running;
-
-  if (elDaemonIndicator) {
-    elDaemonIndicator.classList.toggle("is-active", isRunning && data.daemon_enabled);
-  }
-
-  if (elDaemonStatusBadge) {
-    if (!isRunning) {
-      elDaemonStatusBadge.textContent = "Stopped";
-      elDaemonStatusBadge.style.color = "var(--danger)";
-    } else if (!data.daemon_enabled) {
-      elDaemonStatusBadge.textContent = "Paused";
-      elDaemonStatusBadge.style.color = "var(--warning)";
-    } else {
-      elDaemonStatusBadge.textContent = "Active";
-      elDaemonStatusBadge.style.color = "var(--accent)";
-    }
-  }
-
-  if (elDaemonPidBadge) {
-    elDaemonPidBadge.textContent = `PID: ${data.pid || "--"}`;
-  }
-
-  if (elDaemonFgBadge) {
-    if (data.is_game) {
-      elDaemonFgBadge.textContent = `GAME: ${data.foreground_pkg || "Running"}`;
-      elDaemonFgBadge.classList.add("is-game");
-    } else {
-      elDaemonFgBadge.textContent = `App: ${data.foreground_pkg || "None"}`;
-      elDaemonFgBadge.classList.remove("is-game");
-    }
-  }
-
-  if (toggleDaemonMaster && typeof data.daemon_enabled !== "undefined") {
-    toggleDaemonMaster.checked = data.daemon_enabled;
-  }
-
-  if (toggleAutoBypass && typeof data.auto_bypass !== "undefined") {
-    toggleAutoBypass.checked = data.auto_bypass;
-    if (badgeAutoBypass) {
-      badgeAutoBypass.textContent = data.auto_bypass ? "Active" : "Off";
-      badgeAutoBypass.classList.toggle("is-off", !data.auto_bypass);
-    }
-  }
-
-  if (toggleAutoMglru && typeof data.auto_mglru !== "undefined") {
-    toggleAutoMglru.checked = data.auto_mglru;
-    if (badgeAutoMglru) {
-      badgeAutoMglru.textContent = data.auto_mglru ? "Active" : "Off";
-      badgeAutoMglru.classList.toggle("is-off", !data.auto_mglru);
-    }
-  }
-
-  if (selectGameProf && typeof data.game_profile !== "undefined") {
-    selectGameProf.value = data.game_profile.toString();
-    if (badgeGameProf) {
-      badgeGameProf.textContent = data.game_profile === 2 ? "Turbo Gaming" : "Balanced";
-    }
-  }
-
-  if (selectExitProf && typeof data.default_profile !== "undefined") {
-    selectExitProf.value = data.default_profile.toString();
-    if (badgeExitProf) {
-      badgeExitProf.textContent = data.default_profile === 0 ? "Battery Saver" : "Balanced";
-    }
-  }
-
-  if (Array.isArray(data.games)) {
-    renderGameChips(data.games);
-  }
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function renderGameChips(games) {
-  if (!gamesChipsList) return;
-  if (gamesCountEl) gamesCountEl.textContent = games.length;
-
-  gamesChipsList.innerHTML = "";
-  games.forEach(pkg => {
-    const chip = document.createElement("div");
-    chip.className = "game-chip";
-    chip.innerHTML = `
-      <span>${escapeHtml(pkg)}</span>
-      <button type="button" class="btn-chip-del" data-pkg="${escapeHtml(pkg)}" title="Remove game" aria-label="Remove game">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    `;
-    gamesChipsList.appendChild(chip);
-  });
-
-  gamesChipsList.querySelectorAll(".btn-chip-del").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const pkg = btn.dataset.pkg;
-      await removeGame(pkg);
-    });
-  });
-}
-
-async function addGame(pkg) {
-  const clean = pkg.trim();
-  if (!clean) return;
-  try {
-    await exec(`
-      if command -v ki_daemon >/dev/null 2>&1; then
-        ki_daemon add-game "${clean}"
-      elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-        /data/adb/modules/ki_optimizer/bin/ki_daemon add-game "${clean}"
-      fi
-    `);
-    showToast(`Added ${clean} to Auto Game Turbo`);
-    if (inputNewGame) inputNewGame.value = "";
-    refreshDaemonState();
-  } catch (err) {
-    showToast("Failed to add game", true);
-  }
-}
-
-async function removeGame(pkg) {
-  try {
-    await exec(`
-      if command -v ki_daemon >/dev/null 2>&1; then
-        ki_daemon remove-game "${pkg}"
-      elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-        /data/adb/modules/ki_optimizer/bin/ki_daemon remove-game "${pkg}"
-      fi
-    `);
-    showToast(`Removed ${pkg}`);
-    refreshDaemonState();
-  } catch (err) {
-    showToast("Failed to remove game", true);
-  }
-}
-
-async function setDaemonConfig(key, val) {
-  try {
-    await exec(`
-      if command -v ki_daemon >/dev/null 2>&1; then
-        ki_daemon set ${key} "${val}"
-      elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-        /data/adb/modules/ki_optimizer/bin/ki_daemon set ${key} "${val}"
-      fi
-    `);
-    showToast(`Updated ${key}`);
-    refreshDaemonState();
-  } catch (err) {
-    showToast(`Failed to update ${key}`, true);
-  }
-}
-
 // Event Listeners with Immediate Optimistic Feedback
-tabKernel?.addEventListener("click", () => switchTab("panel-kernel"));
-tabDaemon?.addEventListener("click", () => switchTab("panel-daemon"));
-
 cardProf0?.addEventListener("click", () => {
   setProfileInstant(0);
 });
@@ -802,11 +590,6 @@ mglruBtns.forEach(btn => {
       setMglruUI(mode, true);
     });
   }
-});
-
-// Instant Slider Value Reflection
-rangeSwappiness?.addEventListener("input", (e) => {
-  if (valSwappiness) valSwappiness.textContent = e.target.value;
 });
 
 // Optimistic Switch Status Badge Updates
@@ -853,92 +636,14 @@ toggleThermal?.addEventListener("change", (e) => {
 });
 
 selectTcp?.addEventListener("change", (e) => {
-  if (badgeTcp) badgeTcp.textContent = e.target.value;
+  if (badgeTcp) {
+    badgeTcp.textContent = e.target.value;
+    badgeTcp.classList.remove("is-off");
+  }
 });
 
 btnApply?.addEventListener("click", () => {
   applyChanges(false);
-});
-
-const btnSoftReboot = document.getElementById("btn-soft-reboot");
-btnSoftReboot?.addEventListener("click", async () => {
-  try {
-    const { stdout } = await exec(`
-      if grep -qiE "hyper|miui" /system/build.prop 2>/dev/null || [ -n "$(getprop ro.miui.ui.version.name)" ] || [ -n "$(getprop ro.mi.os.version.name)" ]; then
-        echo "miui"
-      else
-        echo "aosp"
-      fi
-    `);
-    const isMiui = stdout.trim() === "miui";
-    if (isMiui) {
-      showToast("Fast reboot dinonaktifkan di HyperOS/MIUI (hindari bootloop). Gunakan reboot sistem bila perlu.", true);
-      return;
-    }
-    showToast("Memulai Fast Reboot (Restart Zygote AOSP)...");
-    setTimeout(async () => {
-      await exec("setprop ctl.restart zygote || svc power reboot userspace");
-    }, 700);
-  } catch (err) {
-    showToast("Gagal melakukan Fast Reboot", true);
-  }
-});
-
-// Daemon Listeners
-toggleDaemonMaster?.addEventListener("change", async (e) => {
-  const enabled = e.target.checked ? "1" : "0";
-  try {
-    if (e.target.checked) {
-      await exec(`
-        if command -v ki_daemon >/dev/null 2>&1; then
-          ki_daemon set DAEMON_ENABLED 1
-          ki_daemon start
-        elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-          /data/adb/modules/ki_optimizer/bin/ki_daemon set DAEMON_ENABLED 1
-          /data/adb/modules/ki_optimizer/bin/ki_daemon start
-        fi
-      `);
-      showToast("Auto Game Turbo activated");
-    } else {
-      await exec(`
-        if command -v ki_daemon >/dev/null 2>&1; then
-          ki_daemon set DAEMON_ENABLED 0
-        elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
-          /data/adb/modules/ki_optimizer/bin/ki_daemon set DAEMON_ENABLED 0
-        fi
-      `);
-      showToast("Auto Game Turbo paused");
-    }
-  } catch (err) {
-    showToast("Failed to toggle Auto Game Turbo", true);
-  }
-  setTimeout(refreshDaemonState, 350);
-});
-
-toggleAutoBypass?.addEventListener("change", (e) => {
-  setDaemonConfig("AUTO_BYPASS", e.target.checked ? "1" : "0");
-});
-
-toggleAutoMglru?.addEventListener("change", (e) => {
-  setDaemonConfig("AUTO_MGLRU", e.target.checked ? "1" : "0");
-});
-
-selectGameProf?.addEventListener("change", (e) => {
-  setDaemonConfig("GAME_PROFILE", e.target.value);
-});
-
-selectExitProf?.addEventListener("change", (e) => {
-  setDaemonConfig("DEFAULT_PROFILE", e.target.value);
-});
-
-btnAddGame?.addEventListener("click", () => {
-  if (inputNewGame) addGame(inputNewGame.value);
-});
-
-inputNewGame?.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") {
-    addGame(inputNewGame.value);
-  }
 });
 
 // Periodic telemetry poll (Non-blocking, paused during touch/gestures)

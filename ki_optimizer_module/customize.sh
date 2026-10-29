@@ -1,11 +1,11 @@
 #!/system/bin/sh
-# Ki-Optimizer Installation Script (KernelSU / Magisk)
+# Ki-Kernel Settings Installation Script (KernelSU / Magisk / APatch)
 
 SKIPUNZIP=0
 
 KERNEL_VER="$(uname -r)"
 
-ui_print "  Ki-Kernel Settings v1.6.0 (Rust Daemon v1.2)"
+ui_print "  Ki-Kernel Settings v1.6.0"
 
 # Strict Ki-Kernel Verification
 is_ki_kernel=0
@@ -42,24 +42,21 @@ else
     ui_print "- Existing config found: /sdcard/ki_optimizer.conf (preserved)"
 fi
 
-
 # Set executable permissions
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/bin/ki" 0 0 0755
-set_perm "$MODPATH/bin/ki_daemon" 0 0 0755
 set_perm_recursive "$MODPATH/webroot" 0 0 0755 0644
 
-# Link ki CLI and ki_daemon directly to root PATH without touching /system
+# Link ki CLI directly to root PATH without touching /system
 # (Prevents OverlayFS conflicts with KernelSU metamodule & Zygisk Next)
 for bin_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/magisk; do
     if [ -d "$bin_dir" ]; then
         ln -sf "$MODPATH/bin/ki" "$bin_dir/ki" 2>/dev/null
-        ln -sf "$MODPATH/bin/ki_daemon" "$bin_dir/ki_daemon" 2>/dev/null
     fi
 done
 
 ui_print " "
 ui_print "===================================================="
-ui_print "✔ Ki-Optimizer Installed Successfully!"
+ui_print "✔ Ki-Kernel Settings Installed Successfully!"
 ui_print "===================================================="
