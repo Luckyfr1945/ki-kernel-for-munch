@@ -1,155 +1,230 @@
-[☕Buy me a coffee](https://ko-fi.com/strawing)
-# Notice / 注意
-For SukiSU users: Please use [SukiSU Manager 3.2.0](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/tag/v3.2.0), 4.0 and above are not supported yet of the SukiSU version in this kernel.
+ <div align="center">
 
-SukiSU用户请使用 [SukiSU 管理器 3.2.0 版本](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/tag/v3.2.0)，4.0及以上版本不支持该内核中的SukiSU版本。
+<img src="banner.png" alt="Ki-Kernel POCO F4 (munch)" width="100%" />
 
-# About this repo
+# ⚡ Ki-Kernel
 
-[中文](#中文)
+**POCO F4 (munch) / Redmi K40S**
 
-## English
-This repo (`android15-lineage22-mod` branch) is based on [Lineage OS 22.1 xiaomi sm8250 kernel source](https://github.com/LineageOS/android_kernel_xiaomi_sm8250).
+*Custom Linux kernel with performance tuning, power management and additional kernel features.*
 
-Originally this repo (`android12-stable-mod` or `android14-stable-mod` branch) is fork from [UtsavBalar1231's repo](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250), but the `android14-stable` branch has freeze problem when the device sleep for a while or wake up. So now I switched to lineage22 codebase. The MIUI features code and some parts of the drivers is still copied from UtsavBalar1231's branch.
+[![Kernel](https://img.shields.io/badge/Linux-4.19.325-blue.svg)](https://kernel.org)
+[![Android](https://img.shields.io/badge/Android-13--17-green.svg)](#rom-support)
+[![Root](https://img.shields.io/badge/Root-BakaSU%20%2F%20ReSukiSU-red.svg)](https://github.com/Baka-SU/BakaSU)
+[![SuSFS](https://img.shields.io/badge/SuSFS-v2.3.0-orange.svg)](https://gitlab.com/simonpunk/susfs4kernel)
+[![Device](https://img.shields.io/badge/Device-munch-purple.svg)](#device-support)
 
-So still Thanks to [@UtsavBalar1231](https://github.com/UtsavBalar1231/)!
+</div>
 
-The main purpose of maintaining and building this kernel is to fix [this battery stuck at 1% problem](https://github.com/liyafe1997/Xiaomi-fix-battery-one-percent), and provide [SukiSU](https://github.com/ShirkNeko/SukiSU-Ultra)(A KernelSU fork with KPM support) & [SUSFS](https://github.com/sidex15/susfs4ksu-module) integrated pre-built image(flashable anykernel3 zip). Also provides a more intuitive and easy-to-use build script and build guide that allow you to try to build by yourself.
+---
 
-For using the SukiSU, you can install the SukiSU manager APK from [SukiSU Github Release](https://github.com/ShirkNeko/SukiSU-Ultra/releases). For the SUSFS module see [susfs4ksu-module Gihub Release](https://github.com/sidex15/susfs4ksu-module/releases).
+## Overview
 
-(The devices affected by the "1% battery bug" are: alioth, apollo, lmi, thyme, umi, pipa. Because they all use the PM8150, aka Qualcomm fuel gauge GEN4. For the other devices are not affected by that bug, you can use this kernel for KernelSU purpose, as a replacement of the orginal stock kernel. Also, as the people tested, this kernel NoKernelSU version is good for applying [APatch](https://github.com/bmax121/APatch)).
+Ki-Kernel is a custom kernel for the **POCO F4 (munch)**, based on the Xiaomi SM8250 kernel tree. It focuses on gaming performance, daily-use responsiveness, battery management and compatibility with AOSP and MIUI / HyperOS ROMs.
 
-The pre-built kernel image/zip is built on the `android15-lineage22-mod` branch. It should works on both stock MIUI and third-party AOSP based Android 11-15 ROMs. You are welcomed to give feedback (Issues/Pull Requests)!
+## Features
 
-Note: The zip does not include the `dtbo.img` and it will not replace your `dtbo` partition. It is recommanded to keep the stock `dtbo` or the `dtbo` from your third-party rom (If the builder comfirmed it works well). Since there are some problems with the `dtbo.img` which built from this source, one of them is the screen will suddently goes to the highest brightness when shut try to shut off the screen in the lock screen. If you had flashed any other third-party kernels, and you got some weird problem, you should keep an eye to check your `dtbo` has been replaced or not. 
+### Core & Compatibility
 
-**Notice: If you are using MIUI/HyperOS please use the MIUI varient. Because the display driver is different between MIUI and AOSP, if you are using MIUI/HyperOS but installed the AOSP version, the display will not work and only black screen. If you only see a black screen after installed this kernel, please check if you installed the correct varient or not!**
+- Linux 4.19.325
+- ZyCromerZ Clang 16.0.6
+- Android 13–17 compatibility work
+- eBPF backports for newer Android userspace
+- PID, USER and network namespaces
+- Docker, LXC and container support
 
-Supported devices:
-| Code Name | Device Name                          |
-|-----------|--------------------------------------|
-| psyche    | Xiaomi Mi 12X                        |
-| thyme     | Xiaomi Mi 10S                        |
-| umi       | Xiaomi Mi 10                         |
-| munch     | Poco F4 / Redmi K40S                 |
-| lmi       | Redmi K30 Pro                        |
-| cmi       | Xiaomi Mi 10 Pro                     |
-| cas       | Xiaomi Mi 10 Ultra                   |
-| apollo    | Xiaomi Mi 10T / Redmi K30S Ultra     |
-| alioth    | Xiaomi Mi 11X / POCO F3 / Redmi K40  |
-| elish     | Xiaomi Pad 5 Pro                     |
-| enuma     | Xiaomi Pad 5 Pro 5G                  |
-| dagu      | Xiaomi Pad 5 Pro 12.4                |
-| pipa      | Xiaomi Pad 6                         |
+### CPU & Gaming
 
-Other Features/Improvement of this Kernel:
-1. Support USB Serial (CH340/FTDI/PL2303/OTI6858/TI/SPCP8X5/QT2/UPD78F0730/CP210X).
-2. Support EROFS.
-3. F2FS realtime discard enabled for better TRIM the flash.
-4. Support CANBus and USB CAN adapter (like CANable).
-5. Support LZ4, LZ4HC, ZSTD compression algorithms for ZRAM.
+- Tuned schedutil and WALT
+- Ki-Profile CPU profiles
+- CPUSET and core migration tuning
+- RTG and SchedTune support
+- Performance-oriented CPU frequency scaling
+- C-state and idle power tuning
+- Adreno 650 GPU frequency tuning, undervolting and overclocking
+- GPU boost and idle power management
+- Focaltech touchscreen latency tuning
 
-## 中文
-该repo (`android15-lineage22-mod` 分支)主要基于[Lineage OS 22.1 xiaomi sm8250 kernel source](https://github.com/LineageOS/android_kernel_xiaomi_sm8250)。
+### Display & Audio
 
-原来这个repo(即`android12-stable-mod`/`android14-stable-mod`分支)是fork自[UtsavBalar1231的仓库](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250)，但切到`android14-stable`分支的时候，发现那套代码有睡死问题（202408的几个release），所以现在切到了基于lineage22的代码来搞。MIUI特性的代码以及部分的设备驱动抠自UtsavBalar1231的仓库。
+- Hardware DC Dimming for supported panels
+- Smart FPS and dynamic refresh-rate fixes
+- KCAL hardware color calibration
+- WCD938x Hi-Fi audio tuning
+- UHQA headphone audio support
+- Sound Control
+- USB Audio and external DAC support
+- Headset impedance detection
+- AW86927 haptic tuning
 
-所以仍然感谢 [@UtsavBalar1231](https://github.com/UtsavBalar1231/)！
+### Battery & Charging
 
-维护和编译这个内核的主要目的是想修复[电量卡在1%的问题](https://github.com/liyafe1997/Xiaomi-fix-battery-one-percent)，以及提供带[SukiSU](https://github.com/ShirkNeko/SukiSU-Ultra)(一个KernelSU的fork，支持KPM) & [SUSFS](https://github.com/sidex15/susfs4ksu-module)的预编译好的内核（请自行安装[SukiSU的管理器](https://github.com/ShirkNeko/SukiSU-Ultra/releases)以及根据需要刷上SUSFS模块）。以及再提供一个更直观和易用的编译脚本和README，方便大家自己折腾和修改，编译自己的内核！
+- Hardware bypass charging
+- Force Fast Charge
+- Screen-On Fast Charge
+- Charging current controls
+- Battery health and cycle count interfaces
+- Ki-Thermal controls
+- Screen-off power optimizations
+- Deep Sleep and suspend tuning
 
-（其中受“1%电量bug”影响的设备有：alioth, apollo, lmi, thyme, umi, pipa，因为它们都用了PM8150即高通的GEN4电量计。其它不受此bug影响的设备大可把这个内核当成个带SukiSU & SUSFS的官核平替，如果你想找一个带KernelSU的内核的话。并且据大家测试，该内核不带KernelSU版本可以应用[APatch](https://github.com/bmax121/APatch)）
+Actual charging speed depends on the charger, cable, battery temperature, battery state and ROM configuration.
 
-Release里的编译好的内核成品由`android15-lineage22-mod`分支编译，应当能在原版MIUI和第三方的基于AOSP的各种Android11-15的ROM上使用。欢迎大家尝试并反馈（提Issue或Pull Requests）！酷友们到[酷安的这个帖子](https://www.coolapk.com/feed/56813047)讨论或反馈，也可以给我私信反馈！
+### Memory & Storage
 
-注意：该内核的zip包不包含`dtbo.img`，并且不会刷你的dtbo分区。推荐使用原厂的`dtbo`，或者来自第三方系统包自带的dtbo（如果原作者确认那好用的话）。因为该源码build出来的`dtbo.img`有些小问题，比如在锁屏界面上尝试熄屏时，屏幕会突然闪一下到最高亮度。如果你刷过其它第三方内核，或者遇到一些奇怪的问题，建议检查一下你的`dtbo`是否被替换过。
+- ZRAM with LZ4, LZ4KD, LZ4HC and ZSTD
+- Configurable ZRAM size through `reki-zram`
+- Dynamic Fsync
+- MGLRU and memory reclaim tuning
+- `kswapd` CPU affinity tuning
+- F2FS background garbage collection tuning
+- Maple, Kyber, Deadline and other supported I/O schedulers
+- UFS 3.1 read-ahead tuning
+- USB Attached SCSI (UAS)
+- NTFS filesystem support
 
-**注意：如果你在用HyperOS/MIUI请刷MIUI的版本，AOSP版因为display驱动不同，在HyperOS/MIUI上屏幕无法正常显示，如果刷内核之后开机黑屏，请先检查你是不是正在用着HyperOS/MIUI但是刷了AOSP版**
+### Networking
 
-度盘备用下载链接：https://pan.baidu.com/share/init?surl=11ocz7ggZ79gzRfWvsdbJA&pwd=ty58 （建议优先从Github Release下载）
+- Google BBRv3
+- TCP Westwood-sub
+- TCP Fast Open
+- TCP ECN support
+- PLB support
+- Built-in WireGuard
+- IPv4 / IPv6 tethering support
 
-欢迎加入内测QQ群: 459094061
+### Root & Security
 
-支持的设备:
-| 设备代号  | 设备名称                           |
-|-----------|----------------------------------|
-| psyche    | 小米12X                           |
-| thyme     | 小米10S                           |
-| umi       | 小米10                            |
-| munch     | 红米K40S                          |
-| lmi       | 红米K30 Pro                       |
-| cmi       | 小米10 Pro                        |
-| cas       | 小米10 Ultra                      |
-| apollo    | 小米10T / 红米K30S Ultra          |
-| alioth    | 小米11X / POCO F3 / 红米K40       |
-| elish     | 小米平板5 Pro                     |
-| enuma     | 小米平板5 Pro 5G                  |
-| dagu      | 小米平板5 Pro 12.4                |
-| pipa      | 小米平板6                         |
+- BakaSU / ReSukiSU integration
+- SuSFS v2.3.0
+- Inline hook support
+- Baseband-Guard
+- KernelSU-compatible manager support, depending on the build
+- SELinux and kernel security configuration updates
 
-该内核的其他特性/改进:
-1. 支持USB串口驱动（CH340/FTDI/PL2303/OTI6858/TI/SPCP8X5/QT2/UPD78F0730/CP210X）
-2. 支持EROFS
-3. F2FS开启了realtime discard以更好的TRIM闪存
-4. 支持 CANBus 和 USB CAN （如 CANable）适配器（一些折腾嵌入式的可能会喜欢这个）
-5. zRAM 支持 LZ4、LZ4HC、ZSTD 压缩算法
+---
 
-# How to build
-1. Prepair the basic build environment. 
+## Kernel Controls
 
-    You have to have the basic common toolchains, such as `git`, `make`, `curl`, `bison`, `flex`, `zip`, etc, and some other packages.
-    In Debian/Ubuntu, you can
-    ```
-    sudo apt install build-essential git curl wget bison flex zip bc cpio libssl-dev ccache
-    ```
-    And also, you have to have `python` (only `python3` is not enough). you can install the apt package `python-is-python3`.
+Some builds expose the following interfaces for runtime control. Availability depends on the selected build.
 
-    In RHEL/RPM based OS, you can
-    ```
-    sudo yum groupinstall 'Development Tools'
-    sudo yum install wget bc openssl-devel ccache
-    ```
+### Ki-Profile
 
-    Notice: `ccache` is enabled in `build.sh` for speed up the compiling. `CCACHE_DIR` has been set as `$HOME/.cache/ccache_mikernel` in `build.sh`. If you don't like you can remove or modify it.
+Path:
 
-2. Download [proton-clang] compiler toolchain
+```bash
+/proc/ki_profile
+```
 
-    You have to have `aarch64-linux-gnu`, `arm-linux-gnueabi`, `clang`. [Proton Clang](https://github.com/kdrag0n/proton-clang/) is a good prebuilt clang cross compiler toolchain.
+Available profiles:
 
-    The default toolchain path is `$HOME/proton-clang/proton-clang-20210522/bin` which is set in `build.sh`. If you are using another location please change `TOOLCHAIN_PATH` in `build.sh`.
+```bash
+# Battery Saver
+echo 0 > /proc/ki_profile
 
-    ```
-    mkdir proton-clang
-    cd proton-clang
-    wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
-    unzip 20210522.zip
-    cd ..
-    ```
+# Balanced
+echo 1 > /proc/ki_profile
 
-3. Build
+# Performance
+echo 2 > /proc/ki_profile
 
-    Build without KernelSU: 
-    ```
-    bash build.sh TARGET_DEVICE
-    ```
-    
-    Build with KernelSU:
-    ```
-    bash build.sh TARGET_DEVICE ksu
-    ```
+# Check active profile
+cat /proc/ki_profile
+```
 
-    For example, build for lmi (Redmi K30 Pro/POCO F2 Pro) without KernelSU:
-    ```
-    bash build.sh lmi
-    ````
+### Bypass Charging
 
-    For example, build for umi (Mi 10) with KernelSU:
-    ```
-    bash build.sh umi ksu
-    ```
+Path:
 
-    And also, here is a `buildall.sh` can build for all supported models at once.
+```bash
+/proc/bypass_charging
+```
 
+```bash
+# Enable bypass charging
+echo 1 > /proc/bypass_charging
+
+# Disable bypass charging
+echo 0 > /proc/bypass_charging
+
+# Check status
+cat /proc/bypass_charging
+```
+
+### Force Fast Charge
+
+Path:
+
+```bash
+/proc/fast_charge
+```
+
+```bash
+# Enable
+echo 1 > /proc/fast_charge
+
+# Disable
+echo 0 > /proc/fast_charge
+
+# Check status
+cat /proc/fast_charge
+```
+
+Check the interfaces provided by your build before using these commands.
+
+---
+
+## ROM Support
+
+| Build | Target |
+|---|---|
+| AOSP | AOSP-based custom ROMs |
+| MIUI / HyperOS | Stock-based Xiaomi ROMs |
+
+Android version compatibility varies by ROM and build. Use the release notes for the exact supported configurations.
+
+## Download Variants
+
+| Package | Contents |
+|---|---|
+| `KSU+SUSFS.zip` | BakaSU with SuSFS integration |
+| `KSU.zip` | BakaSU without SuSFS |
+| `NOKSU.zip` | Kernel without an integrated root subsystem |
+
+Root-related features depend on the selected package. A build without an integrated root subsystem does not automatically guarantee Play Integrity certification.
+
+## Installation
+
+1. Download the correct ZIP for your device and ROM.
+2. Reboot into TWRP / OrangeFox or use a compatible kernel flasher.
+3. Flash the ZIP.
+4. Reboot to system.
+5. Verify that the device boots and the expected kernel version is active.
+
+**Before flashing:**
+- Confirm that the device is `munch`.
+- Use the package intended for your ROM.
+- Keep a backup of your current boot image.
+- Do not mix AOSP and MIUI / HyperOS builds unless the release explicitly supports it.
+
+## Credits
+
+- [Linux Kernel](https://kernel.org)
+- [LineageOS SM8250](https://github.com/LineageOS/android_kernel_xiaomi_sm8250)
+- [AstideLabs / ApartTUSITU](https://github.com/AstideLabs/android_kernel_xiaomi_sm8250)
+- [kvsnr113 / E404 Kernel](https://github.com/kvsnr113/xiaomi_sm8250_kernel_e404)
+- [Baka-SU](https://github.com/Baka-SU/BakaSU)
+- [SuSFS](https://gitlab.com/simonpunk/susfs4kernel) by simonpunk
+- [Baseband-Guard](https://github.com/vc-teahouse/Baseband-guard) by vc-teahouse
+- [AnyKernel3](https://github.com/osm0sis/AnyKernel3) by osm0sis
+- [liyafe1997](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod)
+- [UtsavBalar1231](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250)
+- All contributors, testers and the POCO F4 community
+
+---
+
+## Links
+
+- **GitHub:** [Luckyfr1945/ki-kernel-for-munch](https://github.com/Luckyfr1945/ki-kernel-for-munch)
+- **Telegram:** [Ki Community](https://t.me/kikernel)
 
