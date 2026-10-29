@@ -143,7 +143,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 98, .down_migrate = 90,
 		.grp_up_migrate = 98, .grp_down_migrate = 90,
 		.window_stats_policy = 2,
-		.swappiness = 40, .wmark_scale = 10, .vfs_cache_pressure = 60,
+		.swappiness = 40, .wmark_scale = 100, .vfs_cache_pressure = 60,
 	},
 	/*
 	 * Balanced (Daily Driver - v1.3 Adem Anyem & Smooth 120Hz Efficiency):
@@ -175,7 +175,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 90, .down_migrate = 82,
 		.grp_up_migrate = 90, .grp_down_migrate = 82,
 		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 12, .vfs_cache_pressure = 70,
+		.swappiness = 50, .wmark_scale = 100, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
@@ -211,7 +211,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 55, .down_migrate = 40,
 		.grp_up_migrate = 65, .grp_down_migrate = 50,
 		.window_stats_policy = 1,
-		.swappiness = 20, .wmark_scale = 25, .vfs_cache_pressure = 50,
+		.swappiness = 20, .wmark_scale = 150, .vfs_cache_pressure = 50,
 	},
 };
 
@@ -533,7 +533,7 @@ static int apply_ki_profile(int mode, bool force)
 	if (!enable_thermal_throttle)
 		mod_delayed_work(system_highpri_wq, &ki_guard_work, 0);
 	else
-		cancel_delayed_work_sync(&ki_guard_work);
+		cancel_delayed_work(&ki_guard_work);
 
 	/*
 	 * Update VM watermarks & idle floors only on explicit force switch (boot or user sysfs),
@@ -623,10 +623,16 @@ static unsigned int ki_screen_retry;	/* touched by ki_screen_work_fn and reset o
 
 static void ki_screen_requeue(void)
 {
-	/* Screen on: keep trying; Screen off: try 20x 50ms + 20x 1s, then wait for next event */
-	if (READ_ONCE(ki_screen_on) || ki_screen_retry < 40)
-		queue_delayed_work(system_highpri_wq, &ki_screen_work,
-				   msecs_to_jiffies(ki_screen_retry++ < 20 ? 50 : 1000));
+	/* Screen on: quickly retry on highpri_wq so UI/display commit is snappily restored */
+	if (READ_ONCE(ki_screen_on)) {
+		if (ki_screen_retry++ < 20)
+			queue_delayed_work(system_highpri_wq, &ki_screen_work,
+					   msecs_to_jiffies(50));
+	} else {
+		/* Screen off: do NOT spam highpri_wq or wake sleeping secondary CPUs.
+		 * If leaders are offline, the SoC is in deep sleep; relax or defer to next wakeup. */
+		ki_screen_retry = 0;
+	}
 }
 
 static void ki_screen_work_fn(struct work_struct *work)
@@ -1099,7 +1105,7 @@ static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *att
 	    attr == &max_freq_gold_attr.attr ||
 	    attr == &max_freq_prime_attr.attr ||
 	    attr == &reapply_attr.attr)
-		return 0666;
+		return 0664;
 
 	return attr->mode;
 }

@@ -24,9 +24,8 @@
 
 #define DRIVER_VERSION "1.1.0"
 
-/* Default blocked wakelocks on SM8250 known for idle drain */
-#define DEFAULT_BLOCKED_WAKELOCKS \
-	"wlan_pno_wl;wlan_extscan_wl;"
+/* Default blocked wakelocks (safe empty baseline to avoid PCIe Wi-Fi / USB crashes) */
+#define DEFAULT_BLOCKED_WAKELOCKS ""
 
 static char list_wl[LENGTH_LIST_WL] = {0};
 static char list_wl_default[LENGTH_LIST_WL_DEFAULT] = {0};
@@ -40,7 +39,8 @@ static bool wl_blocker_debug = false;
 /*
  * Critical wakeups that MUST NEVER be blocked to preserve 100% reliable
  * alarms, phone calls, WhatsApp/VoIP calls, FCM push notifications,
- * power key / fingerprint wakeups, display wakeups, and background media/audio streaming.
+ * power key / fingerprint wakeups, display wakeups, Wi-Fi PCIe stability,
+ * ADB/USB connectivity, and background media/audio streaming.
  */
 static bool is_critical_wakelock(const char *name)
 {
@@ -58,6 +58,10 @@ static bool is_critical_wakelock(const char *name)
 	    strstr(name, "qcom_rx_wakelock") ||
 	    strstr(name, "IPA_WS") ||
 	    strstr(name, "IPA_CLIENT") ||
+	    strstr(name, "wlan") ||
+	    strstr(name, "pno") ||
+	    strstr(name, "dwc3") ||
+	    strstr(name, "usb") ||
 	    strstr(name, "AudioMix") ||
 	    strstr(name, "audio") ||
 	    strstr(name, "Audio") ||

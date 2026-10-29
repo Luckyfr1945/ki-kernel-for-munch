@@ -2482,7 +2482,8 @@ void ki_cpufreq_reset_idle_floors(int mode)
 	for_each_active_policy(policy) {
 		struct cpufreq_policy new_policy;
 
-		down_write(&policy->rwsem);
+		if (!down_write_trylock(&policy->rwsem))
+			continue;
 		if (policy_is_inactive(policy)) {
 			up_write(&policy->rwsem);
 			continue;
@@ -2514,7 +2515,11 @@ int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int 
 	if (!policy)
 		return -ENODEV;
 
-	down_write(&policy->rwsem);
+	/* Prevent deadlocks with CPU hotplug / suspend threads holding policy->rwsem */
+	if (!down_write_trylock(&policy->rwsem)) {
+		cpufreq_cpu_put(policy);
+		return -EBUSY;
+	}
 	if (policy_is_inactive(policy)) {
 		up_write(&policy->rwsem);
 		cpufreq_cpu_put(policy);
@@ -2536,6 +2541,14 @@ int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int 
 	} else {
 		policy->user_policy.max = policy->cpuinfo.max_freq;
 		new_policy.max = policy->cpuinfo.max_freq;
+	}
+
+	/* Fast path: if limits and governor are identical, skip heavy blocking cpufreq_set_policy */
+	if (new_policy.min == policy->min && new_policy.max == policy->max &&
+	    new_policy.governor == policy->governor) {
+		up_write(&policy->rwsem);
+		cpufreq_cpu_put(policy);
+		return 0;
 	}
 
 	cpufreq_set_policy(policy, &new_policy);

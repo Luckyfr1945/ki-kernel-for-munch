@@ -6891,20 +6891,13 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int alloc_order, int reclaim_o
  * (most normal use), this basically shouldn't matter.
  */
 /*
- * Ki-kernel: Keep kswapd exclusively on LITTLE cores (CPUs 0-3 on SM8250)
- * to prevent kswapd from stealing CPU cycles and causing frame drops on
- * Big (Gold 4-6) and Prime (7) cores during gaming or heavy UI rendering.
+ * Allow kswapd to run across all online CPUs so background memory
+ * reclaim can keep pace with memory allocations during idle/sleep
+ * and prevent catastrophic direct reclaim stalls and order-0 failures.
  */
 static inline void get_kswapd_allowed_mask(struct cpumask *mask)
 {
-	cpumask_clear(mask);
-	cpumask_set_cpu(0, mask);
-	cpumask_set_cpu(1, mask);
-	cpumask_set_cpu(2, mask);
-	cpumask_set_cpu(3, mask);
-	cpumask_and(mask, mask, cpu_online_mask);
-	if (unlikely(cpumask_empty(mask)))
-		cpumask_copy(mask, cpu_online_mask);
+	cpumask_copy(mask, cpu_online_mask);
 }
 
 

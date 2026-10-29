@@ -34,7 +34,7 @@ NO_BLOCK_DISPLAY=1;
 
 ui_print " ";
 ui_print "  ===========================================";
-ui_print "  |          Ki-Kernel v1.5 | munch         |";
+ui_print "  |         Ki-Kernel v1.6.0 | munch        |";
 ui_print "  |                                         |";
 ui_print "  ===========================================";
 ui_print " ";
@@ -54,7 +54,10 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
     elif [ -f /tmp/miui ] || [ -f /tmp/hyperos ] || [ -f /sdcard/miui ] || [ -f /sdcard/hyperos ] || [ -f /data/miui ]; then
         IS_MIUI=1;
         ROM_TYPE="MIUI / HyperOS (Manual Override)";
-    elif [ -f /tmp/oplus ] || [ -f /tmp/oos ] || [ -f /tmp/coloros ] || [ -f /sdcard/oplus ] || [ -f /data/oplus ]; then
+    elif [ -f /tmp/oplus ] || [ -f /tmp/oos ] || [ -f /tmp/coloros ] || \
+         [ -f /sdcard/oplus ] || [ -f /sdcard/coloros ] || [ -f /sdcard/oos ] || \
+         [ -f /sdcard/Download/oplus ] || [ -f /sdcard/Download/coloros ] || \
+         [ -f /data/oplus ] || [ -f /data/coloros ]; then
         IS_OPLUS=1;
         ROM_TYPE="ColorOS / OxygenOS (Manual Override)";
     fi;
@@ -73,51 +76,58 @@ if [ -f "$AKHOME/kernels/miui/Image" ] || [ -f "$AKHOME/kernels/aosp/Image" ] ||
         fi;
     fi;
 
-    # 3. E404 Auto Configuration ROM Detection
+    # 3. Auto Configuration ROM Detection
     if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
         # Mount vendor and product if available in recovery
         mount -o ro /vendor 2>/dev/null || mount /vendor 2>/dev/null;
         mount -o ro /product 2>/dev/null || mount /product 2>/dev/null;
 
-        # Oplus Port ROM detection (E404 method)
+        # Oplus / ColorOS / OxygenOS Port ROM detection
+        # Must check BEFORE MIUI because ColorOS ports on Xiaomi devices retain stock Xiaomi vendor props!
         oplus=0;
         if [ -f /vendor/OemPorts10T.prop ] || [ -f /vendor/etc/init/OemPorts10T.rc ] || \
-           [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ]; then
-            ui_print " ! Detected OPLUS Port ROM by Dandaa !";
+           [ -f /vendor/OemPorts.prop ] || [ -f /vendor/etc/init/OemPorts.rc ] || \
+           [ -d /data/data/com.oplus.safecenter ] || [ -d /data/data/com.coloros.phonemanager ] || \
+           [ -d /data/data/oplus ] || [ -f /data/oplusbootstats ] || [ -d /data/oplus_lib ] || \
+           [ -d /data/data/com.oplus.camera ] || [ -d /data/persist_log/oplusreserve ] || \
+           [ -d /vendor/oplus ] || [ -d /vendor/euclid/oplus ] || [ -d /my_product ] || \
+           grep -iq "coloros\|oplus" /vendor/build.prop 2>/dev/null; then
+            ui_print " ! Detected OPLUS / ColorOS / OxygenOS Port !";
             oplus=1;
         fi;
 
-        # MIUI / HyperOS region detection (E404 method)
-        miprops="$(file_getprop /vendor/build.prop "ro.vendor.miui.build.region" 2>/dev/null)";
-        if [ -z "$miprops" ]; then
-            miprops="$(file_getprop /product/etc/build.prop "ro.miui.build.region" 2>/dev/null)";
-        fi;
-        if [ -z "$miprops" ]; then
-            miprops="$(getprop ro.vendor.miui.build.region 2>/dev/null)";
-        fi;
-        if [ -z "$miprops" ]; then
-            miprops="$(getprop ro.miui.build.region 2>/dev/null)";
-        fi;
+        if [ "$oplus" -eq 1 ]; then
+            ui_print "--> Oplus Port ROM detected, configuring...";
+            IS_OPLUS=1;
+            ROM_TYPE="OPlus Port (ColorOS / OxygenOS / RealmeUI)";
+            ROM_DETAIL="ColorOS / OxygenOS / RealmeUI";
+        else
+            # MIUI / HyperOS region detection (E404 method)
+            miprops="$(file_getprop /vendor/build.prop "ro.vendor.miui.build.region" 2>/dev/null)";
+            if [ -z "$miprops" ]; then
+                miprops="$(file_getprop /product/etc/build.prop "ro.miui.build.region" 2>/dev/null)";
+            fi;
+            if [ -z "$miprops" ]; then
+                miprops="$(getprop ro.vendor.miui.build.region 2>/dev/null)";
+            fi;
+            if [ -z "$miprops" ]; then
+                miprops="$(getprop ro.miui.build.region 2>/dev/null)";
+            fi;
 
-        case "$miprops" in
-            cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
-                ui_print "--> Miui/HyperOS ROM detected, configuring...";
-                IS_MIUI=1;
-                ROM_TYPE="Xiaomi MIUI / HyperOS";
-                ROM_DETAIL="Region: $miprops";
-                ;;
-            *)
-                if [ "$oplus" -ne 1 ]; then
+            case "$miprops" in
+                cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
+                    ui_print "--> Miui/HyperOS ROM detected, configuring...";
+                    IS_MIUI=1;
+                    ROM_TYPE="Xiaomi MIUI / HyperOS";
+                    ROM_DETAIL="Region: $miprops";
+                    ;;
+                *)
                     ui_print "--> AOSP/CLO ROM detected, configuring...";
                     IS_AOSP=1;
                     ROM_TYPE="AOSP / Custom ROM";
-                else
-                    ui_print "--> Oplus Port ROM detected, configuring...";
-                    IS_OPLUS=1;
-                    ROM_TYPE="OPlus Port (ColorOS / OxygenOS / RealmeUI)";
-                fi;
-                ;;
-        esac;
+                    ;;
+            esac;
+        fi;
     fi;
 
 
@@ -186,7 +196,86 @@ split_boot;
 patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_port},dtbo_oem,dtb_def,batt_def";
 flash_boot;
 
-# 2. Flash DTB to vendor_boot partition (Extreme UV + OC 683 MHz GPU table)
+# 2. Select & Flash DTB to vendor_boot partition
+CHOSEN_DTB="";
+
+# Interactive Volume Button Selector (Recovery mode)
+if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
+    # Cek apakah di Recovery environment
+    IS_RECOVERY=0;
+    if [ "$BOOTMODE" = "false" ] || [ -z "$BOOTMODE" ] || [ -d /twres ] || [ -d /sbin ] || [ -f /sbin/recovery ] || grep -q "recovery" /proc/cmdline 2>/dev/null; then
+        IS_RECOVERY=1;
+    fi;
+
+    TIMEOUT_CMD="";
+    if command -v timeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="timeout";
+    elif [ -x "$AKHOME/tools/busybox" ] && "$AKHOME/tools/busybox" timeout --help >/dev/null 2>&1; then
+        TIMEOUT_CMD="$AKHOME/tools/busybox timeout";
+    elif command -v busybox >/dev/null 2>&1 && busybox timeout --help >/dev/null 2>&1; then
+        TIMEOUT_CMD="busybox timeout";
+    fi;
+
+    GETEVENT_CMD="";
+    if command -v getevent >/dev/null 2>&1; then
+        GETEVENT_CMD="getevent";
+    elif [ -x /system/bin/getevent ]; then
+        GETEVENT_CMD="/system/bin/getevent";
+    elif [ -x /sbin/getevent ]; then
+        GETEVENT_CMD="/sbin/getevent";
+    fi;
+
+    if [ "$IS_RECOVERY" -eq 1 ] && [ -n "$GETEVENT_CMD" ] && [ -n "$TIMEOUT_CMD" ]; then
+        ui_print " ";
+        ui_print "----------------------------------------";
+        ui_print " Profil GPU & Voltase:";
+        ui_print "   Vol(+) = OC + UV (683 MHz, Undervolt)";
+        ui_print "   Vol(-) = Stock   (670 MHz, Safe Volt)";
+        ui_print "----------------------------------------";
+        ui_print " Menunggu input tombol (timeout 5s, default: OC)...";
+
+        start=$(date +%s 2>/dev/null || echo 0);
+        loop_count=0;
+        while :; do
+            key_event=$($TIMEOUT_CMD 0.2 $GETEVENT_CMD -qlc 1 2>/dev/null);
+            case "$key_event" in
+                *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*|*"0073"*"00000001"*)
+                    ui_print " -> Terpilih: OC + Undervolt (683 MHz)";
+                    CHOSEN_DTB="oc";
+                    break;
+                    ;;
+                *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*|*"0072"*"00000001"*)
+                    ui_print " -> Terpilih: Stock Default (670 MHz)";
+                    CHOSEN_DTB="stock";
+                    break;
+                    ;;
+            esac;
+
+            now=$(date +%s 2>/dev/null || echo 0);
+            loop_count=$((loop_count + 1));
+            if { [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 5 ]; } || [ "$loop_count" -ge 20 ]; then
+                ui_print " -> Waktu habis, memakai default: OC + Undervolt (683 MHz)";
+                CHOSEN_DTB="oc";
+                break;
+            fi;
+            sleep 0.1;
+        done;
+    else
+        # Flashing dari Android menyala (KernelSU / Magisk / FKM app)
+        ui_print " -> Flashing via App (non-recovery): Memakai default OC + Undervolt (683 MHz)";
+        CHOSEN_DTB="oc";
+    fi;
+fi;
+
+# 2c. Apply chosen DTB to vendor_boot (Default: OC + Undervolt)
+if [ "$CHOSEN_DTB" = "stock" ] && [ -f "$AKHOME/dtb_stock" ]; then
+    cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/dtb_oc" ]; then
+    cp -f "$AKHOME/dtb_oc" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/dtb_stock" ]; then
+    cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
+fi;
+
 if [ -f "$AKHOME/dtb_vendor" ]; then
     ui_print "- Flashing DTB...";
     BLOCK=vendor_boot;
@@ -195,7 +284,7 @@ if [ -f "$AKHOME/dtb_vendor" ]; then
     cp -f "$AKHOME/dtb_vendor" "$AKHOME/dtb";
     split_boot;
     flash_boot;
-    rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
+    rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor" "$AKHOME/dtb_oc" "$AKHOME/dtb_stock" 2>/dev/null;
 fi;
 
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
@@ -237,7 +326,7 @@ chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 # Kernel tweak nodes permissions (controlled by user via Ki-Kernel Settings module)
-# Note: ki_profile maintains secure 0644/0200 root permissions; root apps access directly.
+chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
@@ -280,10 +369,6 @@ chmod 666 /sys/kernel/wakelock_blocker/debug 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
 chmod 666 /sys/class/misc/boeffla_wakelock_blocker/debug 2>/dev/null
 chmod 666 /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
-
-# Ki-Profile and Thermal Guard nodes permission
-chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
-chmod 666 /proc/ki_profile 2>/dev/null
 
 # OPlus / ColorOS / OxygenOS stub nodes permissions
 chmod 644 /proc/oplusVersion/* 2>/dev/null

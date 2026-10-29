@@ -15,9 +15,10 @@
 #include <linux/notifier.h>
 #include <linux/syscalls.h>
 #include <linux/dyn_fsync.h>
+#include <linux/pm_wakeup.h>
 #include <drm/drm_notifier_mi.h>
 
-#define DYN_FSYNC_VERSION "2.0"
+#define DYN_FSYNC_VERSION "2.1"
 
 bool dyn_fsync_active = false;
 EXPORT_SYMBOL(dyn_fsync_active);
@@ -25,6 +26,7 @@ EXPORT_SYMBOL(dyn_fsync_active);
 static bool screen_is_on = true;
 static struct workqueue_struct *dyn_fsync_wq;
 static struct work_struct dyn_fsync_flush_work;
+static struct wakeup_source *dyn_fsync_ws;
 
 bool dyn_fsync_screen_is_on(void)
 {
@@ -34,8 +36,15 @@ EXPORT_SYMBOL(dyn_fsync_screen_is_on);
 
 static void dyn_fsync_flush_worker(struct work_struct *work)
 {
+	/* Hold wakelock during flush so device does not suspend while syncing UFS storage */
+	if (dyn_fsync_ws)
+		__pm_stay_awake(dyn_fsync_ws);
+
 	pr_info("dyn_fsync: screen is OFF, performing ksys_sync()\n");
 	ksys_sync();
+
+	if (dyn_fsync_ws)
+		__pm_relax(dyn_fsync_ws);
 }
 
 static int dyn_fsync_display_notifier_cb(struct notifier_block *nb,
@@ -149,6 +158,8 @@ static int __init dyn_fsync_init(void)
 		destroy_workqueue(dyn_fsync_wq);
 		return rc;
 	}
+
+	dyn_fsync_ws = wakeup_source_register(NULL, "dyn_fsync");
 
 	rc = mi_drm_register_client(&dyn_fsync_display_nb);
 	if (rc < 0)

@@ -3255,6 +3255,11 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 		rc = smblib_set_prop_batt_status(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
+		if (val->intval == 0 && (current_uid().val != 0 || strstr(current->comm, "charger-hal") != NULL)) {
+			pr_debug("SMB5: ignoring input_suspend=0 from %s (uid=%u)\n",
+				current->comm, current_uid().val);
+			break;
+		}
 		rc = smblib_set_prop_input_suspend(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_BATTERY_INPUT_SUSPEND:
@@ -3433,6 +3438,18 @@ static ssize_t bypass_charging_store(struct device *dev,
 
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
+
+	/*
+	 * In ColorOS / OxygenOS ports, vendor.oplus.hardware.charger-V6-service (charger-hal-pol)
+	 * runs a 1-second polling loop that forcefully writes '0' to bypass_charging because the
+	 * port does not have oplus.software.game.bypass_charge declared.
+	 * Ignore non-root / charger-hal-pol writes of '0' when user bypass is active.
+	 */
+	if (val == 0 && (current_uid().val != 0 || strstr(current->comm, "charger-hal") != NULL)) {
+		pr_debug("SMB5: ignoring bypass_charging=0 from %s (uid=%u)\n",
+			current->comm, current_uid().val);
+		return count;
+	}
 
 	rc = smblib_set_bypass(chg, !!val);
 	if (rc < 0)

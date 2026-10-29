@@ -196,7 +196,86 @@ split_boot;
 patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_port},dtbo_oem,dtb_def,batt_def";
 flash_boot;
 
-# 2. Flash DTB to vendor_boot partition (Extreme UV + OC 683 MHz GPU table)
+# 2. Select & Flash DTB to vendor_boot partition
+CHOSEN_DTB="";
+
+# Interactive Volume Button Selector (Recovery mode)
+if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
+    # Cek apakah di Recovery environment
+    IS_RECOVERY=0;
+    if [ "$BOOTMODE" = "false" ] || [ -z "$BOOTMODE" ] || [ -d /twres ] || [ -d /sbin ] || [ -f /sbin/recovery ] || grep -q "recovery" /proc/cmdline 2>/dev/null; then
+        IS_RECOVERY=1;
+    fi;
+
+    TIMEOUT_CMD="";
+    if command -v timeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="timeout";
+    elif [ -x "$AKHOME/tools/busybox" ] && "$AKHOME/tools/busybox" timeout --help >/dev/null 2>&1; then
+        TIMEOUT_CMD="$AKHOME/tools/busybox timeout";
+    elif command -v busybox >/dev/null 2>&1 && busybox timeout --help >/dev/null 2>&1; then
+        TIMEOUT_CMD="busybox timeout";
+    fi;
+
+    GETEVENT_CMD="";
+    if command -v getevent >/dev/null 2>&1; then
+        GETEVENT_CMD="getevent";
+    elif [ -x /system/bin/getevent ]; then
+        GETEVENT_CMD="/system/bin/getevent";
+    elif [ -x /sbin/getevent ]; then
+        GETEVENT_CMD="/sbin/getevent";
+    fi;
+
+    if [ "$IS_RECOVERY" -eq 1 ] && [ -n "$GETEVENT_CMD" ] && [ -n "$TIMEOUT_CMD" ]; then
+        ui_print " ";
+        ui_print "----------------------------------------";
+        ui_print " Profil GPU & Voltase:";
+        ui_print "   Vol(+) = OC + UV (683 MHz, Undervolt)";
+        ui_print "   Vol(-) = Stock   (670 MHz, Safe Volt)";
+        ui_print "----------------------------------------";
+        ui_print " Menunggu input tombol (timeout 5s, default: OC)...";
+
+        start=$(date +%s 2>/dev/null || echo 0);
+        loop_count=0;
+        while :; do
+            key_event=$($TIMEOUT_CMD 0.2 $GETEVENT_CMD -qlc 1 2>/dev/null);
+            case "$key_event" in
+                *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*|*"0073"*"00000001"*)
+                    ui_print " -> Terpilih: OC + Undervolt (683 MHz)";
+                    CHOSEN_DTB="oc";
+                    break;
+                    ;;
+                *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*|*"0072"*"00000001"*)
+                    ui_print " -> Terpilih: Stock Default (670 MHz)";
+                    CHOSEN_DTB="stock";
+                    break;
+                    ;;
+            esac;
+
+            now=$(date +%s 2>/dev/null || echo 0);
+            loop_count=$((loop_count + 1));
+            if { [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge 5 ]; } || [ "$loop_count" -ge 20 ]; then
+                ui_print " -> Waktu habis, memakai default: OC + Undervolt (683 MHz)";
+                CHOSEN_DTB="oc";
+                break;
+            fi;
+            sleep 0.1;
+        done;
+    else
+        # Flashing dari Android menyala (KernelSU / Magisk / FKM app)
+        ui_print " -> Flashing via App (non-recovery): Memakai default OC + Undervolt (683 MHz)";
+        CHOSEN_DTB="oc";
+    fi;
+fi;
+
+# 2c. Apply chosen DTB to vendor_boot (Default: OC + Undervolt)
+if [ "$CHOSEN_DTB" = "stock" ] && [ -f "$AKHOME/dtb_stock" ]; then
+    cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/dtb_oc" ]; then
+    cp -f "$AKHOME/dtb_oc" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/dtb_stock" ]; then
+    cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
+fi;
+
 if [ -f "$AKHOME/dtb_vendor" ]; then
     ui_print "- Flashing DTB...";
     BLOCK=vendor_boot;
@@ -205,7 +284,7 @@ if [ -f "$AKHOME/dtb_vendor" ]; then
     cp -f "$AKHOME/dtb_vendor" "$AKHOME/dtb";
     split_boot;
     flash_boot;
-    rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor";
+    rm -f "$AKHOME/dtb" "$AKHOME/dtb_vendor" "$AKHOME/dtb_oc" "$AKHOME/dtb_stock" 2>/dev/null;
 fi;
 
 # Setup NKM Bypass permissions and profiles on boot (if Magisk / KernelSU exists)
