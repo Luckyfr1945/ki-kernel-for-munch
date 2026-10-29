@@ -1,20 +1,20 @@
- <div align="center">
+<p align="center">
+  <img src="banner.png" alt="Ki-Kernel POCO F4 (munch)">
+</p>
 
-<img src="banner.png" alt="Ki-Kernel POCO F4 (munch)" width="100%" />
-
-# ⚡ Ki-Kernel
+# Ki-Kernel
 
 **POCO F4 (munch) / Redmi K40S**
 
-*Custom Linux kernel with performance tuning, power management and additional kernel features.*
+Custom Linux kernel with performance tuning, power management and additional kernel features.
 
 [![Kernel](https://img.shields.io/badge/Linux-4.19.325-blue.svg)](https://kernel.org)
 [![Android](https://img.shields.io/badge/Android-13--17-green.svg)](#rom-support)
 [![Root](https://img.shields.io/badge/Root-BakaSU%20%2F%20ReSukiSU-red.svg)](https://github.com/Baka-SU/BakaSU)
 [![SuSFS](https://img.shields.io/badge/SuSFS-v2.3.0-orange.svg)](https://gitlab.com/simonpunk/susfs4kernel)
-[![Device](https://img.shields.io/badge/Device-munch-purple.svg)](#device-support)
+[![Device](https://img.shields.io/badge/Device-munch-purple.svg)](#rom-support)
 
-</div>
+[Download](https://github.com/Luckyfr1945/ki-kernel/releases/latest) · [Features](#features) · [Controls](#kernel-controls) · [Install](#installation) · [Credits](#credits) · [Telegram](https://t.me/kikernel)
 
 ---
 
@@ -22,19 +22,19 @@
 
 Ki-Kernel is a custom kernel for the **POCO F4 (munch)**, based on the Xiaomi SM8250 kernel tree. It focuses on gaming performance, daily-use responsiveness, battery management and compatibility with AOSP and MIUI / HyperOS ROMs.
 
+Maintained by [Luckyfr1945](https://github.com/Luckyfr1945). This repository keeps the original commit history of the trees it is built on, so upstream authors stay credited (see [Credits](#credits)).
+
 ## Features
 
 ### Core & Compatibility
-
 - Linux 4.19.325
 - ZyCromerZ Clang 16.0.6
-- Android 13–17 compatibility work
+- Android 13-17 compatibility work
 - eBPF backports for newer Android userspace
 - PID, USER and network namespaces
 - Docker, LXC and container support
 
 ### CPU & Gaming
-
 - Tuned schedutil and WALT
 - Ki-Profile CPU profiles
 - CPUSET and core migration tuning
@@ -46,7 +46,6 @@ Ki-Kernel is a custom kernel for the **POCO F4 (munch)**, based on the Xiaomi SM
 - Focaltech touchscreen latency tuning
 
 ### Display & Audio
-
 - Hardware DC Dimming for supported panels
 - Smart FPS and dynamic refresh-rate fixes
 - KCAL hardware color calibration
@@ -58,7 +57,6 @@ Ki-Kernel is a custom kernel for the **POCO F4 (munch)**, based on the Xiaomi SM
 - AW86927 haptic tuning
 
 ### Battery & Charging
-
 - Hardware bypass charging
 - Force Fast Charge
 - Screen-On Fast Charge
@@ -68,10 +66,10 @@ Ki-Kernel is a custom kernel for the **POCO F4 (munch)**, based on the Xiaomi SM
 - Screen-off power optimizations
 - Deep Sleep and suspend tuning
 
-Actual charging speed depends on the charger, cable, battery temperature, battery state and ROM configuration.
+> [!NOTE]
+> Actual charging speed depends on the charger, cable, battery temperature, battery state and ROM configuration.
 
 ### Memory & Storage
-
 - ZRAM with LZ4, LZ4KD, LZ4HC and ZSTD
 - Configurable ZRAM size through `reki-zram`
 - Dynamic Fsync
@@ -84,7 +82,6 @@ Actual charging speed depends on the charger, cable, battery temperature, batter
 - NTFS filesystem support
 
 ### Networking
-
 - Google BBRv3
 - TCP Westwood-sub
 - TCP Fast Open
@@ -94,7 +91,6 @@ Actual charging speed depends on the charger, cable, battery temperature, batter
 - IPv4 / IPv6 tethering support
 
 ### Root & Security
-
 - BakaSU / ReSukiSU integration
 - SuSFS v2.3.0
 - Inline hook support
@@ -106,19 +102,11 @@ Actual charging speed depends on the charger, cable, battery temperature, batter
 
 ## Kernel Controls
 
-Some builds expose the following interfaces for runtime control. Availability depends on the selected build.
+Some builds expose the following interfaces for runtime control (root required). Availability depends on the selected build, so check what your build provides before using these commands.
 
 ### Ki-Profile
 
-Path:
-
-```bash
-/proc/ki_profile
-```
-
-Available profiles:
-
-```bash
+```sh
 # Battery Saver
 echo 0 > /proc/ki_profile
 
@@ -134,17 +122,11 @@ cat /proc/ki_profile
 
 ### Bypass Charging
 
-Path:
-
-```bash
-/proc/bypass_charging
-```
-
-```bash
-# Enable bypass charging
+```sh
+# Enable
 echo 1 > /proc/bypass_charging
 
-# Disable bypass charging
+# Disable
 echo 0 > /proc/bypass_charging
 
 # Check status
@@ -153,13 +135,7 @@ cat /proc/bypass_charging
 
 ### Force Fast Charge
 
-Path:
-
-```bash
-/proc/fast_charge
-```
-
-```bash
+```sh
 # Enable
 echo 1 > /proc/fast_charge
 
@@ -170,26 +146,26 @@ echo 0 > /proc/fast_charge
 cat /proc/fast_charge
 ```
 
-Check the interfaces provided by your build before using these commands.
-
 ---
 
 ## ROM Support
 
-| Build | Target |
-|---|---|
-| AOSP | AOSP-based custom ROMs |
+| Build          | Target                  |
+|----------------|-------------------------|
+| AOSP           | AOSP-based custom ROMs  |
 | MIUI / HyperOS | Stock-based Xiaomi ROMs |
 
 Android version compatibility varies by ROM and build. Use the release notes for the exact supported configurations.
 
-## Download Variants
+## Download
 
-| Package | Contents |
-|---|---|
-| `KSU+SUSFS.zip` | BakaSU with SuSFS integration |
-| `KSU.zip` | BakaSU without SuSFS |
-| `NOKSU.zip` | Kernel without an integrated root subsystem |
+Builds are published on the [Releases page](https://github.com/Luckyfr1945/ki-kernel/releases/latest).
+
+| Package         | Contents                                    |
+|-----------------|---------------------------------------------|
+| `KSU+SUSFS.zip` | BakaSU with SuSFS integration               |
+| `KSU.zip`       | BakaSU without SuSFS                        |
+| `NOKSU.zip`     | Kernel without an integrated root subsystem |
 
 Root-related features depend on the selected package. A build without an integrated root subsystem does not automatically guarantee Play Integrity certification.
 
@@ -201,11 +177,16 @@ Root-related features depend on the selected package. A build without an integra
 4. Reboot to system.
 5. Verify that the device boots and the expected kernel version is active.
 
-**Before flashing:**
-- Confirm that the device is `munch`.
-- Use the package intended for your ROM.
-- Keep a backup of your current boot image.
-- Do not mix AOSP and MIUI / HyperOS builds unless the release explicitly supports it.
+> [!WARNING]
+> Flash at your own risk. Before flashing:
+> - Confirm that the device is `munch`.
+> - Use the package intended for your ROM.
+> - Keep a backup of your current boot image.
+> - Do not mix AOSP and MIUI / HyperOS builds unless the release explicitly supports it.
+
+## Reporting Bugs
+
+Open an [issue](https://github.com/Luckyfr1945/ki-kernel-for-munch/issues) or tell me on [Telegram](https://t.me/kikernel). Please include your ROM and version, kernel package used, what happened, and logs if you can (`dmesg` or `last_kmsg`).
 
 ## Credits
 
@@ -221,10 +202,12 @@ Root-related features depend on the selected package. A build without an integra
 - [UtsavBalar1231](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250)
 - All contributors, testers and the POCO F4 community
 
----
+## License
+
+Licensed under GPL-2.0, the same as the Linux kernel. See [COPYING](COPYING).
 
 ## Links
 
 - **GitHub:** [Luckyfr1945/ki-kernel-for-munch](https://github.com/Luckyfr1945/ki-kernel-for-munch)
+- **Releases:** [Luckyfr1945/ki-kernel](https://github.com/Luckyfr1945/ki-kernel/releases)
 - **Telegram:** [Ki Community](https://t.me/kikernel)
-
