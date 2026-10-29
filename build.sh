@@ -500,6 +500,7 @@ fi
 # DO NOT include dtbo (preserve panel/touch drivers from ROM)
 rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/*/*.img 2>/dev/null
 cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
+[ -d anykernel_template/tools ] && cp -rf anykernel_template/tools/* anykernel/tools/ 2>/dev/null || true
 
 cd anykernel
 
