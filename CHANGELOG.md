@@ -8,6 +8,9 @@
 ---
 
 ## Ki-kernel v1.6.3 (Display Brightness Range Calibration & AnyKernel3 GPU OC Flasher) :
+- Hotspot & Tethering Fix: bypassed TTL and Hop Limit decrement on forwarded IPv4 (`net/ipv4/ip_forward.c`) and IPv6 (`net/ipv6/ip6_output.c`) packets (ported from e404 / Alexander Winkowski) to prevent carrier DPI tethering blocks and fix "Connected, without internet" bug on connected hotspot devices
+- BPF & Netfilter Defconfig Compatibility: enabled `CONFIG_XDP_SOCKETS=y`, `CONFIG_NETFILTER_XT_TARGET_HL=y`, `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y`, and `CONFIG_IP6_NF_NAT=y` across munch defconfigs (`munch_defconfig` & `munch_stock-defconfig`) to support Tethering BPF maps (`osrtpPolicy.o`) and fix Wi-Fi sharing (STA+SAP) UDP/DHCP checksum validation
+- BPF Generic Pop Header Optimization: corrected `memmove` offset and pull sequence in `bpf_skb_generic_pop()` (`net/core/filter.c`) from upstream commit 315fcbead697 to prevent packet corruption during BPF header pop
 - SuSFS Kernel Panic Fix: guarded `kfree_rcu(old_bitmap, rcu)` with `if (old_bitmap)` in `susfs_set_priority_uid_filter()` and `susfs_priority_app_strings_worker()` (`fs/susfs.c`) to prevent fatal NULL pointer dereference in `__call_rcu()` during initial boot priority UID filter configuration (Issue #1, reported & suggested by @zdanysfa)
 - Memory Reclaim Unevictable Page Hardening: skipped unevictable/mlocked pages (`PageUnevictable`) in `reclaim_pte_range()` (`fs/proc/task_mmu.c`) to prevent isolated count mismatch and VM assertions during Android `CachedAppOptimizer` background reclaim (Issue #1, reported & suggested by @zdanysfa)
 - Display Backlight & Slider Glitch Fix: fixed `sde_backlight_device_get_brightness` returning 0 which caused Android DisplayPowerController and RampAnimator to dip screen brightness to 0 before ramping up or down when dragging the slider
