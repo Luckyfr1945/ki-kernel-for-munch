@@ -8,6 +8,8 @@
 ---
 
 ## Ki-kernel v1.6.3 (Display Brightness Range Calibration & AnyKernel3 GPU OC Flasher) :
+- SuSFS Kernel Panic Fix: guarded `kfree_rcu(old_bitmap, rcu)` with `if (old_bitmap)` in `susfs_set_priority_uid_filter()` and `susfs_priority_app_strings_worker()` (`fs/susfs.c`) to prevent fatal NULL pointer dereference in `__call_rcu()` during initial boot priority UID filter configuration (Issue #1, reported & suggested by @zdanysfa)
+- Memory Reclaim Unevictable Page Hardening: skipped unevictable/mlocked pages (`PageUnevictable`) in `reclaim_pte_range()` (`fs/proc/task_mmu.c`) to prevent isolated count mismatch and VM assertions during Android `CachedAppOptimizer` background reclaim (Issue #1, reported & suggested by @zdanysfa)
 - Display Backlight & Slider Glitch Fix: fixed `sde_backlight_device_get_brightness` returning 0 which caused Android DisplayPowerController and RampAnimator to dip screen brightness to 0 before ramping up or down when dragging the slider
 - Hardware-Accurate Backlight Calibration: calibrated brightness mapping to 11-bit KTZ8866 hardware DAC (2047) and added defensive clamp in dualktz8866 to prevent array out-of-bounds and driver rejection
 - Ultra-Low Minimum Brightness & Smooth Slider Calibration: remapped low brightness range [33, 200] down to [1, 200] so 0% slider reaches true hardware minimum level 1 (~0.3-2 nits) while smoothly and monotonically ramping up to normal levels without deadzones, cliffs, or slider desync
