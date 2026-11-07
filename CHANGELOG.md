@@ -10,8 +10,9 @@
 ## Ki-kernel v1.6.3 (Display Brightness Range Calibration & AnyKernel3 GPU OC Flasher) :
 - Display Backlight & Slider Glitch Fix: fixed `sde_backlight_device_get_brightness` returning 0 which caused Android DisplayPowerController and RampAnimator to dip screen brightness to 0 before ramping up or down when dragging the slider
 - Hardware-Accurate Backlight Calibration: calibrated brightness mapping to 11-bit KTZ8866 hardware DAC (2047) and added defensive clamp in dualktz8866 to prevent array out-of-bounds and driver rejection
-- Ultra-Low Minimum Brightness: preserved hardware level 1 at bottom slider with monotonic 1:1 scaling across all ROMs (AOSP, ColorOS, HyperOS)
+- Ultra-Low Minimum Brightness & Smooth Slider Calibration: remapped low brightness range [33, 200] down to [1, 200] so 0% slider reaches true hardware minimum level 1 (~0.3-2 nits) while smoothly and monotonically ramping up to normal levels without deadzones, cliffs, or slider desync
 - Fixed AnyKernel3 GPU OC vendor_boot flashing: Exported lowercase `block=vendor_boot` alongside uppercase `BLOCK` to ensure DTB partition is repacked correctly on SM8250
+- Fixed recovery volume key selector: replaced fragile timeout command subshell with continuous background getevent listener to reliably detect Vol+ (OC 683 MHz) and Vol- (Stock 670 MHz) in TWRP/OrangeFox
 - Added automated GPU OC trigger support: Flasher now detects `/sdcard/oc`, `/sdcard/Download/oc`, and `/tmp/oc` to automatically select 683 MHz OC + UV profile even in app-based flashers (Kernel Flasher)
 - Updated Ki-Settings / Ki-Optimizer module to v1.4.0 with WebUI charging, profile, and thermal toggles
 - SMB5 charging driver & Boeffla Wakelock Blocker optimizations

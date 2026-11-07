@@ -374,23 +374,13 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         IS_RECOVERY=1;
     fi;
 
-    TIMEOUT_CMD="";
-    if command -v timeout >/dev/null 2>&1; then
-        TIMEOUT_CMD="timeout";
-    elif [ -x "$AKHOME/tools/busybox" ] && "$AKHOME/tools/busybox" timeout --help >/dev/null 2>&1; then
-        TIMEOUT_CMD="$AKHOME/tools/busybox timeout";
-    elif command -v busybox >/dev/null 2>&1 && busybox timeout --help >/dev/null 2>&1; then
-        TIMEOUT_CMD="busybox timeout";
-    fi;
-
     GETEVENT_CMD="";
-    if command -v getevent >/dev/null 2>&1; then
-        GETEVENT_CMD="getevent";
-    elif [ -x /system/bin/getevent ]; then
-        GETEVENT_CMD="/system/bin/getevent";
-    elif [ -x /sbin/getevent ]; then
-        GETEVENT_CMD="/sbin/getevent";
-    fi;
+    for p in getevent /system/bin/getevent /sbin/getevent /bin/getevent /system/xbin/getevent /vendor/bin/getevent; do
+        if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then
+            GETEVENT_CMD="$p";
+            break;
+        fi;
+    done;
 
     if [ -f /sdcard/oc ] || [ -f /tmp/oc ] || [ -f /data/oc ] || [ -f /sdcard/Download/oc ]; then
         ui_print " -> Trigger file detected: Using OC + Undervolt (683 MHz)";
@@ -405,55 +395,58 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         ui_print " Waiting for key press (15s timeout, default: Stock)...";
 
         CHOSEN_DTB="stock";
-        KEYCHECK_BIN="";
-        if [ -x "$AKHOME/tools/keycheck" ]; then
-            KEYCHECK_BIN="$AKHOME/tools/keycheck";
-        elif [ -x /tmp/keycheck ]; then
-            KEYCHECK_BIN="/tmp/keycheck";
+        EVENT_FILE="/tmp/ak3_events";
+        rm -f "$EVENT_FILE";
+
+        GETEVENT_PID="";
+        if [ -n "$GETEVENT_CMD" ]; then
+            $GETEVENT_CMD -l > "$EVENT_FILE" 2>/dev/null &
+            GETEVENT_PID=$!;
         fi;
 
-        if [ -n "$KEYCHECK_BIN" ]; then
-            timeout 15 "$KEYCHECK_BIN";
-            res=$?;
-            if [ $res -eq 42 ]; then
-                ui_print "  Selected : OC + Undervolt (683 MHz)" " ";
-                CHOSEN_DTB="oc";
-            elif [ $res -eq 41 ]; then
-                ui_print "  Selected : Stock Default (670 MHz)" " ";
-                CHOSEN_DTB="stock";
-            else
-                ui_print "  ! Timeout reached, defaulting to: Stock Default (670 MHz)" " ";
-                CHOSEN_DTB="stock";
-            fi;
+        timeout=15;
+        start=0;
+        if [ -x "$AKHOME/tools/busybox" ]; then
+            start=$("$AKHOME/tools/busybox" date +%s 2>/dev/null || echo 0);
         else
-            timeout=15;
             start=$(date +%s 2>/dev/null || echo 0);
+        fi;
 
-            while :; do
-                key_event=$(timeout 0.2 getevent -qlc 1 2>/dev/null);
-
-                if [ -n "$key_event" ]; then
-                    if echo "$key_event" | grep -qiE "KEY_VOLUMEUP|0073"; then
-                        ui_print "  Selected : OC + Undervolt (683-150 MHz)" " ";
-                        CHOSEN_DTB="oc";
-                        break;
-                    fi;
-
-                    if echo "$key_event" | grep -qiE "KEY_VOLUMEDOWN|0072"; then
-                        ui_print "  Selected : Stock Default (670 MHz)" " ";
-                        CHOSEN_DTB="stock";
-                        break;
-                    fi;
-                fi;
-
-                now=$(date +%s 2>/dev/null || echo 0);
-                if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge $timeout ]; then
-                    ui_print "  ! Timeout reached, defaulting to: Stock Default (670 MHz)" " ";
+        while :; do
+            if [ -s "$EVENT_FILE" ]; then
+                if grep -qiE "KEY_VOLUMEUP|0073" "$EVENT_FILE" 2>/dev/null; then
+                    ui_print "  Selected : OC + Undervolt (683-150 MHz)" " ";
+                    CHOSEN_DTB="oc";
+                    break;
+                elif grep -qiE "KEY_VOLUMEDOWN|0072" "$EVENT_FILE" 2>/dev/null; then
+                    ui_print "  Selected : Stock Default (670 MHz)" " ";
                     CHOSEN_DTB="stock";
                     break;
                 fi;
-            done;
-        fi;
+            fi;
+
+            now=0;
+            if [ -x "$AKHOME/tools/busybox" ]; then
+                now=$("$AKHOME/tools/busybox" date +%s 2>/dev/null || echo 0);
+            else
+                now=$(date +%s 2>/dev/null || echo 0);
+            fi;
+
+            if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge $timeout ]; then
+                ui_print "  ! Timeout reached, defaulting to: Stock Default (670 MHz)" " ";
+                CHOSEN_DTB="stock";
+                break;
+            fi;
+
+            if [ -x "$AKHOME/tools/busybox" ]; then
+                "$AKHOME/tools/busybox" sleep 0.1 2>/dev/null || sleep 1 2>/dev/null || true;
+            else
+                sleep 1 2>/dev/null || true;
+            fi;
+        done;
+
+        [ -n "$GETEVENT_PID" ] && kill -9 "$GETEVENT_PID" 2>/dev/null;
+        rm -f "$EVENT_FILE";
     else
         # Flashing from booted Android (KernelSU / Magisk / FKM app)
         ui_print " -> Flashing via App (non-recovery): Using default Stock Default (670 MHz)";

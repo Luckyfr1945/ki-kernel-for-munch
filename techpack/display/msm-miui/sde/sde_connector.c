@@ -81,6 +81,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	int bl_lvl;
 	struct drm_event event;
 	int rc = 0;
+	u32 min_thresh, max_thresh;
 
 	brightness = bd->props.brightness;
 
@@ -114,6 +115,33 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	/* map UI brightness into driver backlight level with rounding */
 	bl_lvl = mult_frac(brightness, display->panel->bl_config.bl_max_level,
 			display->panel->bl_config.brightness_max_level);
+
+	/*
+	 * Calibrated low-brightness curve:
+	 * Android display framework on munch uses mBacklightMinimum = 0.015748031,
+	 * causing the UI slider at 0% to send brightness = 32 or 33 (at 2047 scale).
+	 * Remap the low brightness range [min_thresh, max_thresh] down to [1, max_thresh] so that:
+	 * - 0% slider (<= min_thresh) reaches true hardware minimum level 1 (~0.3-2 nits)
+	 * - The slider smoothly and monotonically ramps up without deadzones or sudden jumps
+	 * - Levels >= max_thresh continue with seamless 1:1 linear mapping
+	 */
+	if (bl_lvl > 0) {
+		min_thresh = mult_frac(display->panel->bl_config.bl_max_level, 33, 2047);
+		max_thresh = mult_frac(display->panel->bl_config.bl_max_level, 200, 2047);
+
+		if (!min_thresh)
+			min_thresh = 1;
+		if (max_thresh <= min_thresh)
+			max_thresh = min_thresh + 1;
+
+		if (bl_lvl <= min_thresh) {
+			bl_lvl = 1;
+		} else if (bl_lvl < max_thresh) {
+			bl_lvl = 1 + mult_frac(bl_lvl - min_thresh,
+					       max_thresh - 1,
+					       max_thresh - min_thresh);
+		}
+	}
 
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;

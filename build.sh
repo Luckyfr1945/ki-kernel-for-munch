@@ -70,9 +70,21 @@ fi
 
 # Enable ccache for fast compiling
 export CCACHE_DIR="$HOME/.cache/ccache_mikernel"
+mkdir -p "$HOME/.ccache-bin"
+CCACHE_BIN="$(command -v ccache || echo "$HOME/.local/bin/ccache")"
+if [ -x "$CCACHE_BIN" ]; then
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/clang"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/clang++"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/gcc"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/g++"
+    export PATH="$HOME/.ccache-bin:/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
+    "$CCACHE_BIN" -M 30G >/dev/null 2>&1 || true
+    echo "Using ccache: $($CCACHE_BIN --version | head -n 1)"
+else
+    export PATH="/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
+fi
 export CC="ccache gcc"
 export CXX="ccache g++"
-export PATH="/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
 echo "CCACHE_DIR: [$CCACHE_DIR]"
 
 export KBUILD_BUILD_USER="build-user"
