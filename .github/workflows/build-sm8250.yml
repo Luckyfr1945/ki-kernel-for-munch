@@ -25,9 +25,10 @@ on:
       variant:
         description: 'Varian Root'
         required: true
-        default: 'ksu'
+        default: 'all'
         type: choice
         options:
+          - all         # Build SEMUA Varian Root (KSU+SUSFS, KSU, NOKSU)
           - ksu         # ReSukiSU + SuSFS
           - nosusfs     # ReSukiSU Only
           - noksu       # Vanilla
@@ -52,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       devices: ${{ steps.set-matrix.outputs.devices }}
+      variants: ${{ steps.set-matrix.outputs.variants }}
     steps:
       - id: set-matrix
         run: |
@@ -61,14 +63,21 @@ jobs:
             echo 'devices=["${{ inputs.device }}"]' >> $GITHUB_OUTPUT
           fi
 
+          if [ "${{ inputs.variant }}" = "all" ]; then
+            echo 'variants=["ksu","nosusfs","noksu"]' >> $GITHUB_OUTPUT
+          else
+            echo 'variants=["${{ inputs.variant }}"]' >> $GITHUB_OUTPUT
+          fi
+
   build:
-    name: Build (${{ matrix.device }})
+    name: Build (${{ matrix.device }} - ${{ matrix.variant }})
     needs: setup
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         device: ${{ fromJson(needs.setup.outputs.devices) }}
+        variant: ${{ fromJson(needs.setup.outputs.variants) }}
 
     steps:
       - name: Free Disk Space
@@ -99,16 +108,16 @@ jobs:
           tar -xf Clang-16.0.6-20230628.tar.gz
           rm -f Clang-16.0.6-20230628.tar.gz
 
-      - name: Compile Kernel (${{ matrix.device }})
+      - name: Compile Kernel (${{ matrix.device }} - ${{ matrix.variant }})
         run: |
           export PATH="$HOME/zyc-clang/bin:$PATH"
           chmod +x build.sh tools/hostcc
-          bash build.sh ${{ matrix.device }} ${{ inputs.variant }} ${{ inputs.target_os }}
+          bash build.sh ${{ matrix.device }} ${{ matrix.variant }} ${{ inputs.target_os }}
 
       - name: Upload Flashable Zip Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ki-Kernel-${{ matrix.device }}-${{ inputs.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
+          name: Ki-Kernel-${{ matrix.device }}-${{ matrix.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
           path: |
             *.zip
             release/*.zip
@@ -155,7 +164,7 @@ jobs:
           sha256 = h.hexdigest()
 
           device = "${{ matrix.device }}"
-          variant = "${{ inputs.variant }}"
+          variant = "${{ matrix.variant }}"
           target_os = "${{ inputs.target_os }}"
           run_url = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
