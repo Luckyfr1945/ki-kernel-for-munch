@@ -75,6 +75,22 @@ jobs:
           CHOSEN_OS=$(echo "${{ inputs.target_os }}" | awk '{print $1}')
           echo "target_os=$CHOSEN_OS" >> $GITHUB_OUTPUT
 
+      - name: Cache ZyCromerZ Clang
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zyc-clang
+          key: zyc-clang-16.0.6-20260807
+
+      - name: Pre-download ZyCromerZ Clang 16
+        if: steps.cache-clang.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME/zyc-clang
+          cd $HOME/zyc-clang
+          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
+          tar -xf Clang.tar.gz
+          rm -f Clang.tar.gz
+
   build:
     name: Build (${{ matrix.device }} - ${{ matrix.variant }})
     needs: setup
@@ -97,8 +113,9 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
 
-      - name: Setup KernelSU (BakaSU)
+      - name: Setup External Modules (BakaSU, NoMount, Baseband-guard)
         run: |
+          # 1. Setup KernelSU (BakaSU)
           rm -rf KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
           if [ -f ".github/ci-patches/bakasu.patch" ]; then
@@ -109,6 +126,19 @@ jobs:
           mkdir -p drivers
           ln -sf ../KernelSU/kernel drivers/kernelsu
 
+          # 2. Setup NoMount
+          rm -rf NoMount
+          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git NoMount || \
+          git clone --depth=1 https://github.com/maxsteeel/nomount.git NoMount
+          mkdir -p fs
+          ln -sf ../NoMount/kernel/src fs/nomount
+
+          # 3. Setup Baseband-guard
+          rm -rf Baseband-guard
+          git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
+          mkdir -p security
+          ln -sf ../Baseband-guard security/baseband-guard
+
       - name: Install Dependencies & Cross Compilers
         run: |
           sudo apt-get update
@@ -117,19 +147,19 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             libssl-dev libelf-dev zip python3 python3-pip
 
-      - name: Cache ZyCromerZ Clang
+      - name: Restore ZyCromerZ Clang Cache
         id: cache-clang
         uses: actions/cache@v4
         with:
           path: /home/runner/zyc-clang
           key: zyc-clang-16.0.6-20260807
 
-      - name: Setup ZyCromerZ Clang 16
+      - name: Setup ZyCromerZ Clang 16 (Fallback)
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           mkdir -p $HOME/zyc-clang
           cd $HOME/zyc-clang
-          curl -fSL https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
+          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
           tar -xf Clang.tar.gz
           rm -f Clang.tar.gz
 
