@@ -117,13 +117,21 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             libssl-dev libelf-dev zip python3 python3-pip
 
+      - name: Cache ZyCromerZ Clang
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zyc-clang
+          key: zyc-clang-16.0.6-20260807
+
       - name: Setup ZyCromerZ Clang 16
+        if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           mkdir -p $HOME/zyc-clang
           cd $HOME/zyc-clang
-          wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20230628-release/Clang-16.0.6-20230628.tar.gz
-          tar -xf Clang-16.0.6-20230628.tar.gz
-          rm -f Clang-16.0.6-20230628.tar.gz
+          curl -fSL https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
+          tar -xf Clang.tar.gz
+          rm -f Clang.tar.gz
 
       - name: Compile Kernel (${{ matrix.device }} - ${{ matrix.variant }})
         run: |
