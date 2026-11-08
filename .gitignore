@@ -86,6 +86,8 @@ modules.builtin
 !.cocciconfig
 !.clang-format
 !.github
+!.github/**
+!.gitmodules
 
 #
 # Generated include files

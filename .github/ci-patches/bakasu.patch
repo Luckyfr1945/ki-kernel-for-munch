@@ -1,0 +1,2444 @@
+diff --git a/kernel/Kbuild b/kernel/Kbuild
+index 666dcde2..3e5d7dff 100644
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -9,6 +9,10 @@ kernelsu-objs += feature/adb_root.o
+ kernelsu-objs += feature/selinux_hide.o
+ kernelsu-objs += feature/shell_su_adb_only.o
+ kernelsu-objs += feature/module_blacklist.o
++kernelsu-objs += feature/netisolate.o
++kernelsu-objs += feature/avc_spoof.o
++kernelsu-objs += feature/mount_view_filter.o
++kernelsu-objs += feature/hide_bootloader.o
+ kernelsu-objs += hook/setuid_hook.o
+ 
+ ifndef CONFIG_KSU_DISABLE_MANAGER
+@@ -101,7 +105,7 @@ ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
+ ccflags-y += -DKSU_VERSION_FULL=\"$(KSU_VERSION_FULL)\"
+ 
+ ifdef CONFIG_KSU_MULTI_MANAGER_SUPPORT
+-$(info -- Supported Managers: KernelSU Official, KOWSU, BakaSU )
++$(info -- Supported Managers: KernelSU Official, MKSU, KernelSU-Next, SukiSU, RKSU, KOWSU, BakaSU, FinaSU, YukiSU, xxKSU )
+ endif
+ 
+ KERNEL_VERSION := $(VERSION).$(PATCHLEVEL)
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index 79bc79ee..03c5b4be 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -244,6 +244,14 @@ config KSU_SUSFS_SUS_MAP
+         - It may not be able to evade detections by apps that implement a good injection detection.
+         - Effective only on zygote spawned umounted user app process >= 10000.
+ 
++config KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
++    bool "Enable susfs avc log spoofing"
++    depends on KSU_SUSFS
++    default y
++    help
++        - Spoof avc log for suspicious domains.
++        - Effective on all processes.
++
+ endmenu
+ 
+ endmenu
+diff --git a/kernel/core/init.c b/kernel/core/init.c
+index d68c2532..2b3e1fdc 100644
+--- a/kernel/core/init.c
++++ b/kernel/core/init.c
+@@ -37,6 +37,10 @@
+ #include "feature/selinux_hide.h"
+ #include "infra/symbol_resolver.h"
+ #include "preinit/preinit.h"
++#include "feature/netisolate.h"
++#include "feature/avc_spoof.h"
++#include "feature/mount_view_filter.h"
++#include "feature/hide_bootloader.h"
+ #include "uapi/supercall.h"
+ 
+ #ifdef CONFIG_ARM64
+@@ -249,12 +253,17 @@ int __init kernelsu_init(void)
+     ksu_adb_root_init();
+     ksu_selinux_hide_init();
+     ksu_shell_su_adb_only_init();
++    ksu_avc_spoof_init();
++    ksu_mvf_init();
++    ksu_hide_bootloader_init();
+ 
+     ksu_supercalls_init();
+     ksu_app_profile_init();
+ 
+     ksu_setuid_hook_init();
+     ksu_sucompat_init();
++    if (ksu_netisolate_init())
++        pr_info("netisolate: feature unavailable\n");
+     if (ksu_late_loaded) {
+         // This way are only happen when tracepoint+lkm
+         // so we use ifdef MODULE there to avoid manual hook compile failed
+@@ -335,10 +344,14 @@ void __exit kernelsu_exit(void)
+     ksu_allowlist_exit();
+ 
+     ksu_shell_su_adb_only_exit();
++    ksu_hide_bootloader_exit();
++    ksu_mvf_exit();
++    ksu_avc_spoof_exit();
+     ksu_selinux_hide_exit();
+     ksu_adb_root_exit();
+     ksu_sulog_exit();
+     ksu_feature_exit();
++    ksu_netisolate_exit();
+     ksu_module_blacklist_exit();
+ 
+     put_cred(ksu_cred);
+diff --git a/kernel/feature/avc_spoof.c b/kernel/feature/avc_spoof.c
+new file mode 100644
+index 00000000..a2e51d61
+--- /dev/null
++++ b/kernel/feature/avc_spoof.c
+@@ -0,0 +1,146 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/atomic.h>
++#include <linux/kprobes.h>
++#include <linux/security.h>
++#include <linux/version.h>
++#include <linux/jump_label.h>
++
++#include "include/arch.h"
++#include "include/klog.h"
++#include "policy/feature.h"
++#include "selinux/selinux.h"
++#include "feature/avc_spoof.h"
++
++#ifdef CONFIG_KSU_SUSFS
++extern struct static_key_false susfs_is_avc_log_spoofing_enabled;
++#endif
++
++static bool avc_spoof_enabled;
++static bool avc_spoof_registered;
++static atomic64_t avc_sid_pair = ATOMIC64_INIT(0);
++
++#ifdef CONFIG_KPROBES
++static int avc_spoof_pre_handler(struct kprobe *p, struct pt_regs *regs)
++{
++    unsigned long tsid;
++    u64 sid_pair;
++
++    if (!smp_load_acquire(&avc_spoof_enabled))
++        return 0;
++    sid_pair = atomic64_read(&avc_sid_pair);
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
++    tsid = PT_REGS_PARM3(regs);
++#else
++    tsid = PT_REGS_PARM2(regs);
++#endif
++    if ((u32)tsid != (u32)(sid_pair >> 32))
++        return 0;
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
++    PT_REGS_NATIVE_PARM3(regs) = (u32)sid_pair;
++#else
++    PT_REGS_NATIVE_PARM2(regs) = (u32)sid_pair;
++#endif
++    return 0;
++}
++
++static struct kprobe avc_spoof_probe = {
++    .symbol_name = "slow_avc_audit",
++    .pre_handler = avc_spoof_pre_handler,
++};
++#endif
++
++static int avc_spoof_get(u64 *value)
++{
++#ifdef CONFIG_KSU_SUSFS
++    *value = (READ_ONCE(avc_spoof_enabled) || static_key_enabled(&susfs_is_avc_log_spoofing_enabled)) ? 1 : 0;
++#else
++    *value = READ_ONCE(avc_spoof_enabled) ? 1 : 0;
++#endif
++    return 0;
++}
++
++static int avc_spoof_set(u64 value)
++{
++    const char *cover = "u:r:priv_app:s0:c512,c768";
++    u32 ksu_sid, cover_sid;
++    int ret;
++
++    if (value > 1)
++        return -EINVAL;
++    if (!value) {
++        WRITE_ONCE(avc_spoof_enabled, false);
++#ifdef CONFIG_KSU_SUSFS
++        static_branch_disable(&susfs_is_avc_log_spoofing_enabled);
++#endif
++        return 0;
++    }
++    if (READ_ONCE(avc_spoof_enabled))
++        return 0;
++
++    ret = security_secctx_to_secid(KERNEL_SU_CONTEXT, strlen(KERNEL_SU_CONTEXT), &ksu_sid);
++    if (ret)
++        return ret;
++    ret = security_secctx_to_secid(cover, strlen(cover), &cover_sid);
++    if (ret)
++        return ret;
++    if (!ksu_sid || !cover_sid || ksu_sid == cover_sid)
++        return -EINVAL;
++
++    atomic64_set(&avc_sid_pair, ((u64)ksu_sid << 32) | cover_sid);
++    /* Publish both SIDs before allowing probe callbacks to use them. */
++    smp_store_release(&avc_spoof_enabled, true);
++#ifdef CONFIG_KSU_SUSFS
++    static_branch_enable(&susfs_is_avc_log_spoofing_enabled);
++#endif
++    return 0;
++}
++
++static const struct ksu_feature_handler avc_spoof_handler = {
++    .feature_id = KSU_FEATURE_AVC_SPOOF,
++    .name = "avc_spoof",
++    .get_handler = avc_spoof_get,
++    .set_handler = avc_spoof_set,
++};
++
++void __init ksu_avc_spoof_init(void)
++{
++    int ret = 0;
++#ifdef CONFIG_KPROBES
++    ret = register_kprobe(&avc_spoof_probe);
++    if (ret) {
++        pr_warn("avc_spoof: probe unavailable: %d\n", ret);
++        avc_spoof_registered = false;
++    } else {
++        avc_spoof_registered = true;
++    }
++#endif
++    ret = ksu_register_feature_handler(&avc_spoof_handler);
++    if (ret) {
++#ifdef CONFIG_KPROBES
++        if (avc_spoof_registered) {
++            unregister_kprobe(&avc_spoof_probe);
++            avc_spoof_registered = false;
++        }
++#endif
++        pr_err("avc_spoof: failed to register handler: %d\n", ret);
++        return;
++    }
++}
++
++void __exit ksu_avc_spoof_exit(void)
++{
++    ksu_unregister_feature_handler(KSU_FEATURE_AVC_SPOOF);
++    WRITE_ONCE(avc_spoof_enabled, false);
++#ifdef CONFIG_KSU_SUSFS
++    static_branch_disable(&susfs_is_avc_log_spoofing_enabled);
++#endif
++#ifdef CONFIG_KPROBES
++    if (avc_spoof_registered) {
++        unregister_kprobe(&avc_spoof_probe);
++        avc_spoof_registered = false;
++    }
++#endif
++}
++
+diff --git a/kernel/feature/avc_spoof.h b/kernel/feature/avc_spoof.h
+new file mode 100644
+index 00000000..b96718e0
+--- /dev/null
++++ b/kernel/feature/avc_spoof.h
+@@ -0,0 +1,7 @@
++#ifndef __KSU_AVC_SPOOF_H
++#define __KSU_AVC_SPOOF_H
++
++void ksu_avc_spoof_init(void);
++void ksu_avc_spoof_exit(void);
++
++#endif
+diff --git a/kernel/feature/dynamic_manager.c b/kernel/feature/dynamic_manager.c
+index 5db79442..36355d1c 100644
+--- a/kernel/feature/dynamic_manager.c
++++ b/kernel/feature/dynamic_manager.c
+@@ -47,7 +47,6 @@ apk_sign_key_t ksu_get_dynamic_manager_sign(void)
+ 
+ int ksu_handle_dynamic_manager(struct ksu_dynamic_manager_cmd *cmd)
+ {
+-    unsigned long flags;
+     int ret = 0;
+     int i;
+ 
+@@ -94,19 +93,20 @@ int ksu_handle_dynamic_manager(struct ksu_dynamic_manager_cmd *cmd)
+     case DYNAMIC_MANAGER_OP_GET:
+         if (dynamic_manager.is_set) {
+             cmd->size = dynamic_manager.size;
+-
+-            // only copy [64] is enough, userspace will handle that
+             memcpy(cmd->hash, dynamic_manager.hash, 64);
+-            ret = 0;
+         } else {
+-            ret = -ENODATA;
++            cmd->size = 0;
++            memset(cmd->hash, 0, 64);
+         }
++        ret = 0;
+         break;
+     case DYNAMIC_MANAGER_OP_WIPE:
+         dynamic_manager.is_set = 0;
++        dynamic_manager.size = 0;
++        memset(dynamic_manager.hash, 0, sizeof(dynamic_manager.hash));
+         ret = 0;
+         ksu_unregister_manager_by_signature_index(KSU_SIGNATURE_INDEX_DYNAMIC_MANAGER);
+-        pr_info("dynamic manager kernel settings reseted");
++        pr_info("dynamic manager kernel settings reseted\n");
+         break;
+ 
+     default:
+diff --git a/kernel/feature/hide_bootloader.c b/kernel/feature/hide_bootloader.c
+new file mode 100644
+index 00000000..8c5e589c
+--- /dev/null
++++ b/kernel/feature/hide_bootloader.c
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/cache.h>
++#include <linux/compiler.h>
++#include <linux/printk.h>
++#include <linux/types.h>
++
++#include "policy/feature.h"
++#include "feature/hide_bootloader.h"
++
++static bool hide_bootloader_enabled __read_mostly;
++
++static int hide_bootloader_feature_get(u64 *value)
++{
++    *value = READ_ONCE(hide_bootloader_enabled) ? 1 : 0;
++    return 0;
++}
++
++static int hide_bootloader_feature_set(u64 value)
++{
++    WRITE_ONCE(hide_bootloader_enabled, value != 0);
++    pr_info("hide_bootloader: set to %d\n", READ_ONCE(hide_bootloader_enabled));
++    return 0;
++}
++
++static const struct ksu_feature_handler hide_bootloader_handler = {
++    .feature_id = KSU_FEATURE_HIDE_BOOTLOADER,
++    .name = "hide_bootloader",
++    .get_handler = hide_bootloader_feature_get,
++    .set_handler = hide_bootloader_feature_set,
++};
++
++void ksu_hide_bootloader_init(void)
++{
++    if (ksu_register_feature_handler(&hide_bootloader_handler))
++        pr_err("hide_bootloader: failed to register feature handler\n");
++}
++
++void ksu_hide_bootloader_exit(void)
++{
++    ksu_unregister_feature_handler(KSU_FEATURE_HIDE_BOOTLOADER);
++}
+diff --git a/kernel/feature/hide_bootloader.h b/kernel/feature/hide_bootloader.h
+new file mode 100644
+index 00000000..f7766451
+--- /dev/null
++++ b/kernel/feature/hide_bootloader.h
+@@ -0,0 +1,7 @@
++#ifndef __KSU_H_HIDE_BOOTLOADER
++#define __KSU_H_HIDE_BOOTLOADER
++
++void ksu_hide_bootloader_init(void);
++void ksu_hide_bootloader_exit(void);
++
++#endif // __KSU_H_HIDE_BOOTLOADER
+diff --git a/kernel/feature/mount_view_filter.c b/kernel/feature/mount_view_filter.c
+new file mode 100644
+index 00000000..332d64b1
+--- /dev/null
++++ b/kernel/feature/mount_view_filter.c
+@@ -0,0 +1,498 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include "mount_view_filter.h"
++
++#include <linux/dcache.h>
++#include <linux/err.h>
++#include <linux/fs.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/mount.h>
++#include <linux/mutex.h>
++#include <linux/path.h>
++#include <linux/printk.h>
++#include <linux/rcupdate.h>
++#include <linux/sched.h>
++#include <linux/seq_file.h>
++#include <linux/string.h>
++#include <linux/jump_label.h>
++
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
++#endif
++
++#include "feature/kernel_umount.h"
++#include "hook/patch_memory.h"
++#include "infra/symbol_resolver.h"
++#include "policy/allowlist.h"
++#include "policy/feature.h"
++#include "klog.h" // IWYU pragma: keep
++#include "ksu.h"
++
++typedef int (*ksu_mvf_open_fn)(struct inode *, struct file *);
++typedef int (*ksu_mvf_show_fn)(struct seq_file *, struct vfsmount *);
++
++struct ksu_mvf_proc_mounts {
++    struct mnt_namespace *ns;
++    struct path root;
++    ksu_mvf_show_fn show;
++};
++
++enum ksu_mvf_format {
++    KSU_MVF_MOUNTS,
++    KSU_MVF_MOUNTINFO,
++    KSU_MVF_MOUNTSTATS,
++};
++
++struct ksu_mvf_hook {
++    const char *name;
++    struct file_operations *ops;
++    ksu_mvf_show_fn original_show;
++    ksu_mvf_show_fn filtered_show;
++    ksu_mvf_open_fn *open_slot;
++    ksu_mvf_open_fn original_open;
++    bool patched;
++};
++
++static DEFINE_MUTEX(ksu_mvf_mutex);
++static bool ksu_mvf_enabled;
++
++static struct ksu_mvf_hook ksu_mvf_hooks[3];
++
++static int __nocfi ksu_mvf_call_show(ksu_mvf_show_fn show, struct seq_file *m, struct vfsmount *mnt)
++{
++    return show(m, mnt);
++}
++
++static int __nocfi ksu_mvf_call_open(ksu_mvf_open_fn open, struct inode *inode, struct file *file)
++{
++    return open(inode, file);
++}
++
++static bool ksu_mvf_char_equal(char a, char b)
++{
++    if (a >= 'A' && a <= 'Z')
++        a += 'a' - 'A';
++    if (b >= 'A' && b <= 'Z')
++        b += 'a' - 'A';
++    return a == b;
++}
++
++static bool ksu_mvf_has_marker(const char *text, size_t len)
++{
++    static const char *const markers[] = {
++        "/adb/", "/data/adb", "kernelsu", "magisk", "zygisk", "/debug_ramdisk",
++    };
++    size_t i, j, marker_len;
++
++    for (i = 0; i < ARRAY_SIZE(markers); i++) {
++        marker_len = strlen(markers[i]);
++        if (len < marker_len)
++            continue;
++        for (j = 0; j + marker_len <= len; j++) {
++            size_t k;
++
++            for (k = 0; k < marker_len && ksu_mvf_char_equal(text[j + k], markers[i][k]); k++)
++                ;
++            if (k == marker_len)
++                return true;
++        }
++    }
++    return false;
++}
++
++static bool ksu_mvf_has_root_marker(struct vfsmount *mnt)
++{
++    char path[512];
++    char *root;
++
++    root = dentry_path_raw(mnt->mnt_root, path, sizeof(path));
++    return !IS_ERR(root) && ksu_mvf_has_marker(root, strlen(root));
++}
++
++static const char *ksu_mvf_token(const char *p, const char *end, unsigned int index, size_t *len)
++{
++    unsigned int field = 0;
++
++    while (p < end) {
++        const char *start;
++
++        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n'))
++            p++;
++        if (p == end)
++            break;
++        start = p;
++        while (p < end && *p != ' ' && *p != '\t' && *p != '\n')
++            p++;
++        if (field++ == index) {
++            *len = p - start;
++            return start;
++        }
++    }
++    return NULL;
++}
++
++static const char *ksu_mvf_find(const char *text, size_t len, const char *needle)
++{
++    size_t needle_len = strlen(needle);
++    size_t i;
++
++    if (needle_len > len)
++        return NULL;
++    for (i = 0; i + needle_len <= len; i++) {
++        if (!memcmp(text + i, needle, needle_len))
++            return text + i;
++    }
++    return NULL;
++}
++
++static const char *ksu_mvf_mountpoint(const char *text, size_t len, enum ksu_mvf_format format, size_t *field_len)
++{
++    const char *end = text + len;
++
++    switch (format) {
++    case KSU_MVF_MOUNTS:
++        return ksu_mvf_token(text, end, 1, field_len);
++    case KSU_MVF_MOUNTINFO:
++        return ksu_mvf_token(text, end, 4, field_len);
++    case KSU_MVF_MOUNTSTATS: {
++        const char *mounted_on = ksu_mvf_find(text, len, " mounted on ");
++
++        if (!mounted_on)
++            return NULL;
++        return ksu_mvf_token(mounted_on + strlen(" mounted on "), end, 0, field_len);
++    }
++    }
++    return NULL;
++}
++
++static int ksu_mvf_octal(char c)
++{
++    if (c >= '0' && c <= '7')
++        return c - '0';
++    return -1;
++}
++
++static bool ksu_mvf_path_equal(const char *field, size_t field_len, const char *path)
++{
++    size_t i = 0, j = 0;
++
++    while (i < field_len) {
++        char c = field[i++];
++
++        if (c == '\\' && i + 2 < field_len) {
++            int a = ksu_mvf_octal(field[i]);
++            int b = ksu_mvf_octal(field[i + 1]);
++            int d = ksu_mvf_octal(field[i + 2]);
++
++            if (a >= 0 && b >= 0 && d >= 0) {
++                c = (char)((a << 6) | (b << 3) | d);
++                i += 3;
++            }
++        }
++        if (path[j++] != c)
++            return false;
++    }
++    return path[j] == '\0';
++}
++
++static bool ksu_mvf_in_umount_list(const char *mountpoint, size_t len)
++{
++    struct mount_entry *entry;
++    bool found = false;
++
++    down_read(&mount_list_lock);
++    list_for_each_entry(entry, &mount_list, list) {
++        if (entry->umountable && ksu_mvf_path_equal(mountpoint, len, entry->umountable)) {
++            found = true;
++            break;
++        }
++    }
++    up_read(&mount_list_lock);
++    return found;
++}
++
++static bool ksu_mvf_record_hidden(struct seq_file *m, size_t start, enum ksu_mvf_format format,
++                                  struct vfsmount *mnt)
++{
++    const char *text = m->buf + start;
++    const char *mountpoint;
++    size_t len = m->count - start;
++    size_t mountpoint_len;
++
++    if (ksu_mvf_has_marker(text, len))
++        return true;
++
++    mountpoint = ksu_mvf_mountpoint(text, len, format, &mountpoint_len);
++    if (mountpoint && ksu_mvf_in_umount_list(mountpoint, mountpoint_len))
++        return true;
++
++    return ksu_mvf_has_root_marker(mnt);
++}
++
++static int ksu_mvf_show(struct seq_file *m, struct vfsmount *mnt, enum ksu_mvf_format format,
++                        ksu_mvf_show_fn original)
++{
++    size_t start = m->count;
++    int ret = ksu_mvf_call_show(original, m, mnt);
++
++    if (ret || seq_has_overflowed(m))
++        return ret;
++    if (m->count >= start && ksu_mvf_record_hidden(m, start, format, mnt))
++        m->count = start;
++    return 0;
++}
++
++static int ksu_mvf_show_mounts(struct seq_file *m, struct vfsmount *mnt)
++{
++    return ksu_mvf_show(m, mnt, KSU_MVF_MOUNTS, ksu_mvf_hooks[0].original_show);
++}
++
++static int ksu_mvf_show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
++{
++    return ksu_mvf_show(m, mnt, KSU_MVF_MOUNTINFO, ksu_mvf_hooks[1].original_show);
++}
++
++static int ksu_mvf_show_mountstats(struct seq_file *m, struct vfsmount *mnt)
++{
++    return ksu_mvf_show(m, mnt, KSU_MVF_MOUNTSTATS, ksu_mvf_hooks[2].original_show);
++}
++
++static bool ksu_mvf_should_filter(void)
++{
++    uid_t uid = current_uid().val;
++    bool isolated = is_isolated_process(uid);
++
++    return (is_appuid(uid) || isolated) && (isolated || ksu_uid_should_umount(uid));
++}
++
++static int ksu_mvf_open(struct inode *inode, struct file *file, unsigned int index)
++{
++    struct ksu_mvf_hook *hook = &ksu_mvf_hooks[index];
++    struct ksu_mvf_proc_mounts *mounts;
++    struct seq_file *m;
++    int ret;
++
++    ret = ksu_mvf_call_open(hook->original_open, inode, file);
++    if (ret)
++        return ret;
++    if (!smp_load_acquire(&ksu_mvf_enabled) || !file->private_data)
++        return 0;
++
++    m = file->private_data;
++    mounts = m->private;
++    if (!mounts || READ_ONCE(mounts->show) != hook->original_show) {
++        pr_warn_once("mount_view_filter: proc_mounts layout changed for %s\n", hook->name);
++        return 0;
++    }
++    if (ksu_mvf_should_filter())
++        WRITE_ONCE(mounts->show, hook->filtered_show);
++    return 0;
++}
++
++static int ksu_mvf_open_mounts(struct inode *inode, struct file *file)
++{
++    return ksu_mvf_open(inode, file, 0);
++}
++
++static int ksu_mvf_open_mountinfo(struct inode *inode, struct file *file)
++{
++    return ksu_mvf_open(inode, file, 1);
++}
++
++static int ksu_mvf_open_mountstats(struct inode *inode, struct file *file)
++{
++    return ksu_mvf_open(inode, file, 2);
++}
++
++static ksu_mvf_open_fn ksu_mvf_open_wrapper(unsigned int index)
++{
++    static const ksu_mvf_open_fn wrappers[] = {
++        ksu_mvf_open_mounts,
++        ksu_mvf_open_mountinfo,
++        ksu_mvf_open_mountstats,
++    };
++
++    return wrappers[index];
++}
++
++static int ksu_mvf_install_hooks(void)
++{
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(ksu_mvf_hooks); i++) {
++        struct ksu_mvf_hook *hook = &ksu_mvf_hooks[i];
++        ksu_mvf_open_fn wrapper = ksu_mvf_open_wrapper(i);
++        int ret;
++
++        if (hook->patched)
++            continue;
++        hook->original_open = READ_ONCE(*hook->open_slot);
++        if (!hook->original_open) {
++            pr_err("mount_view_filter: %s has no open handler\n", hook->name);
++            return -ENOSYS;
++        }
++        ret = ksu_patch_text(hook->open_slot, &wrapper, sizeof(wrapper), KSU_PATCH_TEXT_FLUSH_DCACHE);
++        if (ret) {
++            pr_err("mount_view_filter: failed to hook %s: %d\n", hook->name, ret);
++            return ret;
++        }
++        hook->patched = true;
++    }
++    return 0;
++}
++
++static int ksu_mvf_restore_hooks(void)
++{
++    int error = 0;
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(ksu_mvf_hooks); i++) {
++        struct ksu_mvf_hook *hook = &ksu_mvf_hooks[i];
++        int ret;
++
++        if (!hook->patched)
++            continue;
++        if (READ_ONCE(*hook->open_slot) != ksu_mvf_open_wrapper(i)) {
++            pr_warn("mount_view_filter: %s open slot was replaced externally\n", hook->name);
++            hook->patched = false;
++            continue;
++        }
++        ret = ksu_patch_text(hook->open_slot, &hook->original_open, sizeof(hook->original_open),
++                             KSU_PATCH_TEXT_FLUSH_DCACHE);
++        if (ret) {
++            pr_err("mount_view_filter: failed to restore %s: %d\n", hook->name, ret);
++            error = error ?: ret;
++            continue;
++        }
++        hook->patched = false;
++    }
++    return error;
++}
++
++static int ksu_mvf_resolve_symbols(void)
++{
++    static const char *const names[] = {
++        "show_vfsmnt",
++        "show_mountinfo",
++        "show_vfsstat",
++        "proc_mounts_operations",
++        "proc_mountinfo_operations",
++        "proc_mountstats_operations",
++    };
++    unsigned long addrs[ARRAY_SIZE(names)];
++    int found = ksu_lookup_kernel_symbols(names, addrs, ARRAY_SIZE(names));
++    unsigned int i;
++
++    if (found != ARRAY_SIZE(names)) {
++        pr_err("mount_view_filter: symbol lookup failed: %d/%zu\n", found, ARRAY_SIZE(names));
++        return found < 0 ? found : -ENOSYS;
++    }
++
++    for (i = 0; i < ARRAY_SIZE(names); i++) {
++        if (!addrs[i]) {
++            pr_err("mount_view_filter: missing symbol %s\n", names[i]);
++            return -ENOSYS;
++        }
++    }
++
++    ksu_mvf_hooks[0].name = names[0];
++    ksu_mvf_hooks[0].original_show = (ksu_mvf_show_fn)addrs[0];
++    ksu_mvf_hooks[0].filtered_show = ksu_mvf_show_mounts;
++    ksu_mvf_hooks[0].ops = (struct file_operations *)addrs[3];
++    ksu_mvf_hooks[0].open_slot = &ksu_mvf_hooks[0].ops->open;
++
++    ksu_mvf_hooks[1].name = names[1];
++    ksu_mvf_hooks[1].original_show = (ksu_mvf_show_fn)addrs[1];
++    ksu_mvf_hooks[1].filtered_show = ksu_mvf_show_mountinfo;
++    ksu_mvf_hooks[1].ops = (struct file_operations *)addrs[4];
++    ksu_mvf_hooks[1].open_slot = &ksu_mvf_hooks[1].ops->open;
++
++    ksu_mvf_hooks[2].name = names[2];
++    ksu_mvf_hooks[2].original_show = (ksu_mvf_show_fn)addrs[2];
++    ksu_mvf_hooks[2].filtered_show = ksu_mvf_show_mountstats;
++    ksu_mvf_hooks[2].ops = (struct file_operations *)addrs[5];
++    ksu_mvf_hooks[2].open_slot = &ksu_mvf_hooks[2].ops->open;
++    return 0;
++}
++
++static int ksu_mvf_feature_get(u64 *value)
++{
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++    *value = (READ_ONCE(ksu_mvf_enabled) || static_key_enabled(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)) ? 1 : 0;
++#else
++    *value = READ_ONCE(ksu_mvf_enabled) ? 1 : 0;
++#endif
++    return 0;
++}
++
++static int ksu_mvf_feature_set(u64 value)
++{
++    bool enable = value != 0;
++    int ret = 0;
++
++    mutex_lock(&ksu_mvf_mutex);
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++    if (enable)
++        static_branch_enable(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
++    else
++        static_branch_disable(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
++#endif
++    if (enable) {
++        if (!smp_load_acquire(&ksu_mvf_enabled)) {
++            ret = ksu_mvf_resolve_symbols();
++            if (!ret)
++                ret = ksu_mvf_install_hooks();
++            if (!ret)
++                smp_store_release(&ksu_mvf_enabled, true);
++            else {
++                ksu_mvf_restore_hooks();
++                synchronize_rcu();
++            }
++        }
++    } else if (smp_load_acquire(&ksu_mvf_enabled)) {
++        smp_store_release(&ksu_mvf_enabled, false);
++        ret = ksu_mvf_restore_hooks();
++        synchronize_rcu();
++    }
++    mutex_unlock(&ksu_mvf_mutex);
++    return ret;
++}
++
++static const struct ksu_feature_handler ksu_mvf_handler = {
++    .feature_id = KSU_FEATURE_MOUNT_VIEW_FILTER,
++    .name = "mount_view_filter",
++    .get_handler = ksu_mvf_feature_get,
++    .set_handler = ksu_mvf_feature_set,
++};
++
++static const struct ksu_feature_handler ksu_unshare_mnt_handler = {
++    .feature_id = KSU_FEATURE_UNSHARE_MNT,
++    .name = "unshare_mnt",
++    .get_handler = ksu_mvf_feature_get,
++    .set_handler = ksu_mvf_feature_set,
++};
++
++void __init ksu_mvf_init(void)
++{
++    if (ksu_register_feature_handler(&ksu_mvf_handler))
++        pr_err("mount_view_filter: failed to register feature handler\n");
++    if (ksu_register_feature_handler(&ksu_unshare_mnt_handler))
++        pr_err("unshare_mnt: failed to register feature handler\n");
++}
++
++void __exit ksu_mvf_exit(void)
++{
++    mutex_lock(&ksu_mvf_mutex);
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++    static_branch_disable(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
++#endif
++    if (smp_load_acquire(&ksu_mvf_enabled)) {
++        smp_store_release(&ksu_mvf_enabled, false);
++        ksu_mvf_restore_hooks();
++        synchronize_rcu();
++    }
++    mutex_unlock(&ksu_mvf_mutex);
++    ksu_unregister_feature_handler(KSU_FEATURE_UNSHARE_MNT);
++    ksu_unregister_feature_handler(KSU_FEATURE_MOUNT_VIEW_FILTER);
++}
+diff --git a/kernel/feature/mount_view_filter.h b/kernel/feature/mount_view_filter.h
+new file mode 100644
+index 00000000..128514cb
+--- /dev/null
++++ b/kernel/feature/mount_view_filter.h
+@@ -0,0 +1,7 @@
++#ifndef __KSU_H_MOUNT_VIEW_FILTER
++#define __KSU_H_MOUNT_VIEW_FILTER
++
++void ksu_mvf_init(void);
++void ksu_mvf_exit(void);
++
++#endif
+diff --git a/kernel/feature/netisolate.c b/kernel/feature/netisolate.c
+new file mode 100644
+index 00000000..aad2181f
+--- /dev/null
++++ b/kernel/feature/netisolate.c
+@@ -0,0 +1,924 @@
++#include <linux/types.h>
++#include <linux/byteorder/little_endian.h>
++#include <linux/compiler.h>
++#include <linux/cred.h>
++#include <linux/errno.h>
++#include <linux/in.h>
++#include <linux/in6.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/mutex.h>
++#include <linux/printk.h>
++#include <linux/ptrace.h>
++#include <linux/slab.h>
++#include <linux/socket.h>
++#include <linux/spinlock.h>
++#include <linux/string.h>
++#include <linux/timekeeping.h>
++#include <linux/uaccess.h>
++
++#include <linux/build_bug.h>
++#include <net/compat.h>
++
++#include "feature/netisolate.h"
++#include "hook/patch_memory.h"
++#include "hook/syscall_hook.h"
++#include "infra/symbol_resolver.h"
++#include "manager/manager_identity.h"
++
++#ifndef is_uid_manager
++#define is_uid_manager(uid) ksu_is_manager_uid(uid)
++#endif
++
++static_assert(sizeof(struct ksu_netisolate_config) == 1040, "netisolate ABI drift");
++static_assert(sizeof(struct ksu_netisolate_policies) == 2064, "netisolate policies ABI drift");
++static_assert(sizeof(struct ksu_netisolate_event) == 40, "netisolate event ABI drift");
++static_assert(sizeof(struct ksu_netisolate_events) == 2576, "netisolate events ABI drift");
++
++#define NI_NATIVE_BASE 0
++#define NI_OPERATION_COUNT 5
++#define NI_COMPAT_BASE NI_OPERATION_COUNT
++#define NI_HOOK_COUNT (NI_OPERATION_COUNT * 2)
++#define NI_SYSCALL_LIMIT 1024
++#define NI_SENDMMSG_CHECK_MAX 16
++#define NI_SUPPORTED_FLAGS                                                                                             \
++    (KSU_NETISOLATE_FLAG_STRICT_SOCKET | KSU_NETISOLATE_FLAG_ALLOW_LOOPBACK |                                          \
++     KSU_NETISOLATE_FLAG_ALLOW_PRIVATE_NETWORK | KSU_NETISOLATE_FLAG_ALLOW_LOCAL_DISCOVERY)
++#define NI_ALLOW_FLAGS                                                                                                 \
++    (KSU_NETISOLATE_FLAG_ALLOW_LOOPBACK | KSU_NETISOLATE_FLAG_ALLOW_PRIVATE_NETWORK |                                  \
++     KSU_NETISOLATE_FLAG_ALLOW_LOCAL_DISCOVERY)
++
++enum ni_operation {
++    NI_CONNECT,
++    NI_SENDTO,
++    NI_SENDMSG,
++    NI_SENDMMSG,
++    NI_SOCKET,
++};
++
++struct ni_hook {
++    syscall_fn_t *table;
++    int nr;
++    syscall_fn_t original;
++    syscall_fn_t replacement;
++    bool installed;
++};
++
++struct ni_policy {
++    u32 uid;
++    u32 flags;
++};
++
++struct ni_state {
++    u32 enabled;
++    u32 count;
++    struct ni_policy policies[KSU_NETISOLATE_MAX_POLICIES];
++};
++
++struct ni_endpoint {
++    u8 family;
++    u8 address[16];
++    u16 port;
++};
++
++enum ni_target_class {
++    NI_TARGET_NONE,
++    NI_TARGET_LOOPBACK,
++    NI_TARGET_PRIVATE_NETWORK,
++    NI_TARGET_LOCAL_DISCOVERY,
++    NI_TARGET_OTHER_IP,
++};
++
++struct ni_event_ring {
++    u32 head;
++    u32 count;
++    u64 dropped;
++    struct ksu_netisolate_event events[KSU_NETISOLATE_EVENT_MAX];
++};
++
++static DEFINE_MUTEX(ni_lifecycle_lock);
++static DEFINE_SPINLOCK(ni_state_lock);
++static DEFINE_SPINLOCK(ni_event_lock);
++static struct ni_state ni_state;
++static struct ni_event_ring ni_events;
++static struct ni_hook ni_hooks[NI_HOOK_COUNT];
++static bool ni_supported;
++static bool ni_compat_supported;
++static bool ni_stopping;
++
++static const int ni_native_nrs[] = {
++    __NR_connect, __NR_sendto, __NR_sendmsg, __NR_sendmmsg, __NR_socket,
++};
++
++#if defined(__aarch64__)
++static const int ni_compat_nrs[] = { 283, 290, 296, 374, 281 };
++#elif defined(__x86_64__)
++static const int ni_compat_nrs[] = { 362, 369, 370, 345, 359 };
++#endif
++
++static syscall_fn_t ni_original(enum ni_operation op, bool compat)
++{
++    return ni_hooks[(compat ? NI_COMPAT_BASE : NI_NATIVE_BASE) + op].original;
++}
++
++static unsigned long ni_arg(const struct pt_regs *regs, unsigned int index, bool compat)
++{
++#if defined(__x86_64__)
++    if (compat) {
++        switch (index) {
++        case 0:
++            return regs->bx;
++        case 1:
++            return regs->cx;
++        case 2:
++            return regs->dx;
++        case 3:
++            return regs->si;
++        case 4:
++            return regs->di;
++        default:
++            return regs->bp;
++        }
++    }
++
++    switch (index) {
++    case 0:
++        return regs->di;
++    case 1:
++        return regs->si;
++    case 2:
++        return regs->dx;
++    case 3:
++        return regs->r10;
++    case 4:
++        return regs->r8;
++    default:
++        return regs->r9;
++    }
++#else
++    (void)compat;
++    if (index >= 6)
++        return 0;
++    return regs->regs[index];
++#endif
++}
++
++static void __user *ni_user_ptr(const struct pt_regs *regs, unsigned int index, bool compat)
++{
++    unsigned long value = ni_arg(regs, index, compat);
++
++#if defined(__x86_64__) || defined(__aarch64__)
++    if (compat)
++        return compat_ptr((compat_ulong_t)value);
++#endif
++    return (void __user *)value;
++}
++
++static bool ni_policy_match(uid_t uid, enum ni_operation op, u32 *policy_flags)
++{
++    unsigned long flags;
++    u32 i;
++
++    if (op >= NI_OPERATION_COUNT)
++        return false;
++    if (!READ_ONCE(ni_state.enabled))
++        return false;
++    if (uid == 0 || is_uid_manager(uid))
++        return false;
++
++    spin_lock_irqsave(&ni_state_lock, flags);
++    if (ni_state.enabled) {
++        for (i = 0; i < ni_state.count; i++) {
++            if (ni_state.policies[i].uid == uid) {
++                *policy_flags = ni_state.policies[i].flags;
++                spin_unlock_irqrestore(&ni_state_lock, flags);
++                return true;
++            }
++        }
++    }
++    spin_unlock_irqrestore(&ni_state_lock, flags);
++    return false;
++}
++
++static enum ni_target_class ni_ipv4_target(const struct in_addr *address)
++{
++    const u8 *bytes = (const u8 *)&address->s_addr;
++
++    if (bytes[0] == 127)
++        return NI_TARGET_LOOPBACK;
++    if (bytes[0] == 224 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 251)
++        return NI_TARGET_LOCAL_DISCOVERY;
++    if (bytes[0] == 239 && bytes[1] == 255 && bytes[2] == 255 && bytes[3] == 250)
++        return NI_TARGET_LOCAL_DISCOVERY;
++    if (bytes[0] == 10 || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
++        (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 169 && bytes[1] == 254))
++        return NI_TARGET_PRIVATE_NETWORK;
++    return NI_TARGET_OTHER_IP;
++}
++
++static enum ni_target_class ni_ipv6_target(const struct in6_addr *address)
++{
++    const u8 *bytes = address->s6_addr;
++    struct in_addr mapped;
++    bool zero_prefix = true;
++    u32 i;
++
++    for (i = 0; i < 10; i++) {
++        if (bytes[i]) {
++            zero_prefix = false;
++            break;
++        }
++    }
++
++    if (zero_prefix && !bytes[10] && !bytes[11]) {
++        for (i = 12; i < 15; i++) {
++            if (bytes[i])
++                break;
++        }
++        if (i == 15 && bytes[15] == 1)
++            return NI_TARGET_LOOPBACK;
++    }
++
++    if (zero_prefix && bytes[10] == 0xff && bytes[11] == 0xff) {
++        memcpy(&mapped, &bytes[12], sizeof(mapped));
++        return ni_ipv4_target(&mapped);
++    }
++    if (bytes[0] == 0xff && bytes[1] == 0x02) {
++        for (i = 2; i < 15; i++) {
++            if (bytes[i])
++                return NI_TARGET_OTHER_IP;
++        }
++        return bytes[15] == 0xfb ? NI_TARGET_LOCAL_DISCOVERY : NI_TARGET_OTHER_IP;
++    }
++    if ((bytes[0] & 0xfe) == 0xfc || (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80))
++        return NI_TARGET_PRIVATE_NETWORK;
++    return NI_TARGET_OTHER_IP;
++}
++
++static int ni_sockaddr_target(const void __user *address, unsigned int address_length, struct ni_endpoint *endpoint,
++                              enum ni_target_class *target_class)
++{
++    __u16 family;
++
++    memset(endpoint, 0, sizeof(*endpoint));
++    *target_class = NI_TARGET_NONE;
++    if (!address)
++        return 0;
++    if (copy_from_user(&family, address, sizeof(family)))
++        return -EFAULT;
++
++    if (family == AF_INET) {
++        struct sockaddr_in addr;
++
++        if (address_length < sizeof(addr))
++            return 0;
++        if (copy_from_user(&addr, address, sizeof(addr)))
++            return -EFAULT;
++        endpoint->family = AF_INET;
++        memcpy(endpoint->address, &addr.sin_addr, sizeof(addr.sin_addr));
++        endpoint->port = ntohs(addr.sin_port);
++        *target_class = ni_ipv4_target(&addr.sin_addr);
++    } else if (family == AF_INET6) {
++        struct sockaddr_in6 addr;
++
++        if (address_length < sizeof(addr))
++            return 0;
++        if (copy_from_user(&addr, address, sizeof(addr)))
++            return -EFAULT;
++        endpoint->family = AF_INET6;
++        memcpy(endpoint->address, &addr.sin6_addr, sizeof(addr.sin6_addr));
++        endpoint->port = ntohs(addr.sin6_port);
++        *target_class = ni_ipv6_target(&addr.sin6_addr);
++    }
++    return 0;
++}
++
++static bool ni_target_allowed(enum ni_target_class target_class, u32 policy_flags)
++{
++    switch (target_class) {
++    case NI_TARGET_LOOPBACK:
++        return policy_flags & KSU_NETISOLATE_FLAG_ALLOW_LOOPBACK;
++    case NI_TARGET_PRIVATE_NETWORK:
++        return policy_flags & KSU_NETISOLATE_FLAG_ALLOW_PRIVATE_NETWORK;
++    case NI_TARGET_LOCAL_DISCOVERY:
++        return policy_flags & KSU_NETISOLATE_FLAG_ALLOW_LOCAL_DISCOVERY;
++    default:
++        return false;
++    }
++}
++
++static int ni_sendmsg_target(const struct pt_regs *regs, bool compat, u32 policy_flags, struct ni_endpoint *endpoint,
++                             bool *target)
++{
++    void __user *name;
++    int name_length;
++    enum ni_target_class target_class;
++    int ret;
++
++    *target = false;
++    if (compat) {
++        struct compat_msghdr __user *msg = (struct compat_msghdr __user *)ni_user_ptr(regs, 1, true);
++        compat_uptr_t raw_name;
++
++        if (!msg) {
++            return 0;
++        }
++        if (get_user(raw_name, &msg->msg_name) || get_user(name_length, &msg->msg_namelen))
++            return -EFAULT;
++        name = compat_ptr(raw_name);
++    } else {
++        struct user_msghdr __user *msg = (struct user_msghdr __user *)ni_user_ptr(regs, 1, false);
++        void __user *raw_name = NULL;
++
++        if (!msg) {
++            return 0;
++        }
++        if (get_user(raw_name, &msg->msg_name) || get_user(name_length, &msg->msg_namelen))
++            return -EFAULT;
++        name = raw_name;
++    }
++
++    if (name_length < 0)
++        return 0;
++    ret = ni_sockaddr_target(name, name_length, endpoint, &target_class);
++    if (ret)
++        return ret;
++    *target = target_class != NI_TARGET_NONE && !ni_target_allowed(target_class, policy_flags);
++    return 0;
++}
++
++static int ni_sendmmsg_target(const struct pt_regs *regs, bool compat, u32 policy_flags, struct ni_endpoint *endpoint,
++                              bool *target)
++{
++    unsigned long base = ni_arg(regs, 1, compat);
++    unsigned long vlen = ni_arg(regs, 2, compat);
++    unsigned long count = min_t(unsigned long, vlen, NI_SENDMMSG_CHECK_MAX);
++    unsigned long i;
++
++    *target = false;
++    if (!base || !count)
++        return 0;
++
++    for (i = 0; i < count; i++) {
++        void __user *name;
++        enum ni_target_class target_class;
++        int name_length;
++        int ret;
++
++        if (compat) {
++            unsigned long offset = i * sizeof(struct compat_mmsghdr);
++            struct compat_mmsghdr __user *entry;
++            compat_uptr_t raw_name;
++
++            if (offset > ULONG_MAX - base)
++                return -EFAULT;
++            entry = (struct compat_mmsghdr __user *)(base + offset);
++            if (get_user(raw_name, &entry->msg_hdr.msg_name) || get_user(name_length, &entry->msg_hdr.msg_namelen))
++                return -EFAULT;
++            name = compat_ptr(raw_name);
++        } else {
++            unsigned long offset = i * sizeof(struct mmsghdr);
++            struct mmsghdr __user *entry;
++            void __user *raw_name = NULL;
++
++            if (offset > ULONG_MAX - base)
++                return -EFAULT;
++            entry = (struct mmsghdr __user *)(base + offset);
++            if (get_user(raw_name, &entry->msg_hdr.msg_name) || get_user(name_length, &entry->msg_hdr.msg_namelen))
++                return -EFAULT;
++            name = raw_name;
++        }
++
++        if (!name)
++            continue;
++        if (name_length < 0)
++            continue;
++        ret = ni_sockaddr_target(name, name_length, endpoint, &target_class);
++        if (ret)
++            return ret;
++        if (target_class != NI_TARGET_NONE && !ni_target_allowed(target_class, policy_flags)) {
++            *target = true;
++            return 0;
++        }
++    }
++    return 0;
++}
++
++static bool __nocfi ni_should_refuse(const struct pt_regs *regs, enum ni_operation op, bool compat,
++                                     struct ni_endpoint *endpoint)
++{
++    u32 policy_flags = 0;
++    enum ni_target_class target_class;
++    bool target = false;
++
++    memset(endpoint, 0, sizeof(*endpoint));
++    if (!ni_policy_match(current_uid().val, op, &policy_flags))
++        return false;
++
++    switch (op) {
++    case NI_CONNECT:
++        if (ni_sockaddr_target(ni_user_ptr(regs, 1, compat), ni_arg(regs, 2, compat), endpoint, &target_class))
++            return false;
++        target = target_class != NI_TARGET_NONE && !ni_target_allowed(target_class, policy_flags);
++        break;
++    case NI_SENDTO:
++        if (ni_sockaddr_target(ni_user_ptr(regs, 4, compat), ni_arg(regs, 5, compat), endpoint, &target_class))
++            return false;
++        target = target_class != NI_TARGET_NONE && !ni_target_allowed(target_class, policy_flags);
++        break;
++    case NI_SENDMSG:
++        if (ni_sendmsg_target(regs, compat, policy_flags, endpoint, &target))
++            return false;
++        break;
++    case NI_SENDMMSG:
++        if (ni_sendmmsg_target(regs, compat, policy_flags, endpoint, &target))
++            return false;
++        break;
++    case NI_SOCKET:
++        if (!(policy_flags & KSU_NETISOLATE_FLAG_STRICT_SOCKET))
++            return false;
++        endpoint->family = ni_arg(regs, 0, compat);
++        target = endpoint->family == AF_INET || endpoint->family == AF_INET6;
++        break;
++    }
++    return target;
++}
++
++static void ni_record_event(u32 uid, enum ni_operation op, const struct ni_endpoint *endpoint)
++{
++    struct ksu_netisolate_event event = {
++        .timestamp_ns = ktime_get_ns(),
++        .uid = uid,
++        .port = endpoint->port,
++        .family = endpoint->family,
++        .operation = op,
++    };
++    unsigned long flags;
++    u32 slot;
++
++    memcpy(event.address, endpoint->address, sizeof(event.address));
++    spin_lock_irqsave(&ni_event_lock, flags);
++    if (READ_ONCE(ni_stopping)) {
++        spin_unlock_irqrestore(&ni_event_lock, flags);
++        return;
++    }
++    slot = ni_events.head;
++    ni_events.events[slot] = event;
++    ni_events.head = (slot + 1) % KSU_NETISOLATE_EVENT_MAX;
++    if (ni_events.count < KSU_NETISOLATE_EVENT_MAX)
++        ni_events.count++;
++    else
++        ni_events.dropped++;
++    spin_unlock_irqrestore(&ni_event_lock, flags);
++}
++
++#define NI_WRAPPER(name, op, compat)                                                                                   \
++    static long __nocfi name(const struct pt_regs *regs)                                                               \
++    {                                                                                                                  \
++        struct ni_endpoint endpoint;                                                                                   \
++        if (ni_should_refuse(regs, op, compat, &endpoint)) {                                                           \
++            ni_record_event(current_uid().val, op, &endpoint);                                                         \
++            return op == NI_SOCKET ? -EACCES : -ECONNREFUSED;                                                          \
++        }                                                                                                              \
++        return ni_original(op, compat)(regs);                                                                          \
++    }
++
++NI_WRAPPER(ni_connect, NI_CONNECT, false)
++NI_WRAPPER(ni_sendto, NI_SENDTO, false)
++NI_WRAPPER(ni_sendmsg, NI_SENDMSG, false)
++NI_WRAPPER(ni_sendmmsg, NI_SENDMMSG, false)
++NI_WRAPPER(ni_socket, NI_SOCKET, false)
++
++#if defined(__aarch64__) || defined(__x86_64__)
++NI_WRAPPER(ni_connect_compat, NI_CONNECT, true)
++NI_WRAPPER(ni_sendto_compat, NI_SENDTO, true)
++NI_WRAPPER(ni_sendmsg_compat, NI_SENDMSG, true)
++NI_WRAPPER(ni_sendmmsg_compat, NI_SENDMMSG, true)
++NI_WRAPPER(ni_socket_compat, NI_SOCKET, true)
++#endif
++
++#undef NI_WRAPPER
++
++static const syscall_fn_t ni_native_replacements[] = {
++    ni_connect, ni_sendto, ni_sendmsg, ni_sendmmsg, ni_socket,
++};
++
++#if defined(__aarch64__) || defined(__x86_64__)
++static const syscall_fn_t ni_compat_replacements[] = {
++    ni_connect_compat, ni_sendto_compat, ni_sendmsg_compat, ni_sendmmsg_compat, ni_socket_compat,
++};
++#endif
++
++static syscall_fn_t *ni_syscall_table = NULL;
++
++static void ni_fill_native_hooks(void)
++{
++    u32 i;
++
++    if (!ni_syscall_table)
++        ni_syscall_table = (syscall_fn_t *)ksu_resolve_symbol_for_functable_hook("sys_call_table");
++
++    for (i = 0; i < ARRAY_SIZE(ni_native_nrs); i++) {
++        struct ni_hook *hook = &ni_hooks[NI_NATIVE_BASE + i];
++
++        hook->table = ni_syscall_table;
++        hook->nr = ni_native_nrs[i];
++        hook->replacement = ni_native_replacements[i];
++        if (hook->table && hook->nr >= 0 && hook->nr < NI_SYSCALL_LIMIT)
++            hook->original = READ_ONCE(hook->table[hook->nr]);
++    }
++}
++
++static bool ni_native_hooks_valid(void)
++{
++    u32 i;
++
++    if (!ni_syscall_table)
++        return false;
++
++    for (i = 0; i < ARRAY_SIZE(ni_native_replacements); i++) {
++        struct ni_hook *hook = &ni_hooks[NI_NATIVE_BASE + i];
++
++        if (!hook->table || hook->nr < 0 || hook->nr >= NI_SYSCALL_LIMIT || !hook->original)
++            return false;
++    }
++    return true;
++}
++
++static void ni_fill_compat_hooks(void)
++{
++#if defined(__aarch64__)
++    const char *table_name = "compat_sys_call_table";
++    const char *ni_name = "__arm64_sys_ni_syscall";
++#elif defined(__x86_64__)
++    const char *table_name = "ia32_sys_call_table";
++    const char *ni_name = "__ia32_sys_ni_syscall";
++#else
++    return;
++#endif
++    syscall_fn_t *table;
++    syscall_fn_t ni_syscall;
++    u32 i;
++
++    table = (syscall_fn_t *)ksu_resolve_symbol_for_functable_hook(table_name);
++    ni_syscall = (syscall_fn_t)ksu_resolve_symbol_for_functable_hook(ni_name);
++    if (!table || !ni_syscall)
++        return;
++
++    for (i = 0; i < ARRAY_SIZE(ni_compat_nrs); i++) {
++        struct ni_hook *hook = &ni_hooks[NI_COMPAT_BASE + i];
++
++        hook->table = table;
++        hook->nr = ni_compat_nrs[i];
++#if defined(__aarch64__) || defined(__x86_64__)
++        hook->replacement = ni_compat_replacements[i];
++#endif
++        if (hook->nr >= 0 && hook->nr < NI_SYSCALL_LIMIT)
++            hook->original = READ_ONCE(hook->table[hook->nr]);
++        if (!hook->original || hook->original == ni_syscall) {
++            int nr = hook->nr;
++
++            memset(&ni_hooks[NI_COMPAT_BASE], 0, sizeof(ni_hooks[NI_COMPAT_BASE]) * ARRAY_SIZE(ni_compat_nrs));
++            pr_info("netisolate: compat table unavailable entry=%d nr=%d\n", i, nr);
++            return;
++        }
++    }
++    ni_compat_supported = true;
++}
++
++static int ni_patch(const struct ni_hook *hook, syscall_fn_t replacement)
++{
++    if (!hook->table || hook->nr < 0 || hook->nr >= NI_SYSCALL_LIMIT)
++        return -EINVAL;
++    return ksu_patch_text(&hook->table[hook->nr], &replacement, sizeof(replacement), KSU_PATCH_TEXT_FLUSH_DCACHE);
++}
++
++static int ni_uninstall_hooks_locked(void);
++
++static int ni_install_hooks_locked(void)
++{
++    u32 i;
++
++    for (i = 0; i < NI_HOOK_COUNT; i++) {
++        struct ni_hook *hook = &ni_hooks[i];
++        int ret;
++
++        if (!hook->table || hook->installed)
++            continue;
++        ret = ni_patch(hook, hook->replacement);
++        if (ret) {
++            pr_err("netisolate: patch failed table=%s nr=%d result=%d\n",
++                   hook->table == ni_syscall_table ? "native" : "compat", hook->nr, ret);
++            break;
++        }
++        hook->installed = true;
++    }
++    if (i == NI_HOOK_COUNT)
++        return 0;
++
++    {
++        int rollback = ni_uninstall_hooks_locked();
++
++        if (rollback)
++            pr_err("netisolate: install rollback failed result=%d\n", rollback);
++    }
++    return -EIO;
++}
++
++static int ni_uninstall_hooks_locked(void)
++{
++    int ret = 0;
++    int i;
++
++    for (i = NI_HOOK_COUNT - 1; i >= 0; i--) {
++        struct ni_hook *hook = &ni_hooks[i];
++        int err;
++
++        if (!hook->table || !hook->installed)
++            continue;
++        err = ni_patch(hook, hook->original);
++        if (err) {
++            pr_err("netisolate: restore failed table=%s nr=%d result=%d\n",
++                   hook->table == ni_syscall_table ? "native" : "compat", hook->nr, err);
++            ret = err;
++            continue;
++        }
++        hook->installed = false;
++    }
++    return ret;
++}
++
++static void ni_publish_locked(const struct ksu_netisolate_policies *config)
++{
++    unsigned long flags;
++    u32 i;
++
++    spin_lock_irqsave(&ni_state_lock, flags);
++    ni_state.count = config->count;
++    for (i = 0; i < config->count; i++) {
++        ni_state.policies[i].uid = config->policies[i].uid;
++        ni_state.policies[i].flags = config->policies[i].flags;
++    }
++    ni_state.enabled = config->enabled ? 1 : 0;
++    spin_unlock_irqrestore(&ni_state_lock, flags);
++}
++
++static int ni_validate_config(const struct ksu_netisolate_config *config)
++{
++    u32 policy_flags;
++    u32 i;
++    u32 j;
++
++    if (config->reserved & ~NI_SUPPORTED_FLAGS)
++        return -EINVAL;
++    policy_flags = config->reserved & KSU_NETISOLATE_FLAG_MASK;
++    if ((policy_flags & KSU_NETISOLATE_FLAG_STRICT_SOCKET) && (policy_flags & NI_ALLOW_FLAGS))
++        return -EINVAL;
++    if (config->count > KSU_NETISOLATE_MAX_UIDS)
++        return -EINVAL;
++    if (config->enabled && !config->count)
++        return -EINVAL;
++    for (i = 0; i < config->count; i++) {
++        if (!config->uids[i])
++            return -EINVAL;
++        for (j = 0; j < i; j++) {
++            if (config->uids[j] == config->uids[i])
++                return -EINVAL;
++        }
++    }
++    return 0;
++}
++
++static int ni_validate_policies(const struct ksu_netisolate_policies *config)
++{
++    u32 flags;
++    u32 i;
++    u32 j;
++
++    if (config->supported_flags || config->reserved)
++        return -EINVAL;
++    if (config->count > KSU_NETISOLATE_MAX_POLICIES)
++        return -EINVAL;
++    if (config->enabled && !config->count)
++        return -EINVAL;
++    for (i = 0; i < config->count; i++) {
++        flags = config->policies[i].flags;
++        if (!config->policies[i].uid || flags & ~NI_SUPPORTED_FLAGS)
++            return -EINVAL;
++        if ((flags & KSU_NETISOLATE_FLAG_STRICT_SOCKET) && (flags & NI_ALLOW_FLAGS))
++            return -EINVAL;
++        for (j = 0; j < i; j++) {
++            if (config->policies[j].uid == config->policies[i].uid)
++                return -EINVAL;
++        }
++    }
++    return 0;
++}
++
++static void ni_legacy_to_policies(const struct ksu_netisolate_config *legacy, struct ksu_netisolate_policies *policies)
++{
++    u32 flags = legacy->reserved & KSU_NETISOLATE_FLAG_MASK;
++    u32 i;
++
++    memset(policies, 0, sizeof(*policies));
++    policies->enabled = legacy->enabled;
++    policies->count = legacy->count;
++    for (i = 0; i < legacy->count; i++) {
++        policies->policies[i].uid = legacy->uids[i];
++        policies->policies[i].flags = flags;
++    }
++}
++
++static void ni_clear_events_locked(void)
++{
++    unsigned long flags;
++
++    spin_lock_irqsave(&ni_event_lock, flags);
++    memset(&ni_events, 0, sizeof(ni_events));
++    spin_unlock_irqrestore(&ni_event_lock, flags);
++}
++
++int __init ksu_netisolate_init(void)
++{
++    mutex_lock(&ni_lifecycle_lock);
++    if (ni_supported) {
++        mutex_unlock(&ni_lifecycle_lock);
++        return -EBUSY;
++    }
++    memset(ni_hooks, 0, sizeof(ni_hooks));
++    memset(&ni_state, 0, sizeof(ni_state));
++    ni_clear_events_locked();
++    ni_compat_supported = false;
++    ni_stopping = false;
++    ni_fill_native_hooks();
++    if (!ni_native_hooks_valid()) {
++        mutex_unlock(&ni_lifecycle_lock);
++        return -ENODEV;
++    }
++    ni_fill_compat_hooks();
++    ni_supported = true;
++    mutex_unlock(&ni_lifecycle_lock);
++    pr_info("netisolate: event=init result=ok compat=%u flags=0x%x\n", ni_compat_supported, NI_SUPPORTED_FLAGS);
++    return 0;
++}
++
++void ksu_netisolate_exit(void)
++{
++    mutex_lock(&ni_lifecycle_lock);
++    WRITE_ONCE(ni_stopping, true);
++    ni_publish_locked(&(struct ksu_netisolate_policies){});
++    {
++        int ret = ni_uninstall_hooks_locked();
++
++        if (ret)
++            pr_err("netisolate: exit restore incomplete result=%d\n", ret);
++    }
++    ni_supported = false;
++    ni_compat_supported = false;
++    ni_clear_events_locked();
++    mutex_unlock(&ni_lifecycle_lock);
++}
++
++int ksu_netisolate_get_config(struct ksu_netisolate_config *config)
++{
++    unsigned long flags;
++    u32 common_flags = 0;
++    u32 i;
++
++    if (!config)
++        return -EINVAL;
++    mutex_lock(&ni_lifecycle_lock);
++    if (!ni_supported || ni_stopping) {
++        mutex_unlock(&ni_lifecycle_lock);
++        return -EOPNOTSUPP;
++    }
++    memset(config, 0, sizeof(*config));
++    spin_lock_irqsave(&ni_state_lock, flags);
++    config->enabled = ni_state.enabled;
++    config->count = ni_state.count;
++    if (ni_state.count)
++        common_flags = ni_state.policies[0].flags;
++    for (i = 0; i < ni_state.count; i++) {
++        config->uids[i] = ni_state.policies[i].uid;
++        common_flags &= ni_state.policies[i].flags;
++    }
++    config->reserved = common_flags & KSU_NETISOLATE_FLAG_MASK;
++    spin_unlock_irqrestore(&ni_state_lock, flags);
++    config->compat_supported = ni_compat_supported;
++    config->reserved |= (NI_SUPPORTED_FLAGS & KSU_NETISOLATE_FLAG_MASK) << KSU_NETISOLATE_SUPPORTED_SHIFT;
++    mutex_unlock(&ni_lifecycle_lock);
++    return 0;
++}
++
++int ksu_netisolate_set_config(const struct ksu_netisolate_config *config)
++{
++    struct ksu_netisolate_policies *policies;
++    int ret;
++
++    if (!config)
++        return -EINVAL;
++    ret = ni_validate_config(config);
++    if (ret)
++        return ret;
++    policies = kzalloc(sizeof(*policies), GFP_KERNEL);
++    if (!policies)
++        return -ENOMEM;
++    ni_legacy_to_policies(config, policies);
++    ret = ksu_netisolate_set_policies(policies);
++    kfree(policies);
++    return ret;
++}
++
++int ksu_netisolate_get_policies(struct ksu_netisolate_policies *config)
++{
++    unsigned long flags;
++    u32 i;
++
++    if (!config)
++        return -EINVAL;
++    mutex_lock(&ni_lifecycle_lock);
++    if (!ni_supported || ni_stopping) {
++        mutex_unlock(&ni_lifecycle_lock);
++        return -EOPNOTSUPP;
++    }
++    memset(config, 0, sizeof(*config));
++    spin_lock_irqsave(&ni_state_lock, flags);
++    config->enabled = ni_state.enabled;
++    config->count = ni_state.count;
++    for (i = 0; i < ni_state.count; i++) {
++        config->policies[i].uid = ni_state.policies[i].uid;
++        config->policies[i].flags = ni_state.policies[i].flags;
++    }
++    spin_unlock_irqrestore(&ni_state_lock, flags);
++    config->supported_flags = NI_SUPPORTED_FLAGS;
++    mutex_unlock(&ni_lifecycle_lock);
++    return 0;
++}
++
++int ksu_netisolate_set_policies(const struct ksu_netisolate_policies *config)
++{
++    int ret;
++
++    if (!config)
++        return -EINVAL;
++    ret = ni_validate_policies(config);
++    if (ret)
++        return ret;
++
++    mutex_lock(&ni_lifecycle_lock);
++    if (!ni_supported || ni_stopping) {
++        ret = -EOPNOTSUPP;
++        goto out;
++    }
++    if (config->enabled) {
++        ret = ni_install_hooks_locked();
++        if (ret)
++            goto out;
++        ni_publish_locked(config);
++    } else {
++        ni_publish_locked(config);
++        ret = ni_uninstall_hooks_locked();
++    }
++out:
++    mutex_unlock(&ni_lifecycle_lock);
++    return ret;
++}
++
++int ksu_netisolate_get_events(struct ksu_netisolate_events *events)
++{
++    unsigned long flags;
++    u32 first;
++    u32 i;
++
++    if (!events)
++        return -EINVAL;
++    mutex_lock(&ni_lifecycle_lock);
++    if (!ni_supported || ni_stopping) {
++        mutex_unlock(&ni_lifecycle_lock);
++        return -EOPNOTSUPP;
++    }
++    memset(events, 0, sizeof(*events));
++    spin_lock_irqsave(&ni_event_lock, flags);
++    events->count = ni_events.count;
++    events->capacity = KSU_NETISOLATE_EVENT_MAX;
++    events->dropped = ni_events.dropped;
++    first = (ni_events.head + KSU_NETISOLATE_EVENT_MAX - ni_events.count) % KSU_NETISOLATE_EVENT_MAX;
++    for (i = 0; i < ni_events.count; i++)
++        events->events[i] = ni_events.events[(first + i) % KSU_NETISOLATE_EVENT_MAX];
++    spin_unlock_irqrestore(&ni_event_lock, flags);
++    mutex_unlock(&ni_lifecycle_lock);
++    return 0;
++}
++
++int ksu_netisolate_clear_events(void)
++{
++    int ret = 0;
++
++    mutex_lock(&ni_lifecycle_lock);
++    if (!ni_supported || ni_stopping)
++        ret = -EOPNOTSUPP;
++    else
++        ni_clear_events_locked();
++    mutex_unlock(&ni_lifecycle_lock);
++    return ret;
++}
+diff --git a/kernel/feature/netisolate.h b/kernel/feature/netisolate.h
+new file mode 100644
+index 00000000..71e8a1a4
+--- /dev/null
++++ b/kernel/feature/netisolate.h
+@@ -0,0 +1,16 @@
++#ifndef __KSU_FEATURE_NETISOLATE_H
++#define __KSU_FEATURE_NETISOLATE_H
++
++#include "uapi/netisolate.h"
++
++int __init ksu_netisolate_init(void);
++void ksu_netisolate_exit(void);
++
++int ksu_netisolate_get_config(struct ksu_netisolate_config *config);
++int ksu_netisolate_set_config(const struct ksu_netisolate_config *config);
++int ksu_netisolate_get_policies(struct ksu_netisolate_policies *config);
++int ksu_netisolate_set_policies(const struct ksu_netisolate_policies *config);
++int ksu_netisolate_get_events(struct ksu_netisolate_events *events);
++int ksu_netisolate_clear_events(void);
++
++#endif // __KSU_FEATURE_NETISOLATE_H
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index dc8cab81..6fa6c68b 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -92,6 +92,28 @@ static const struct ksu_feature_handler su_compat_handler = {
+     .set_handler = su_compat_feature_set,
+ };
+ 
++static bool magisk_compat_enabled;
++
++static int magisk_compat_feature_get(u64 *value)
++{
++    *value = READ_ONCE(magisk_compat_enabled) ? 1 : 0;
++    return 0;
++}
++
++static int magisk_compat_feature_set(u64 value)
++{
++    WRITE_ONCE(magisk_compat_enabled, value != 0);
++    pr_info("magisk_compat: set to %llu\n", value);
++    return 0;
++}
++
++static const struct ksu_feature_handler magisk_compat_handler = {
++    .feature_id = KSU_FEATURE_MAGISK_COMPAT,
++    .name = "magisk_compat",
++    .get_handler = magisk_compat_feature_get,
++    .set_handler = magisk_compat_feature_set,
++};
++
+ static const char su_path[] = SU_PATH;
+ static const char sh_path[] = SH_PATH;
+ static const char ksud_path[] = KSUD_PATH;
+@@ -684,9 +706,13 @@ void __init ksu_sucompat_init()
+     if (ksu_register_feature_handler(&su_compat_handler)) {
+         pr_err("Failed to register su_compat feature handler\n");
+     }
++    if (ksu_register_feature_handler(&magisk_compat_handler)) {
++        pr_err("Failed to register magisk_compat feature handler\n");
++    }
+ }
+ 
+ void __exit ksu_sucompat_exit()
+ {
++    ksu_unregister_feature_handler(KSU_FEATURE_MAGISK_COMPAT);
+     ksu_unregister_feature_handler(KSU_FEATURE_SU_COMPAT);
+ }
+diff --git a/kernel/manager/apk_sign.c b/kernel/manager/apk_sign.c
+index eba496d5..554ab11b 100644
+--- a/kernel/manager/apk_sign.c
++++ b/kernel/manager/apk_sign.c
+@@ -34,8 +34,16 @@ struct sdesc {
+ static apk_sign_key_t apk_sign_keys[] = {
+     { EXPECTED_SIZE_BAKASU, EXPECTED_HASH_BAKASU }, /* Baka-SU/BakaSU */
+ #ifdef CONFIG_KSU_MULTI_MANAGER_SUPPORT
+-    { EXPECTED_SIZE_OFFICIAL, EXPECTED_HASH_OFFICIAL }, // tiann/KernelSU
++    { EXPECTED_SIZE_OFFICIAL, EXPECTED_HASH_OFFICIAL }, // tiann/KernelSU (MKSU)
+     { EXPECTED_SIZE_KOWX712, EXPECTED_HASH_KOWX712 }, // KOWX712/KernelSU
++    { EXPECTED_SIZE_KSU_NEXT, EXPECTED_HASH_KSU_NEXT }, // KernelSU-Next
++    { EXPECTED_SIZE_SUKISU, EXPECTED_HASH_SUKISU }, // SukiSU / SukiSU-Ultra
++    { EXPECTED_SIZE_RKSU, EXPECTED_HASH_RKSU }, // RKSU (rsuntk)
++    { EXPECTED_SIZE_MIDORI, EXPECTED_HASH_MIDORI }, // midori01/KernelSU (MKSU)
++    { EXPECTED_SIZE_FINASU, EXPECTED_HASH_FINASU }, // FinaSU (LyraVoid)
++    { EXPECTED_SIZE_YUKISU, EXPECTED_HASH_YUKISU }, // YukiSU (Rouyashiki)
++    { EXPECTED_SIZE_XXKSU, EXPECTED_HASH_XXKSU }, // xxKSU
++    { EXPECTED_SIZE_MKSU_ALT, EXPECTED_HASH_MKSU_ALT }, // MKSU (v2 / 384-byte cert)
+ #ifdef EXPECTED_SIZE
+     { EXPECTED_SIZE, EXPECTED_HASH }, // Custom
+ #endif
+diff --git a/kernel/manager/manager_sign.h b/kernel/manager/manager_sign.h
+index a940135d..0f08e630 100644
+--- a/kernel/manager/manager_sign.h
++++ b/kernel/manager/manager_sign.h
+@@ -13,6 +13,38 @@
+ #define EXPECTED_SIZE_KOWX712 0x375
+ #define EXPECTED_HASH_KOWX712 "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588"
+ 
++// KernelSU-Next/KernelSU-Next (rifsxd)
++#define EXPECTED_SIZE_KSU_NEXT 0x3e6
++#define EXPECTED_HASH_KSU_NEXT "79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7"
++
++// SukiSU-Ultra (SukiSU)
++#define EXPECTED_SIZE_SUKISU 0x35c
++#define EXPECTED_HASH_SUKISU "947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef"
++
++// RKSU (rsuntk/KernelSU)
++#define EXPECTED_SIZE_RKSU 0x396
++#define EXPECTED_HASH_RKSU "f415f4ed9435427e1fdf7f1fccd4dbc07b3d6b8751e4dbcec6f19671f427870b"
++
++// midori01/KernelSU (MKSU)
++#define EXPECTED_SIZE_MIDORI 0x0368
++#define EXPECTED_HASH_MIDORI "b9ee6759de4794f954883458b722b97ae6527cb7709a051db9a2348c0eea1e42"
++
++// FinaSU (LyraVoid)
++#define EXPECTED_SIZE_FINASU 0x02cc
++#define EXPECTED_HASH_FINASU "2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458"
++
++// YukiSU (Rouyashiki)
++#define EXPECTED_SIZE_YUKISU 0x29c
++#define EXPECTED_HASH_YUKISU "39559b380d4c0191eed81b7eba61533b6a2f247bc55bceba4259e983673f58b7"
++
++// xxKSU
++#define EXPECTED_SIZE_XXKSU 0x363
++#define EXPECTED_HASH_XXKSU "4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549"
++
++// midori01/KernelSU (MKSU) - alternative (384 bytes)
++#define EXPECTED_SIZE_MKSU_ALT 384
++#define EXPECTED_HASH_MKSU_ALT "7e0c6d7278a3bb8e364e0fcba95afaf3666cf5ff3c245a3b63c8833bd0445cc4"
++
+ typedef struct {
+     unsigned size;
+     const char *sha256;
+diff --git a/kernel/manager/pkg_observer.c b/kernel/manager/pkg_observer.c
+index cab74ce5..bb710ff8 100644
+--- a/kernel/manager/pkg_observer.c
++++ b/kernel/manager/pkg_observer.c
+@@ -8,6 +8,9 @@
+ #include <linux/rculist.h>
+ #include <linux/task_work.h>
+ #include <linux/version.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>
++#endif
+ #include "klog.h" // IWYU pragma: keep
+ #include "manager/throne_tracker.h"
+ 
+@@ -41,6 +44,11 @@ static void ksu_defer_track_throne(void)
+ {
+     struct callback_head *cb;
+ 
++#ifdef CONFIG_KSU_SUSFS
++    // Renew the getpriority uid bitmap filter
++    susfs_parse_priority_app_strings();
++#endif
++
+     if (!(current->flags & PF_KTHREAD)) {
+         cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+         if (cb) {
+diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+index d487fc8d..1d5f2dbe 100644
+--- a/kernel/manager/throne_tracker.c
++++ b/kernel/manager/throne_tracker.c
+@@ -19,6 +19,9 @@
+ #include "manager/throne_tracker.h"
+ #include "compat/kernel_compat.h"
+ #include "feature/dynamic_manager.h"
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>
++#endif
+ 
+ #define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
+ #define SYSTEM_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
+@@ -421,6 +424,10 @@ void ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
+     // and user install an new app before task_work executed
+     // ^ race here
+     track_throne(TRACK_THRONE_FROM_RENAMEAT | TRACK_THRONE_FORCE_SYNCHRONOUS);
++#ifdef CONFIG_KSU_SUSFS
++    // Renew the getpriority uid bitmap filter
++    susfs_parse_priority_app_strings();
++#endif
+ }
+ #endif
+ 
+diff --git a/kernel/policy/allowlist.c b/kernel/policy/allowlist.c
+index ab62d5e8..9bc1f6e0 100644
+--- a/kernel/policy/allowlist.c
++++ b/kernel/policy/allowlist.c
+@@ -38,6 +38,7 @@ static inline int __must_check ksu_kref_get_unless_zero(struct kref *kref)
+ #include "runtime/ksud_boot.h"
+ #include "selinux/selinux.h"
+ #include "policy/allowlist.h"
++#include "policy/feature.h"
+ #include "manager/manager_identity.h"
+ #include "infra/su_mount_ns.h"
+ #include "feature/shell_su_adb_only.h"
+@@ -620,13 +621,40 @@ void ksu_prune_allowlist(bool (*is_uid_valid)(uid_t, char *, void *), void *data
+     }
+ }
+ 
++static int default_no_new_privs_feature_get(u64 *value)
++{
++    *value = (default_root_profile.flags & FLAG_KSU_NO_NEW_PRIVS) ? 1 : 0;
++    return 0;
++}
++
++static int default_no_new_privs_feature_set(u64 value)
++{
++    if (value)
++        default_root_profile.flags |= FLAG_KSU_NO_NEW_PRIVS;
++    else
++        default_root_profile.flags &= ~FLAG_KSU_NO_NEW_PRIVS;
++    pr_info("default_no_new_privs: set to %d\n", value != 0);
++    return 0;
++}
++
++static const struct ksu_feature_handler default_no_new_privs_handler = {
++    .feature_id = KSU_FEATURE_DEFAULT_NO_NEW_PRIVS,
++    .name = "default_no_new_privs",
++    .get_handler = default_no_new_privs_feature_get,
++    .set_handler = default_no_new_privs_feature_set,
++};
++
+ void __init ksu_allowlist_init(void)
+ {
+     init_default_profiles();
++    if (ksu_register_feature_handler(&default_no_new_privs_handler))
++        pr_err("default_no_new_privs: failed to register feature handler\n");
+ }
+ 
+ void __exit ksu_allowlist_exit(void)
+ {
++    ksu_unregister_feature_handler(KSU_FEATURE_DEFAULT_NO_NEW_PRIVS);
++
+     struct perm_data *np = NULL;
+     struct hlist_node *tmp;
+     int i;
+diff --git a/kernel/policy/feature.c b/kernel/policy/feature.c
+index 6d61650b..c3f2fa89 100644
+--- a/kernel/policy/feature.c
++++ b/kernel/policy/feature.c
+@@ -20,7 +20,16 @@ static const char *const feature_names[KSU_FEATURE_MAX] = {
+     [KSU_FEATURE_SULOG] = "sulog",
+     [KSU_FEATURE_ADB_ROOT] = "adb_root",
+     [KSU_FEATURE_SELINUX_HIDE] = "selinux_hide",
++    [KSU_FEATURE_DYNAMIC_MANAGER] = "dynamic_manager",
++    [KSU_FEATURE_AVC_SPOOF] = "avc_spoof",
+     [KSU_FEATURE_SHELL_SU_ADB_ONLY] = "shell_su_adb_only",
++    [KSU_FEATURE_DYNAMIC_MANAGER_GRANTS] = "dynamic_manager_grants",
++    [KSU_FEATURE_UTS_VIEW] = "uts_view",
++    [KSU_FEATURE_MOUNT_VIEW_FILTER] = "mount_view_filter",
++    [KSU_FEATURE_MAGISK_COMPAT] = "magisk_compat",
++    [KSU_FEATURE_DEFAULT_NO_NEW_PRIVS] = "default_no_new_privs",
++    [KSU_FEATURE_HIDE_BOOTLOADER] = "hide_bootloader",
++    [KSU_FEATURE_UNSHARE_MNT] = "unshare_mnt",
+ };
+ 
+ // Features forced by boot config. Written only while parsing module params
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index c23a7cb4..01ded875 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -10,6 +10,7 @@
+ #include <linux/version.h>
+ #ifdef CONFIG_KSU_SUSFS
+ #include <linux/susfs_def.h>
++#include <linux/susfs.h>
+ #endif
+ 
+ #include <linux/vmalloc.h>
+@@ -30,6 +31,7 @@
+ #include "hook/tp_marker.h"
+ #endif
+ #include "feature/dynamic_manager.h"
++#include "feature/netisolate.h"
+ #include "policy/app_profile.h"
+ 
+ #ifdef CONFIG_KSU_TOOLKIT_SUPPORT
+@@ -985,6 +987,109 @@ out:
+     return ret;
+ }
+ 
++static int do_get_netisolate_config(void __user *arg)
++{
++    struct ksu_netisolate_config config;
++    int ret;
++
++    ret = ksu_netisolate_get_config(&config);
++    if (!ret && copy_to_user(arg, &config, sizeof(config)))
++        return -EFAULT;
++    return ret;
++}
++
++static int do_set_netisolate_config(void __user *arg)
++{
++    struct ksu_netisolate_config config;
++
++    if (copy_from_user(&config, arg, sizeof(config)))
++        return -EFAULT;
++    return ksu_netisolate_set_config(&config);
++}
++
++static int do_get_netisolate_policies(void __user *arg)
++{
++    struct ksu_netisolate_policies *config;
++    int ret;
++
++    config = kzalloc(sizeof(*config), GFP_KERNEL);
++    if (!config)
++        return -ENOMEM;
++    ret = ksu_netisolate_get_policies(config);
++    if (ret)
++        goto out;
++    if (copy_to_user(arg, config, sizeof(*config)))
++        ret = -EFAULT;
++out:
++    kfree(config);
++    return ret;
++}
++
++static int do_set_netisolate_policies(void __user *arg)
++{
++    struct ksu_netisolate_policies *config;
++    int ret;
++
++    config = kzalloc(sizeof(*config), GFP_KERNEL);
++    if (!config)
++        return -ENOMEM;
++    if (copy_from_user(config, arg, sizeof(*config)))
++        ret = -EFAULT;
++    else
++        ret = ksu_netisolate_set_policies(config);
++    kfree(config);
++    return ret;
++}
++
++static int do_get_netisolate_events(void __user *arg)
++{
++    struct ksu_netisolate_events *events;
++    int ret;
++
++    events = kzalloc(sizeof(*events), GFP_KERNEL);
++    if (!events)
++        return -ENOMEM;
++    ret = ksu_netisolate_get_events(events);
++    if (!ret && copy_to_user(arg, events, sizeof(*events)))
++        ret = -EFAULT;
++    kfree(events);
++    return ret;
++}
++
++static int do_clear_netisolate_events(void __user *arg)
++{
++    (void)arg;
++    return ksu_netisolate_clear_events();
++}
++
++static int do_get_netisolate_policies_compat_64(void __user *arg)
++{
++    char buf[64] = {0};
++    if (copy_to_user(arg, buf, sizeof(buf)))
++        return -EFAULT;
++    return 0;
++}
++
++static int do_dynamic_manager_finasu_24b(void __user *arg)
++{
++    (void)arg;
++    return 0;
++}
++
++static int do_dynamic_manager_signatures_get(void __user *arg)
++{
++    char buf[972] = {0};
++    if (copy_to_user(arg, buf, sizeof(buf)))
++        return -EFAULT;
++    return 0;
++}
++
++static int do_dynamic_manager_signatures_set(void __user *arg)
++{
++    (void)arg;
++    return 0;
++}
++
+ // 100. GET_FULL_VERSION - Get full version string
+ static int do_get_full_version(void __user *arg)
+ {
+@@ -1168,6 +1273,10 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+         return 0;
+     }
+ #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++    case CMD_SUSFS_SET_PRIORITY_UID_FILTER: {
++        susfs_set_priority_uid_filter(arg);
++        return 0;
++    }
+     case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING: {
+         susfs_set_avc_log_spoofing(arg);
+         return 0;
+@@ -1463,6 +1572,42 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+         .handler = do_lookup_symbols,
+         .perm_check = only_root
+     },
++    {
++        .cmd = KSU_IOCTL_GET_NETISOLATE_CONFIG,
++        .name = "GET_NETISOLATE_CONFIG",
++        .handler = do_get_netisolate_config,
++        .perm_check = manager_or_root
++    },
++    {
++        .cmd = KSU_IOCTL_SET_NETISOLATE_CONFIG,
++        .name = "SET_NETISOLATE_CONFIG",
++        .handler = do_set_netisolate_config,
++        .perm_check = manager_or_root
++    },
++    {
++        .cmd = KSU_IOCTL_GET_NETISOLATE_POLICIES,
++        .name = "GET_NETISOLATE_POLICIES",
++        .handler = do_get_netisolate_policies,
++        .perm_check = manager_or_root
++    },
++    {
++        .cmd = KSU_IOCTL_SET_NETISOLATE_POLICIES,
++        .name = "SET_NETISOLATE_POLICIES",
++        .handler = do_set_netisolate_policies,
++        .perm_check = manager_or_root
++    },
++    {
++        .cmd = KSU_IOCTL_GET_NETISOLATE_EVENTS,
++        .name = "GET_NETISOLATE_EVENTS",
++        .handler = do_get_netisolate_events,
++        .perm_check = manager_or_root
++    },
++    {
++        .cmd = KSU_IOCTL_CLEAR_NETISOLATE_EVENTS,
++        .name = "CLEAR_NETISOLATE_EVENTS",
++        .handler = do_clear_netisolate_events,
++        .perm_check = manager_or_root
++    },
+     // downstream begin
+     { 
+         .cmd = KSU_IOCTL_GET_FULL_VERSION,
+@@ -1482,12 +1627,66 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+         .handler = do_dynamic_manager,
+         .perm_check = only_root 
+     },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_FINASU,
++        .name = "SET_DYNAMIC_MANAGER_FINASU",
++        .handler = do_dynamic_manager,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_FINASU_GET,
++        .name = "GET_DYNAMIC_MANAGER_FINASU",
++        .handler = do_dynamic_manager,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_FINASU_RW,
++        .name = "RW_DYNAMIC_MANAGER_FINASU",
++        .handler = do_dynamic_manager,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_FINASU_24,
++        .name = "SET_DYNAMIC_MANAGER_FINASU_24",
++        .handler = do_dynamic_manager,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_FINASU_24B,
++        .name = "SET_DYNAMIC_MANAGER_FINASU_24B",
++        .handler = do_dynamic_manager_finasu_24b,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_SIGS_GET,
++        .name = "GET_DYNAMIC_MANAGER_SIGS",
++        .handler = do_dynamic_manager_signatures_get,
++        .perm_check = only_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_DYNAMIC_MANAGER_SIGS_SET,
++        .name = "SET_DYNAMIC_MANAGER_SIGS",
++        .handler = do_dynamic_manager_signatures_set,
++        .perm_check = only_root 
++    },
+     { 
+         .cmd = KSU_IOCTL_GET_MANAGERS, 
+         .name = "GET_MANAGERS", 
+         .handler = do_get_managers, 
+         .perm_check = manager_or_root 
+     },
++    { 
++        .cmd = KSU_IOCTL_GET_MANAGERS_FINASU_23, 
++        .name = "GET_MANAGERS_FINASU_23", 
++        .handler = do_get_managers, 
++        .perm_check = manager_or_root 
++    },
++    { 
++        .cmd = KSU_IOCTL_GET_NETISOLATE_POLICIES_COMPAT_64, 
++        .name = "GET_NETISOLATE_POLICIES_COMPAT_64", 
++        .handler = do_get_netisolate_policies_compat_64, 
++        .perm_check = manager_or_root 
++    },
+     { 
+         .cmd = KSU_IOCTL_GET_KERNEL_PATCH_IMPLEMENT, 
+         .name = "GET_KERNEL_PATCH_IMPLEMENT", 
+diff --git a/uapi/feature.h b/uapi/feature.h
+index 55d0a7cd..a4abcef3 100644
+--- a/uapi/feature.h
++++ b/uapi/feature.h
+@@ -7,10 +7,22 @@ enum ksu_feature_id {
+     KSU_FEATURE_SULOG = 2,
+     KSU_FEATURE_ADB_ROOT = 3,
+     KSU_FEATURE_SELINUX_HIDE = 4,
+-    // 5 was webview_zygote_umount (v3.3.0), keep it unused so stale configs don't apply
+-    KSU_FEATURE_SHELL_SU_ADB_ONLY = 6,
++    KSU_FEATURE_DYNAMIC_MANAGER = 5,
++    KSU_FEATURE_AVC_SPOOF = 6,
++    // Preserve FinaSU IDs 5/6 and their persisted configuration meanings.
++    KSU_FEATURE_SHELL_SU_ADB_ONLY = 7,
++    /* Additive: the kernel honours the authorized-appid list for dynamic managers. */
++    KSU_FEATURE_DYNAMIC_MANAGER_GRANTS = 8,
++    KSU_FEATURE_UTS_VIEW = 9,
++    KSU_FEATURE_MOUNT_VIEW_FILTER = 10,
+ 
+-    KSU_FEATURE_MAX
++    // YukiSU feature extensions
++    KSU_FEATURE_MAGISK_COMPAT = 101,
++    KSU_FEATURE_DEFAULT_NO_NEW_PRIVS = 102,
++    KSU_FEATURE_HIDE_BOOTLOADER = 104,
++    KSU_FEATURE_UNSHARE_MNT = 107,
++
++    KSU_FEATURE_MAX = 128
+ };
+ 
+ #endif
+diff --git a/uapi/netisolate.h b/uapi/netisolate.h
+new file mode 100644
+index 00000000..4a1afa16
+--- /dev/null
++++ b/uapi/netisolate.h
+@@ -0,0 +1,55 @@
++#ifndef __KSU_UAPI_NETISOLATE_H
++#define __KSU_UAPI_NETISOLATE_H
++
++#include <linux/types.h>
++
++#define KSU_NETISOLATE_MAX_UIDS 256
++#define KSU_NETISOLATE_MAX_POLICIES 256
++#define KSU_NETISOLATE_EVENT_MAX 64
++#define KSU_NETISOLATE_FLAG_MASK 0xffffu
++#define KSU_NETISOLATE_SUPPORTED_SHIFT 16u
++
++#define KSU_NETISOLATE_FLAG_STRICT_SOCKET (1u << 0) /* Mutually exclusive with all allow flags */
++#define KSU_NETISOLATE_FLAG_ALLOW_LOOPBACK (1u << 1)
++#define KSU_NETISOLATE_FLAG_ALLOW_PRIVATE_NETWORK (1u << 2)
++#define KSU_NETISOLATE_FLAG_ALLOW_LOCAL_DISCOVERY (1u << 3)
++
++struct ksu_netisolate_config {
++    __u32 enabled;          /* Input/Output */
++    __u32 count;            /* Input/Output */
++    __u32 compat_supported; /* Output; ignored on SET */
++    __u32 reserved;         /* SET: active flags. GET: active | supported << 16 */
++    __u32 uids[KSU_NETISOLATE_MAX_UIDS];
++};
++
++struct ksu_netisolate_policy {
++    __u32 uid;
++    __u32 flags;
++};
++
++struct ksu_netisolate_policies {
++    __u32 enabled;         /* Input/Output */
++    __u32 count;           /* Input/Output */
++    __u32 supported_flags; /* Output; ignored but must be 0 on SET */
++    __u32 reserved;        /* Input/Output; must be 0 */
++    struct ksu_netisolate_policy policies[KSU_NETISOLATE_MAX_POLICIES];
++};
++
++struct ksu_netisolate_event {
++    __u64 timestamp_ns;
++    __u32 uid;
++    __u16 port; /* Host byte order; 0 when no transport port was parsed */
++    __u8 family;
++    __u8 operation;
++    __u8 address[16];
++    __u32 reserved;
++};
++
++struct ksu_netisolate_events {
++    __u32 count;
++    __u32 capacity;
++    __u64 dropped;
++    struct ksu_netisolate_event events[KSU_NETISOLATE_EVENT_MAX];
++};
++
++#endif // __KSU_UAPI_NETISOLATE_H
+diff --git a/uapi/supercall.h b/uapi/supercall.h
+index 7324a1d6..0a3feae0 100644
+--- a/uapi/supercall.h
++++ b/uapi/supercall.h
+@@ -7,6 +7,7 @@
+ #include "uapi/app_profile.h"
+ #include "uapi/feature.h"
+ #include "uapi/selinux.h"
++#include "uapi/netisolate.h"
+ 
+ #define DEFINE_KSU_UAPI_CONST(type, name, val) \
+     enum { name = (val) }; \
+@@ -259,14 +260,28 @@ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_SET_INIT_PGRP, _IO('K', 19))
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_SULOG_FD, _IOW('K', 20, struct ksu_get_sulog_fd_cmd))
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT, _IO('K', 21))
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_LOOKUP_SYMBOLS, _IOW('K', 22, struct ksu_lookup_symbols_cmd))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_NETISOLATE_CONFIG, _IOWR('K', 27, struct ksu_netisolate_config))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_SET_NETISOLATE_CONFIG, _IOW('K', 28, struct ksu_netisolate_config))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_NETISOLATE_POLICIES, _IOWR('K', 29, struct ksu_netisolate_policies))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_SET_NETISOLATE_POLICIES, _IOW('K', 30, struct ksu_netisolate_policies))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_NETISOLATE_EVENTS, _IOWR('K', 31, struct ksu_netisolate_events))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_CLEAR_NETISOLATE_EVENTS, _IOW('K', 32, struct ksu_netisolate_events))
+ 
+ // Downstream add IOCTL command definitions
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_FULL_VERSION, _IOC(_IOC_READ, 'K', 100, 0))
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_HOOK_TYPE, _IOC(_IOC_READ, 'K', 101, 0))
+-// 102 = ENABLE_KPM (KernelPatch Module),deprecated
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER, _IOC(_IOC_READ | _IOC_WRITE, 'K', 103, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_FINASU, _IOC(_IOC_WRITE, 'K', 22, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_FINASU_24B, _IOC(_IOC_WRITE, 'K', 22, 24))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_FINASU_GET, _IOC(_IOC_READ, 'K', 22, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_FINASU_RW, _IOC(_IOC_READ | _IOC_WRITE, 'K', 22, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_FINASU_24, _IOC(_IOC_WRITE, 'K', 24, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_SIGS_GET, _IOC(_IOC_READ | _IOC_WRITE, 'K', 25, 972))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_DYNAMIC_MANAGER_SIGS_SET, _IOC(_IOC_WRITE, 'K', 26, 972))
+ // 104 = old get_managers, deprecated
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_MANAGERS, _IOC(_IOC_READ | _IOC_WRITE, 'K', 105, 0))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_MANAGERS_FINASU_23, _IOC(_IOC_READ | _IOC_WRITE, 'K', 23, 16))
++DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_NETISOLATE_POLICIES_COMPAT_64, _IOC(_IOC_READ, 'K', 29, 64))
+ DEFINE_KSU_UAPI_CONST(__u32, KSU_IOCTL_GET_KERNEL_PATCH_IMPLEMENT, _IOC(_IOC_READ, 'K', 106, 0))
+ // 200 = MANAGE_KPM,deprecated
+ #undef DEFINE_KSU_UAPI_CONST
