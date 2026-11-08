@@ -6,42 +6,42 @@ on:
       device:
         description: 'Pilih Target Device SM8250'
         required: true
-        default: 'all'
+        default: 'all - Semua Device Non-F4 Sekaligus'
         type: choice
         options:
-          - all         # Build SEMUA Device Non-F4 Sekaligus (Parallel Matrix)
-          - alioth      # POCO F3 / Redmi K40
-          - apollo      # Mi 10T / Mi 10T Pro
-          - thyme       # Mi 10S
-          - lmi         # POCO F2 Pro / Redmi K30 Pro
-          - umi         # Mi 10
-          - cmi         # Mi 10 Pro
-          - cas         # Mi 10 Ultra
-          - pipa        # Xiaomi Pad 6
-          - psyche      # Xiaomi 12X
-          - dagu        # Xiaomi Pad 5 Pro 12.4
-          - elish       # Xiaomi Pad 5 Pro WiFi
-          - enuma       # Xiaomi Pad 5 Pro 5G
+          - 'all - Semua Device Non-F4 Sekaligus'
+          - 'alioth - POCO F3 / Redmi K40'
+          - 'apollo - Mi 10T / Mi 10T Pro'
+          - 'thyme - Mi 10S'
+          - 'lmi - POCO F2 Pro / Redmi K30 Pro'
+          - 'umi - Mi 10'
+          - 'cmi - Mi 10 Pro'
+          - 'cas - Mi 10 Ultra'
+          - 'pipa - Xiaomi Pad 6'
+          - 'psyche - Xiaomi 12X'
+          - 'dagu - Xiaomi Pad 5 Pro 12.4'
+          - 'elish - Xiaomi Pad 5 Pro WiFi'
+          - 'enuma - Xiaomi Pad 5 Pro 5G'
       variant:
         description: 'Varian Root'
         required: true
-        default: 'all'
+        default: 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
         type: choice
         options:
-          - all         # Build SEMUA Varian Root (KSU+SUSFS, KSU, NOKSU)
-          - ksu         # ReSukiSU + SuSFS
-          - nosusfs     # ReSukiSU Only
-          - noksu       # Vanilla
+          - 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
+          - 'ksu - ReSukiSU + SuSFS v2.3.0'
+          - 'nosusfs - ReSukiSU Only (Tanpa SuSFS)'
+          - 'noksu - Vanilla Non-Root'
       target_os:
         description: 'Target OS'
         required: true
-        default: 'both'
+        default: 'both - Universal Dual-OS (AOSP & MIUI)'
         type: choice
         options:
-          - both        # Universal Dual-OS (AOSP & MIUI/HyperOS)
-          - aosp        # AOSP Only
-          - miui        # MIUI / HyperOS Only
-          - coloros     # ColorOS / OxygenOS
+          - 'both - Universal Dual-OS (AOSP & MIUI)'
+          - 'aosp - AOSP Only'
+          - 'miui - MIUI / HyperOS Only'
+          - 'coloros - ColorOS / OxygenOS'
       branch:
         description: 'Branch Kernel'
         required: true
@@ -54,20 +54,26 @@ jobs:
     outputs:
       devices: ${{ steps.set-matrix.outputs.devices }}
       variants: ${{ steps.set-matrix.outputs.variants }}
+      target_os: ${{ steps.set-matrix.outputs.target_os }}
     steps:
       - id: set-matrix
         run: |
-          if [ "${{ inputs.device }}" = "all" ]; then
+          CHOSEN_DEV=$(echo "${{ inputs.device }}" | awk '{print $1}')
+          if [ "$CHOSEN_DEV" = "all" ]; then
             echo 'devices=["alioth","apollo","thyme","lmi","umi","cmi","cas","pipa","psyche","dagu","elish","enuma"]' >> $GITHUB_OUTPUT
           else
-            echo 'devices=["${{ inputs.device }}"]' >> $GITHUB_OUTPUT
+            echo "devices=[\"$CHOSEN_DEV\"]" >> $GITHUB_OUTPUT
           fi
 
-          if [ "${{ inputs.variant }}" = "all" ]; then
+          CHOSEN_VAR=$(echo "${{ inputs.variant }}" | awk '{print $1}')
+          if [ "$CHOSEN_VAR" = "all" ]; then
             echo 'variants=["ksu","nosusfs","noksu"]' >> $GITHUB_OUTPUT
           else
-            echo 'variants=["${{ inputs.variant }}"]' >> $GITHUB_OUTPUT
+            echo "variants=[\"$CHOSEN_VAR\"]" >> $GITHUB_OUTPUT
           fi
+
+          CHOSEN_OS=$(echo "${{ inputs.target_os }}" | awk '{print $1}')
+          echo "target_os=$CHOSEN_OS" >> $GITHUB_OUTPUT
 
   build:
     name: Build (${{ matrix.device }} - ${{ matrix.variant }})
@@ -112,12 +118,12 @@ jobs:
         run: |
           export PATH="$HOME/zyc-clang/bin:$PATH"
           chmod +x build.sh tools/hostcc
-          bash build.sh ${{ matrix.device }} ${{ matrix.variant }} ${{ inputs.target_os }}
+          bash build.sh ${{ matrix.device }} ${{ matrix.variant }} ${{ needs.setup.outputs.target_os }}
 
       - name: Upload Flashable Zip Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ki-Kernel-${{ matrix.device }}-${{ matrix.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
+          name: Ki-Kernel-${{ matrix.device }}-${{ matrix.variant }}-${{ needs.setup.outputs.target_os }}-${{ github.run_number }}
           path: |
             *.zip
             release/*.zip
@@ -148,6 +154,21 @@ jobs:
           CHAT_ID = int(os.environ.get("TG_CHAT_ID", "-1004420069477"))
           TOPIC_ID = int(os.environ.get("TG_TOPIC_ID", "1"))
 
+          DEV_NAMES = {
+              "alioth": "POCO F3 / Redmi K40",
+              "apollo": "Mi 10T / Mi 10T Pro",
+              "thyme": "Mi 10S",
+              "lmi": "POCO F2 Pro / Redmi K30 Pro",
+              "umi": "Mi 10",
+              "cmi": "Mi 10 Pro",
+              "cas": "Mi 10 Ultra",
+              "pipa": "Xiaomi Pad 6",
+              "psyche": "Xiaomi 12X",
+              "dagu": "Xiaomi Pad 5 Pro 12.4",
+              "elish": "Xiaomi Pad 5 Pro WiFi",
+              "enuma": "Xiaomi Pad 5 Pro 5G",
+          }
+
           zips = glob.glob("*.zip") + glob.glob("release/*.zip")
           if not zips:
               print("No zip file found to upload.")
@@ -165,12 +186,13 @@ jobs:
 
           device = "${{ matrix.device }}"
           variant = "${{ matrix.variant }}"
-          target_os = "${{ inputs.target_os }}"
+          target_os = "${{ needs.setup.outputs.target_os }}"
+          device_label = DEV_NAMES.get(device, device)
           run_url = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           caption = (
               f"🚀 *Ki-Kernel Build Released!*\n\n"
-              f"📱 *Device:* `{device}`\n"
+              f"📱 *Device:* `{device}` ({device_label})\n"
               f"🧩 *Variant:* `{variant}`\n"
               f"🌐 *OS Target:* `{target_os}`\n"
               f"📦 *File:* `{filename}`\n"
