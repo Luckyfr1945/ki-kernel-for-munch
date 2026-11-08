@@ -14,6 +14,7 @@
 #include <linux/input.h>
 #include <linux/time.h>
 #include <linux/sysfs.h>
+#include <linux/ki_profile.h>
 
 #define cpu_boost_attr_rw(_name)		\
 static struct kobj_attribute _name##_attr =	\
@@ -72,7 +73,18 @@ show_one(sched_boost_on_powerkey_input);
 store_one(sched_boost_on_powerkey_input);
 cpu_boost_attr_rw(sched_boost_on_powerkey_input);
 
-static bool sched_boost_active;
+/*
+ * Sched boost type held by cpu-boost, 0 = none. WALT boosts are refcounted,
+ * so release only our own reference: sched_set_boost(0) would also drop a
+ * boost held by ki_profile (Performance) or perf-hal.
+ */
+static int sched_boost_active;
+
+/*
+ * Minimum time to keep the touch sched boost, set by ki_profile. Kept apart
+ * from input_boost_ms because vendor post_boot rewrites that after boot.
+ */
+static unsigned int sched_boost_hold_ms;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
@@ -270,9 +282,33 @@ static void update_policy_online(void)
 	put_online_cpus();
 }
 
+static void release_sched_boost(void)
+{
+	if (!sched_boost_active)
+		return;
+	if (sched_set_boost(-sched_boost_active))
+		pr_err("cpu-boost: sched boost disable failed\n");
+	sched_boost_active = 0;
+}
+
+static void acquire_sched_boost(int type)
+{
+	if (sched_set_boost(type))
+		pr_err("cpu-boost: sched boost enable failed\n");
+	else
+		sched_boost_active = type;
+}
+
+/* Called by ki_profile on every profile apply (0 disables touch sched boost) */
+void cpu_boost_set_input_sched_boost(unsigned int type, unsigned int hold_ms)
+{
+	WRITE_ONCE(sched_boost_on_input, type);
+	WRITE_ONCE(sched_boost_hold_ms, hold_ms);
+}
+
 static void do_input_boost_rem(struct work_struct *work)
 {
-	unsigned int i, ret;
+	unsigned int i;
 	struct cpu_sync *i_sync_info;
 
 	/* Reset the input_boost_min for all CPUs in the system */
@@ -285,24 +321,17 @@ static void do_input_boost_rem(struct work_struct *work)
 	/* Update policies for all online CPUs */
 	update_policy_online();
 
-	if (sched_boost_active) {
-		ret = sched_set_boost(0);
-		if (ret)
-			pr_err("cpu-boost: sched boost disable failed\n");
-		sched_boost_active = false;
-	}
+	release_sched_boost();
 }
 
 static void do_input_boost(struct work_struct *work)
 {
-	unsigned int i, ret;
+	unsigned int i, boost_ms = input_boost_ms;
+	unsigned int sched_type = READ_ONCE(sched_boost_on_input);
 	struct cpu_sync *i_sync_info;
 
 	cancel_delayed_work(&input_boost_rem);
-	if (sched_boost_active) {
-		sched_set_boost(0);
-		sched_boost_active = false;
-	}
+	release_sched_boost();
 
 	/* Set the input_boost_min for all CPUs in the system */
 	pr_debug("Setting input boost min for all CPUs\n");
@@ -315,29 +344,24 @@ static void do_input_boost(struct work_struct *work)
 	update_policy_online();
 
 	/* Enable scheduler boost to migrate tasks to big cluster */
-	if (sched_boost_on_input > 0) {
-		ret = sched_set_boost(sched_boost_on_input);
-		if (ret)
-			pr_err("cpu-boost: sched boost enable failed\n");
-		else
-			sched_boost_active = true;
+	if (sched_type > 0) {
+		acquire_sched_boost(sched_type);
+		/* keep it through the fling that follows a swipe */
+		boost_ms = max(boost_ms, READ_ONCE(sched_boost_hold_ms));
 	}
 
 	queue_delayed_work(cpu_boost_wq, &input_boost_rem,
-					msecs_to_jiffies(input_boost_ms));
+					msecs_to_jiffies(boost_ms));
 }
 
 static void do_powerkey_input_boost(struct work_struct *work)
 {
 
-	unsigned int i, ret;
+	unsigned int i;
 	struct cpu_sync *i_sync_info;
 
 	cancel_delayed_work(&input_boost_rem);
-	if (sched_boost_active) {
-		sched_set_boost(0);
-		sched_boost_active = false;
-	}
+	release_sched_boost();
 
 	/* Set the powerkey_input_boost_min for all CPUs in the system */
 	pr_debug("Setting powerkey input boost min for all CPUs\n");
@@ -351,13 +375,8 @@ static void do_powerkey_input_boost(struct work_struct *work)
 	update_policy_online();
 
 	/* Enable scheduler boost to migrate tasks to big cluster */
-	if (sched_boost_on_powerkey_input) {
-		ret = sched_set_boost(1);
-		if (ret)
-			pr_err("cpu-boost: HMP boost enable failed\n");
-		else
-			sched_boost_active = true;
-	}
+	if (sched_boost_on_powerkey_input)
+		acquire_sched_boost(1);
 
 	queue_delayed_work(cpu_boost_wq, &input_boost_rem,
 				msecs_to_jiffies(powerkey_input_boost_ms));

@@ -283,6 +283,8 @@ struct ki_profile_tune {
 	bool gpu_perf;			/* kgsl performance mode */
 	bool thermal_throttle;
 	int sched_boost;
+	unsigned int touch_sched_boost;	/* sched boost type while touching, 0 = off */
+	unsigned int touch_boost_ms;	/* hold after the last touch event */
 	unsigned int up_migrate, down_migrate;
 	unsigned int grp_up_migrate, grp_down_migrate;
 	unsigned int window_stats_policy; /* 1 = MAX, 2 = MAX_RECENT_AVG */
@@ -341,6 +343,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
 	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
 	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
+	 * Touch sched boost (FULL_THROTTLE while touching, held 1s for the fling):
+	 * evdev scroll on munch went p90 15ms -> 9ms, matching Performance, while
+	 * idle and screen-off keep the cool Balanced placement.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
@@ -348,6 +353,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
 			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
 		},
+		.touch_sched_boost = 1,
+		.touch_boost_ms = 1000,
 		.thermal_throttle = true,
 		.up_migrate = 95, .down_migrate = 85,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
@@ -473,6 +480,7 @@ static int apply_ki_profile(int mode, bool force)
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
 	sched_set_boost(t->sched_boost);
+	cpu_boost_set_input_sched_boost(t->touch_sched_boost, t->touch_boost_ms);
 
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
 

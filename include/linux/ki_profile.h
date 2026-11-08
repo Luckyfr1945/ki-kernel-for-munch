@@ -24,6 +24,13 @@ int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int 
 unsigned int ki_cpufreq_get_max(unsigned int cpu);
 int ki_get_active_profile(void);
 
+#ifdef CONFIG_CPU_BOOST
+void cpu_boost_set_input_sched_boost(unsigned int type, unsigned int hold_ms);
+#else
+static inline void cpu_boost_set_input_sched_boost(unsigned int type,
+						   unsigned int hold_ms) { }
+#endif
+
 extern int current_profile_mode;
 extern bool ki_thermal_throttle_enabled;
 extern unsigned int sysctl_sched_window_stats_policy;
