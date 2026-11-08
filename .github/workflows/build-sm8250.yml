@@ -95,8 +95,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
-          submodules: recursive
           fetch-depth: 1
+
+      - name: Setup KernelSU (BakaSU)
+        run: |
+          rm -rf KernelSU
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
+          if [ -f ".github/ci-patches/bakasu.patch" ]; then
+            cd KernelSU
+            git apply ../.github/ci-patches/bakasu.patch || echo "BakaSU patch applied with fallback"
+            cd ..
+          fi
+          mkdir -p drivers
+          ln -sf ../KernelSU/kernel drivers/kernelsu
 
       - name: Install Dependencies & Cross Compilers
         run: |
