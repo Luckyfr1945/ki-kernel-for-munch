@@ -6,9 +6,10 @@ on:
       device:
         description: 'Pilih Target Device SM8250'
         required: true
-        default: 'alioth'
+        default: 'all'
         type: choice
         options:
+          - all         # Build SEMUA Device Non-F4 Sekaligus (Parallel Matrix)
           - alioth      # POCO F3 / Redmi K40
           - apollo      # Mi 10T / Mi 10T Pro
           - thyme       # Mi 10S
@@ -33,22 +34,41 @@ on:
       target_os:
         description: 'Target OS'
         required: true
-        default: 'aosp'
+        default: 'both'
         type: choice
         options:
-          - aosp
-          - miui
-          - coloros
-          - both
+          - both        # Universal Dual-OS (AOSP & MIUI/HyperOS)
+          - aosp        # AOSP Only
+          - miui        # MIUI / HyperOS Only
+          - coloros     # ColorOS / OxygenOS
       branch:
         description: 'Branch Kernel'
         required: true
         default: 'beta-test'
 
 jobs:
+  setup:
+    name: Prepare Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      devices: ${{ steps.set-matrix.outputs.devices }}
+    steps:
+      - id: set-matrix
+        run: |
+          if [ "${{ inputs.device }}" = "all" ]; then
+            echo 'devices=["alioth","apollo","thyme","lmi","umi","cmi","cas","pipa","psyche","dagu","elish","enuma"]' >> $GITHUB_OUTPUT
+          else
+            echo 'devices=["${{ inputs.device }}"]' >> $GITHUB_OUTPUT
+          fi
+
   build:
-    name: Compile SM8250 Kernel (${{ inputs.device }})
+    name: Build (${{ matrix.device }})
+    needs: setup
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ fromJson(needs.setup.outputs.devices) }}
 
     steps:
       - name: Free Disk Space
@@ -79,16 +99,16 @@ jobs:
           tar -xf Clang-16.0.6-20230628.tar.gz
           rm -f Clang-16.0.6-20230628.tar.gz
 
-      - name: Compile Kernel
+      - name: Compile Kernel (${{ matrix.device }})
         run: |
           export PATH="$HOME/zyc-clang/bin:$PATH"
           chmod +x build.sh tools/hostcc
-          bash build.sh ${{ inputs.device }} ${{ inputs.variant }} ${{ inputs.target_os }}
+          bash build.sh ${{ matrix.device }} ${{ inputs.variant }} ${{ inputs.target_os }}
 
       - name: Upload Flashable Zip Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ki-Kernel-${{ inputs.device }}-${{ inputs.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
+          name: Ki-Kernel-${{ matrix.device }}-${{ inputs.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
           path: |
             *.zip
             release/*.zip
@@ -134,7 +154,7 @@ jobs:
                   h.update(chunk)
           sha256 = h.hexdigest()
 
-          device = "${{ inputs.device }}"
+          device = "${{ matrix.device }}"
           variant = "${{ inputs.variant }}"
           target_os = "${{ inputs.target_os }}"
           run_url = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
