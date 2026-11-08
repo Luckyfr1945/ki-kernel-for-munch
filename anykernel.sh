@@ -609,17 +609,24 @@ device_config put netd override_tether_enable_bpf_offload false 2>/dev/null
 device_config put connectivity tether_enable_bpf_offload false 2>/dev/null
 setprop net.tethering.noprofile 1 2>/dev/null
 
-# Hotspot DNS & Offload Watcher (Fixes "Connected, can't provide internet" on A16+)
+# Hotspot DNS & Offload Watcher (Zero-overhead state-triggered daemon)
 (
+    last_hs_state=0
     while true; do
-        sleep 3
-        for iface in $(ip route show 2>/dev/null | grep -E "proto kernel scope link src" | grep -v "wlan0.*192\.168\." | awk '{print $3}' | grep -E "^(wlan|ap|rndis|eth)"); do
-            tc filter show dev "$iface" ingress 2>/dev/null | grep -q "bpf" && tc filter del dev "$iface" ingress 2>/dev/null
-            iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-                iptables -t nat -I PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-            iptables -t nat -C PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-                iptables -t nat -I PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-        done
+        sleep 5
+        hs_iface=$(ls /sys/class/net/ 2>/dev/null | grep -E '^(wlan[1-9]|ap[0-9]|rndis[0-9]|swlan[0-9])' | head -n 1)
+        if [ -n "$hs_iface" ]; then
+            if [ "$last_hs_state" -eq 0 ]; then
+                tc filter del dev "$hs_iface" ingress 2>/dev/null
+                iptables -t nat -C PREROUTING -i "$hs_iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
+                    iptables -t nat -I PREROUTING -i "$hs_iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
+                iptables -t nat -C PREROUTING -i "$hs_iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
+                    iptables -t nat -I PREROUTING -i "$hs_iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
+                last_hs_state=1
+            fi
+        else
+            last_hs_state=0
+        fi
     done
 ) &
 
