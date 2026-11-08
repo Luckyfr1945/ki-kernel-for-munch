@@ -18,7 +18,7 @@ SLEEP_SEC=${3:-8}
 HERE=$(cd "$(dirname "$0")" && pwd)
 POLL_SEC=5
 REBOOT_WAIT_SEC=300
-STRESS_LOG=/data/local/tmp/ki_crashlog/stress.log
+STRESS_LOG=/data/adb/ki_crashlog/stress.log
 
 root() { printf '%s\n' "$*" | timeout 20 adb shell su 2>/dev/null | tr -d '\r'; }
 boot_id() { timeout 10 adb shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r'; }
@@ -35,7 +35,9 @@ fi
 adb push "$HERE/scripts/ki_crashlog.sh" /data/local/tmp/ki_crashlog.sh >/dev/null
 adb push "$HERE/scripts/ki_stress.sh" /data/local/tmp/ki_stress.sh >/dev/null
 root "sh /data/local/tmp/ki_crashlog.sh start; rm -f $STRESS_LOG"
-root "nohup sh /data/local/tmp/ki_stress.sh $PHASE $CYCLES $SLEEP_SEC >/dev/null 2>&1 &"
+# run as root only from a root-owned copy (/data/local/tmp is shell-writable)
+root "cp -f /data/local/tmp/ki_stress.sh /data/adb/ki_stress.sh && chmod 700 /data/adb/ki_stress.sh && rm -f /data/local/tmp/ki_stress.sh"
+root "nohup sh /data/adb/ki_stress.sh $PHASE $CYCLES $SLEEP_SEC >/dev/null 2>&1 &"
 
 BOOT_ID=$(boot_id)
 echo "[*] stress '$PHASE' x$CYCLES running on phone (boot_id ${BOOT_ID:0:8}); Ctrl-C stops watching only"

@@ -27,6 +27,22 @@ done
 root() { printf '%s\n' "$*" | timeout 60 adb shell su 2>/dev/null | tr -d '\r'; }
 shell() { timeout 60 adb shell "$@" 2>/dev/null | tr -d '\r'; }
 
+# Archives from the phone or Telegram are untrusted: allow only plain files
+# and dirs, no absolute or ".." paths, and never restore owners/modes.
+safe_untar() {
+	local archive=$1 dst=$2
+	[ -s "$archive" ] || return 1
+	if tar -tvf "$archive" | awk '$1 !~ /^[-d]/ { bad = 1 } END { exit !bad }'; then
+		echo "[!] refusing $archive: contains links or special files" >&2
+		return 1
+	fi
+	if tar -tf "$archive" | grep -qE '(^/|(^|/)\.\.(/|$))'; then
+		echo "[!] refusing $archive: absolute or .. paths" >&2
+		return 1
+	fi
+	tar -xf "$archive" -C "$dst" --no-same-owner --no-same-permissions
+}
+
 mkdir -p "$OUT"
 
 collect_device() {
@@ -61,16 +77,17 @@ collect_device() {
 	shell dumpsys dropbox --print SYSTEM_LAST_KMSG > "$OUT/dropbox_last_kmsg.txt"
 	shell dumpsys dropbox --print SYSTEM_BOOT | grep -E "^20|Kernel:" > "$OUT/dropbox_boots.txt"
 	shell dumpsys dropbox | grep -E "SYSTEM_(TOMBSTONE|RESTART|LAST_KMSG)|system_server_(crash|watchdog)" > "$OUT/dropbox_crashes.txt"
-	root 'cd /data/local/tmp && tar -cf - ki_crashlog 2>/dev/null' | tar -xf - -C "$OUT" 2>/dev/null
+	root 'cd /data/adb && tar -cf - ki_crashlog 2>/dev/null' > "$OUT/ki_crashlog.tar"
+	safe_untar "$OUT/ki_crashlog.tar" "$OUT" && rm -f "$OUT/ki_crashlog.tar"
 	shell logcat -d -b crash > "$OUT/logcat_crash.txt"
 }
 
 collect_bugreport() {
 	local dst="$OUT/ksu_bugreport"
 	mkdir -p "$dst"
-	tar -xzf "$BUGREPORT" -C "$dst" || { echo "[!] cannot extract $BUGREPORT" >&2; return; }
+	safe_untar "$BUGREPORT" "$dst" || { echo "[!] cannot extract $BUGREPORT" >&2; return; }
 	for t in pstore dropbox bootlog tombstones; do
-		[ -s "$dst/$t.tar.gz" ] && mkdir -p "$dst/x_$t" && tar -xzf "$dst/$t.tar.gz" -C "$dst/x_$t" 2>/dev/null
+		[ -s "$dst/$t.tar.gz" ] && mkdir -p "$dst/x_$t" && safe_untar "$dst/$t.tar.gz" "$dst/x_$t"
 	done
 	echo "[*] bugreport: $(grep -E '^Kernel(Version|Release)' "$dst/basic.txt" | tr '\n' ' ')"
 	if [ ! -s "$dst/pstore.tar.gz" ] || [ -z "$(ls -A "$dst/x_pstore" 2>/dev/null | grep -v '^\.$')" ]; then

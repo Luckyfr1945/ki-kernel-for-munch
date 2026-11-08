@@ -85,7 +85,7 @@ for i in $(seq 1 "$CYCLES"); do
 		log "$i  -  -  -  -  REBOOT/LOST during sleep, waiting for phone..."
 		timeout "$REBOOT_WAIT_SEC" adb wait-for-device
 		log "    boot reason: $(shell getprop sys.boot.reason)"
-		log "    see /data/local/tmp/ki_crashlog/prev_* if ki_crashlog.sh is installed"
+		log "    see /data/adb/ki_crashlog/prev_* if ki_crashlog.sh is installed"
 		fails=$((fails + 1))
 		BOOT_ID=$(boot_id)
 		continue

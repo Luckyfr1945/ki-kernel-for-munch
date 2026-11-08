@@ -5,14 +5,17 @@
 #
 #   su -c 'sh /data/local/tmp/ki_crashlog.sh start'    # run now (background)
 #   su -c 'sh /data/local/tmp/ki_crashlog.sh install'  # also start on every boot
-#   su -c 'sh /data/local/tmp/ki_crashlog.sh stop'
-#   su -c 'sh /data/local/tmp/ki_crashlog.sh uninstall'
+#   su -c 'sh /data/adb/ki_crashlog.sh stop'
+#   su -c 'sh /data/adb/ki_crashlog.sh uninstall'
 #
 # After an unexpected reboot, the previous boot's logs are in
-# /data/local/tmp/ki_crashlog/prev_<time>/ (with pstore + boot reason).
+# /data/adb/ki_crashlog/prev_<time>/ (with pstore + boot reason).
+#
+# Everything root touches lives under /data/adb (root-only): /data/local/tmp
+# is writable by the shell uid, which could plant symlinks or swap the script.
 
-DIR=/data/local/tmp/ki_crashlog
-SELF=/data/local/tmp/ki_crashlog.sh
+DIR=/data/adb/ki_crashlog
+SELF=/data/adb/ki_crashlog.sh
 SERVICE=/data/adb/service.d/ki_crashlog.sh
 MAX_LOG_BYTES=8388608	# rotate kmsg.log at 8 MiB (keeps one .1 backup)
 STATUS_SEC=30		# shell sleep stops during suspend, so no extra wakeups
@@ -52,8 +55,15 @@ status_line() {
 		"$(cat $CRTC/measured_fps 2>/dev/null)"
 }
 
-run_logger() {
+prepare_dir() {
+	[ -L $DIR ] && rm -f $DIR
 	mkdir -p $DIR
+	chown root:root $DIR
+	chmod 700 $DIR
+}
+
+run_logger() {
+	prepare_dir
 	archive_previous_boot
 	echo $$ > $DIR/pid
 	dmesg > $DIR/kmsg.log
@@ -82,7 +92,11 @@ stop_logger() {
 case "$1" in
 start)
 	stop_logger
-	nohup sh "$0" run >/dev/null 2>&1 &
+	# run from the root-only copy, never from the shell-writable push location
+	[ "$0" = "$SELF" ] || cp -f "$0" $SELF
+	chown root:root $SELF
+	chmod 700 $SELF
+	nohup sh $SELF run >/dev/null 2>&1 &
 	echo "ki_crashlog: logging to $DIR"
 	;;
 run)
@@ -93,9 +107,11 @@ stop)
 	;;
 install)
 	[ "$0" = "$SELF" ] || cp -f "$0" $SELF
+	chown root:root $SELF
+	chmod 700 $SELF
 	mkdir -p /data/adb/service.d
 	printf '#!/system/bin/sh\nsh %s start\n' $SELF > $SERVICE
-	chmod 755 $SERVICE $SELF
+	chmod 700 $SERVICE
 	sh $SELF start
 	;;
 uninstall)

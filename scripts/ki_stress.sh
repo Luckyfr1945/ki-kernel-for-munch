@@ -8,9 +8,9 @@
 #   su -c 'sh /data/local/tmp/ki_stress.sh <phase> [cycles] [sleep_sec]'
 #   phase: suspend | charger | screen | hotplug | all
 #
-# Log: /data/local/tmp/ki_crashlog/stress.log  (survives the reboot)
+# Log: /data/adb/ki_crashlog/stress.log  (root-only, survives the reboot)
 
-DIR=/data/local/tmp/ki_crashlog
+DIR=/data/adb/ki_crashlog
 LOG=$DIR/stress.log
 PHASE=${1:-all}
 CYCLES=${2:-50}
@@ -19,7 +19,10 @@ RTC=/sys/class/rtc/rtc0/wakealarm
 CHG=/sys/class/power_supply/battery/input_suspend
 PROFILE=/sys/kernel/ki_profile/mode
 
+[ -L $DIR ] && rm -f $DIR
 mkdir -p $DIR
+chown root:root $DIR
+chmod 700 $DIR
 
 step() {
 	echo "$(date '+%H:%M:%S') up=$(cut -d' ' -f1 /proc/uptime) $*" >> $LOG
