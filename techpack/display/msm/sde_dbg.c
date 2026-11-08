@@ -22,7 +22,13 @@
 
 #define SDE_DBG_BASE_MAX		10
 
-#define DEFAULT_PANIC		1
+/*
+ * Do not panic on display errors by default: when the display HAL does not
+ * register for DRM_EVENT_SDE_HW_RECOVERY, a single pp_done timeout on panel
+ * resume would panic (and reboot) the phone instead of resetting the CTL.
+ * Re-enable via /sys/kernel/debug/dri/0/debug/panic for bring-up debugging.
+ */
+#define DEFAULT_PANIC		0
 #define DEFAULT_REGDUMP		SDE_DBG_DUMP_IN_MEM
 #define DEFAULT_DBGBUS_SDE	SDE_DBG_DUMP_IN_MEM
 #define DEFAULT_DBGBUS_VBIFRT	SDE_DBG_DUMP_IN_MEM
@@ -2961,7 +2967,7 @@ static void _sde_dump_reg(const char *dump_name, u32 reg_dump_flag,
 	end_addr = addr + len_bytes;
 
 	if (in_mem) {
-		if (dump_mem && !(*dump_mem)) {
+		if (dump_mem && !(*dump_mem) && dbg_base->reg_dump_addr) {
 			*dump_mem = dbg_base->reg_dump_addr;
 			dbg_base->reg_dump_addr += len_padded;
 		}
@@ -3155,12 +3161,16 @@ static void _sde_dump_reg_by_ranges(struct sde_dbg_reg_base *dbg,
 				addr, range_node->offset.start,
 				range_node->offset.end);
 
-			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-					dbg->name);
-			dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
-			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-					range_node->range_name);
-			dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+			/* dump buffer allocation can fail; never offset a NULL base */
+			if (dbg_base->reg_dump_addr) {
+				scnprintf(dbg_base->reg_dump_addr,
+						REG_BASE_NAME_LEN, dbg->name);
+				dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
+				scnprintf(dbg_base->reg_dump_addr,
+						REG_BASE_NAME_LEN,
+						range_node->range_name);
+				dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+			}
 			_sde_dump_reg(range_node->range_name, reg_dump_flag,
 					dbg->base, addr, len,
 					&range_node->reg_dump);
@@ -3173,10 +3183,12 @@ static void _sde_dump_reg_by_ranges(struct sde_dbg_reg_base *dbg,
 				dbg->max_offset);
 		addr = dbg->base;
 		len = dbg->max_offset;
-		scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-				dbg->name);
-		dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
-		dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+		if (dbg_base->reg_dump_addr) {
+			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
+					dbg->name);
+			dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
+			dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+		}
 		_sde_dump_reg(dbg->name, reg_dump_flag, dbg->base, addr, len,
 				&dbg->reg_dump);
 	}
