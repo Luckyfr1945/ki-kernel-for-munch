@@ -1,11 +1,19 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-11-06  
+**Build Date:** 2026-11-08  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.6.4 (Fatal Sleep Lockup Fix & Event-Driven Hotspot Engine) :
+- Fatal Screen-off Sleep Lockup & Black Screen Fix: reverted problematic PM runtime commit `d0b4c0a390fb` (`PM: runtime: Drop pm_runtime_force_suspend/resume()`) in `drivers/base/power/runtime.c` and `include/linux/pm.h`. This commit erroneously omitted `needs_force_resume = 1` for devices that were already runtime-suspended before system sleep (notably the Adreno GPU / KGSL). On wake, `pm_runtime_force_resume()` evaluated `!dev->power.needs_force_resume` and skipped powering back on the Adreno GPU and GDSC rails, causing SurfaceFlinger/InputDispatcher display fence deadlocks, system freezes, and Black Screen of Death.
+- Power Management Workqueue Hardening: reverted `pm_wq` back to per-CPU `WQ_FREEZABLE` in `kernel/power/main.c` and reverted pool lock optimization in `kernel/workqueue.c` to prevent unbound workqueue race conditions during AP suspend/resume transitions.
+- AOSP Android 16 Hotspot "Connected, no internet" Fix (GitHub Issue #2): resolved DNS failure caused by Android 16's removal of dnsmasq and stricter tether BPF offloading. Injected automated DNAT forwarding (TCP & UDP port 53 -> `1.1.1.1:53`) and flushed restrictive ingress BPF tether filters on active hotspot interfaces (`wlanX`), restoring full internet connectivity and captive portal validation for connected clients.
+- Battery-Friendly Event-Driven Hotspot Watcher: migrated background hotspot service from periodic polling to a pure Linux kernel Netlink event listener (`ip monitor link`). The service sits passively in the kernel wait queue (`__skb_wait_for_more_packets`), consuming **0.0% CPU** and zero timer wakeups during Deep Sleep, while triggering instantaneously (< 1ms) upon hotspot state changes.
+- AnyKernel3 POSIX Hardening: refactored string parsing in the hotspot background engine to strictly use standard POSIX `cut`, `tr`, and `grep`, ensuring 100% compatibility across minimal BusyBox standalone shell environments in both custom recoveries and ROMs.
+- TCP BBR Kernel Warning Silencing: clamped `lost_prev = 0` when `lost_prev < 0` for aggregated GRO/TSO packets in `net/ipv4/tcp_bbr.c`, eliminating harmless `WARN_ONCE` logspam in `dmesg` and removing unused `tp` variable.
 
 ## Ki-kernel v1.6.3 (Display Brightness Range Calibration & AnyKernel3 GPU OC Flasher) :
 - Hotspot & Tethering Fix: bypassed TTL and Hop Limit decrement on forwarded IPv4 (`net/ipv4/ip_forward.c`) and IPv6 (`net/ipv6/ip6_output.c`) packets (ported from e404 / Alexander Winkowski) to prevent carrier DPI tethering blocks and fix "Connected, without internet" bug on connected hotspot devices
