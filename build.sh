@@ -171,7 +171,7 @@ apply_ksu_config() {
                 -e KSU_SUSFS_SUS_SU \
                 -e KSU_SUSFS_SUS_MOUNT \
                 -e KSU_SUSFS_SUS_KSTAT \
-                -e KSU_SUSFS_SPOOF_UNAME \
+                -d KSU_SUSFS_SPOOF_UNAME \
                 -e KSU_SUSFS_ENABLE_LOG \
                 -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                 -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \

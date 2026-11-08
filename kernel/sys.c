@@ -1274,7 +1274,6 @@ extern void susfs_spoof_uname(struct new_utsname* tmp);
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
-	uid_t cur_uid = current_uid().val;
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
@@ -1289,9 +1288,6 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		strcpy(tmp.release, "5.15.404");
 		pr_info("fake uname: %s/%d release=%s\n",
 			 current->comm, current->pid, tmp.release);
-	} else if (cur_uid >= 1000 ||
-		!strcmp(current->comm, "main")) {
-		strlcpy(tmp.release, "5.10.325-ki-kernel+", sizeof(tmp.release));
 	}
 	up_read(&uts_sem);
 #ifdef CONFIG_SPOOF_KERNEL_VERSION
