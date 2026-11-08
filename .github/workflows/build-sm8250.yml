@@ -1,0 +1,181 @@
+name: Build SM8250 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Pilih Target Device SM8250'
+        required: true
+        default: 'alioth'
+        type: choice
+        options:
+          - alioth      # POCO F3 / Redmi K40
+          - apollo      # Mi 10T / Mi 10T Pro
+          - thyme       # Mi 10S
+          - lmi         # POCO F2 Pro / Redmi K30 Pro
+          - umi         # Mi 10
+          - cmi         # Mi 10 Pro
+          - cas         # Mi 10 Ultra
+          - pipa        # Xiaomi Pad 6
+          - psyche      # Xiaomi 12X
+          - dagu        # Xiaomi Pad 5 Pro 12.4
+          - elish       # Xiaomi Pad 5 Pro WiFi
+          - enuma       # Xiaomi Pad 5 Pro 5G
+      variant:
+        description: 'Varian Root'
+        required: true
+        default: 'ksu'
+        type: choice
+        options:
+          - ksu         # ReSukiSU + SuSFS
+          - nosusfs     # ReSukiSU Only
+          - noksu       # Vanilla
+      target_os:
+        description: 'Target OS'
+        required: true
+        default: 'aosp'
+        type: choice
+        options:
+          - aosp
+          - miui
+          - coloros
+          - both
+      branch:
+        description: 'Branch Kernel'
+        required: true
+        default: 'beta-test'
+
+jobs:
+  build:
+    name: Compile SM8250 Kernel (${{ inputs.device }})
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo apt-get clean
+
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Dependencies & Cross Compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            libssl-dev libelf-dev zip python3 python3-pip
+
+      - name: Setup ZyCromerZ Clang 16
+        run: |
+          mkdir -p $HOME/zyc-clang
+          cd $HOME/zyc-clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20230628-release/Clang-16.0.6-20230628.tar.gz
+          tar -xf Clang-16.0.6-20230628.tar.gz
+          rm -f Clang-16.0.6-20230628.tar.gz
+
+      - name: Compile Kernel
+        run: |
+          export PATH="$HOME/zyc-clang/bin:$PATH"
+          chmod +x build.sh tools/hostcc
+          bash build.sh ${{ inputs.device }} ${{ inputs.variant }} ${{ inputs.target_os }}
+
+      - name: Upload Flashable Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ki-Kernel-${{ inputs.device }}-${{ inputs.variant }}-${{ inputs.target_os }}-${{ github.run_number }}
+          path: |
+            *.zip
+            release/*.zip
+          if-no-files-found: error
+
+      - name: Send Flashable Zip to Telegram
+        if: success()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || '-1004420069477' }}
+          TG_TOPIC_ID: '1'
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ]; then
+            echo "TG_BOT_TOKEN secret not set in GitHub repository secrets, skipping Telegram notification."
+            exit 0
+          fi
+          pip install --break-system-packages telethon
+          python3 - << 'EOF'
+          import asyncio
+          import os
+          import glob
+          import hashlib
+          from telethon import TelegramClient
+
+          TELEGRAM_API_ID = 2040
+          TELEGRAM_API_HASH = "b18441a1ff607e10a989891a5462e627"
+          BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
+          CHAT_ID = int(os.environ.get("TG_CHAT_ID", "-1004420069477"))
+          TOPIC_ID = int(os.environ.get("TG_TOPIC_ID", "1"))
+
+          zips = glob.glob("*.zip") + glob.glob("release/*.zip")
+          if not zips:
+              print("No zip file found to upload.")
+              exit(1)
+
+          zip_file = max(zips, key=os.path.getmtime)
+          filename = os.path.basename(zip_file)
+          filesize_mb = os.path.getsize(zip_file) / (1024 * 1024)
+
+          h = hashlib.sha256()
+          with open(zip_file, "rb") as f:
+              while chunk := f.read(1024 * 1024 * 4):
+                  h.update(chunk)
+          sha256 = h.hexdigest()
+
+          device = "${{ inputs.device }}"
+          variant = "${{ inputs.variant }}"
+          target_os = "${{ inputs.target_os }}"
+          run_url = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          caption = (
+              f"🚀 *Ki-Kernel Build Released!*\n\n"
+              f"📱 *Device:* `{device}`\n"
+              f"🧩 *Variant:* `{variant}`\n"
+              f"🌐 *OS Target:* `{target_os}`\n"
+              f"📦 *File:* `{filename}`\n"
+              f"📊 *Size:* `{filesize_mb:.1f} MB`\n"
+              f"🔒 *SHA256:*\n`{sha256}`\n\n"
+              f"🔗 [GitHub Actions Run]({run_url})\n"
+              f"#kikernel #{device} #release"
+          )
+
+          async def main():
+              client = TelegramClient("gha_tg_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
+              await client.start(bot_token=BOT_TOKEN)
+              print(f"Uploading {filename} ({filesize_mb:.1f} MB) to {CHAT_ID} (topic: {TOPIC_ID})...")
+              try:
+                  kwargs = {
+                      "entity": CHAT_ID,
+                      "file": zip_file,
+                      "caption": caption,
+                      "parse_mode": "md"
+                  }
+                  if TOPIC_ID:
+                      kwargs["reply_to"] = int(TOPIC_ID)
+                  await client.send_file(**kwargs)
+                  print("✅ Berhasil terkirim ke Telegram!")
+              except Exception as e:
+                  print(f"⚠️ Gagal kirim ke topik {TOPIC_ID}: {e}. Mencoba kirim tanpa reply_to...")
+                  try:
+                      await client.send_file(entity=CHAT_ID, file=zip_file, caption=caption, parse_mode="md")
+                      print("✅ Berhasil terkirim ke Telegram (main thread)!")
+                  except Exception as e2:
+                      print(f"❌ Gagal mengirim: {e2}")
+                      raise e2
+              finally:
+                  await client.disconnect()
+
+          asyncio.run(main())
+          EOF
