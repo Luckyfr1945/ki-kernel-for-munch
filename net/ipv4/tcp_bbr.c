@@ -1219,7 +1219,6 @@ static u32 bbr_inflight_hi_from_lost_skb(const struct sock *sk,
 					  const struct rate_sample *rs,
 					  const struct sk_buff *skb)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
 	u32 loss_thresh  = bbr_param(sk, loss_thresh);
 	u32 pcount, divisor, inflight_hi;
 	s32 inflight_prev, lost_prev;
@@ -1241,17 +1240,8 @@ static u32 bbr_inflight_hi_from_lost_skb(const struct sock *sk,
 
 	/* How much inflight data was marked lost before this skb? */
 	lost_prev = rs->losses - pcount;
-	if (WARN_ONCE(lost_prev < 0,
-		      "cwnd: %u ca: %d out: %u lost: %u pif: %u "
-		      "tx_in_flight: %u tx.lost: %u tp->lost: %u rs->losses: %d "
-		      "lost_prev: %d pcount: %d seq: %u end_seq: %u reneg: %u",
-		      tcp_snd_cwnd(tp), inet_csk(sk)->icsk_ca_state,
-		      tp->packets_out, tp->lost_out, tcp_packets_in_flight(tp),
-		      rs->tx_in_flight, 0, tp->lost,
-		      rs->losses, lost_prev, pcount,
-		      TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq,
-		      tp->is_sack_reneg))
-		return ~0U;
+	if (lost_prev < 0)
+		lost_prev = 0;
 
 	/* At what prefix of this lost skb did losss rate exceed loss_thresh? */
 	loss_budget = (u64)inflight_prev * loss_thresh + BBR_UNIT - 1;

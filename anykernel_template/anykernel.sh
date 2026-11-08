@@ -604,6 +604,25 @@ chmod 666 /proc/oplus_mem/memory_monitor 2>/dev/null
 chmod 666 /proc/devinfo/lcd* 2>/dev/null
 chmod 666 /sys/class/oplus_chg/*/* 2>/dev/null
 
+# Tethering & Hotspot fixes for AOSP Android 16+
+device_config put netd override_tether_enable_bpf_offload false 2>/dev/null
+device_config put connectivity tether_enable_bpf_offload false 2>/dev/null
+setprop net.tethering.noprofile 1 2>/dev/null
+
+# Hotspot DNS & Offload Watcher (Fixes "Connected, can't provide internet" on A16+)
+(
+    while true; do
+        sleep 3
+        for iface in $(ip route show 2>/dev/null | grep -E "proto kernel scope link src" | grep -v "wlan0.*192\.168\." | awk '{print $3}' | grep -E "^(wlan|ap|rndis|eth)"); do
+            tc filter show dev "$iface" ingress 2>/dev/null | grep -q "bpf" && tc filter del dev "$iface" ingress 2>/dev/null
+            iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
+                iptables -t nat -I PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
+            iptables -t nat -C PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
+                iptables -t nat -I PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
+        done
+    done
+) &
+
 EOF
     if [ -f /data/adb/service.d/00_nkm_bypass.sh ]; then
         chmod 755 /data/adb/service.d/00_nkm_bypass.sh;
