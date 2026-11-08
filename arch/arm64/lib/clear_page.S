@@ -26,6 +26,7 @@
  *	x0 - dest
  */
 ENTRY(clear_page)
+	.p2align 4
 	mrs	x1, dczid_el0
 	and	w1, w1, #0xf
 	mov	x2, #4

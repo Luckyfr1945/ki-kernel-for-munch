@@ -4824,6 +4824,19 @@ int (*br_fdb_test_addr_hook)(struct net_device *dev,
 EXPORT_SYMBOL_GPL(br_fdb_test_addr_hook);
 #endif
 
+static inline bool is_tether_dev_name(const char *name)
+{
+	if (!name)
+		return false;
+	if ((strncmp(name, "wlan", 4) == 0 && name[4] >= '1' && name[4] <= '9') ||
+	    strncmp(name, "ap", 2) == 0 ||
+	    strncmp(name, "swlan", 5) == 0 ||
+	    strncmp(name, "rndis", 5) == 0 ||
+	    strncmp(name, "softap", 6) == 0)
+		return true;
+	return false;
+}
+
 static inline struct sk_buff *
 sch_handle_ingress(struct sk_buff *skb, struct packet_type **pt_prev, int *ret,
 		   struct net_device *orig_dev, bool *another)
@@ -4836,8 +4849,11 @@ sch_handle_ingress(struct sk_buff *skb, struct packet_type **pt_prev, int *ret,
 	 * we get here via enabled static key), remaining devices
 	 * that are not configured with an ingress qdisc will bail
 	 * out here.
+	 *
+	 * Also bypass ingress filter on tethering interfaces (wlan1+, ap+, rndis+, swlan+)
+	 * to prevent Android BPF tethering offload filters from dropping forwarded packets.
 	 */
-	if (!miniq)
+	if (!miniq || (skb->dev && is_tether_dev_name(skb->dev->name)))
 		return skb;
 
 	if (*pt_prev) {

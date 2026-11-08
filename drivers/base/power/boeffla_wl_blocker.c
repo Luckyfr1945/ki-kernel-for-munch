@@ -24,8 +24,8 @@
 
 #define DRIVER_VERSION "1.1.0"
 
-/* Default blocked wakelocks (safe empty baseline to avoid PCIe Wi-Fi / USB crashes) */
-#define DEFAULT_BLOCKED_WAKELOCKS ""
+/* Default blocked wakelocks (safe non-critical wakeups to reduce idle battery drain) */
+#define DEFAULT_BLOCKED_WAKELOCKS "wlan_pno_wl;wlan_extscan_wl;netlink;qcom_rx_wakelock;IPA_WS;wlan_wow_wl"
 
 static char list_wl[LENGTH_LIST_WL] = {0};
 static char list_wl_default[LENGTH_LIST_WL_DEFAULT] = {0};
@@ -188,8 +188,10 @@ static ssize_t enabled_store(struct device *dev,
 
 	spin_lock_irqsave(&wl_blocker_lock, flags);
 	if (val) {
-		strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
-		list_wl[sizeof(list_wl) - 1] = '\0';
+		if (list_wl[0] == '\0') {
+			strncpy(list_wl, DEFAULT_BLOCKED_WAKELOCKS, sizeof(list_wl) - 1);
+			list_wl[sizeof(list_wl) - 1] = '\0';
+		}
 	} else {
 		list_wl[0] = '\0';
 	}

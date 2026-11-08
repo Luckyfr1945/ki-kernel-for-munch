@@ -1151,6 +1151,9 @@ static void armv8pmu_idle_update(struct arm_pmu *cpu_pmu)
 	if (__this_cpu_read(perf_event_is_hotplugging))
 		return;
 
+	if (!cpumask_test_cpu(smp_processor_id(), &cpu_pmu->supported_cpus))
+		return;
+
 	hw_events = this_cpu_ptr(cpu_pmu->hw_events);
 
 	if (!hw_events)
@@ -1163,7 +1166,7 @@ static void armv8pmu_idle_update(struct arm_pmu *cpu_pmu)
 
 		event = hw_events->events[idx];
 
-		if (!event || !event->attr.exclude_idle ||
+		if (!event || IS_ERR(event) || !event->attr.exclude_idle ||
 				event->state != PERF_EVENT_STATE_ACTIVE)
 			continue;
 

@@ -3185,10 +3185,24 @@ static void smblib_get_start_vbat_before_step_charge(struct smb_charger *chg)
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				  const union power_supply_propval *val)
 {
+	int rc = 0;
+
 	if (!chg)
 		return -EINVAL;
 
-	return smblib_set_bypass(chg, !!val->intval);
+	/*
+	 * Decoupled from true bypass charging:
+	 * ColorOS/OxygenOS/AOSP health daemons periodically enforce input_suspend=0.
+	 * Handled via standard USER_VOTER without killing USER_BYPASS_VOTER.
+	 */
+	if (chg->usb_icl_votable)
+		vote(chg->usb_icl_votable, USER_VOTER, (bool)val->intval, 0);
+
+	if (chg->dc_suspend_votable)
+		vote(chg->dc_suspend_votable, USER_VOTER, (bool)val->intval, 0);
+
+	power_supply_changed(chg->batt_psy);
+	return rc;
 }
 
 int smblib_set_bypass(struct smb_charger *chg, bool en)

@@ -9,8 +9,9 @@ set -e
 
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.6.0"
+KERNEL_VERSION="v1.6"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
+GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 
 if [ -z "$1" ]; then
     echo "=========================================================="
@@ -69,9 +70,21 @@ fi
 
 # Enable ccache for fast compiling
 export CCACHE_DIR="$HOME/.cache/ccache_mikernel"
+mkdir -p "$HOME/.ccache-bin"
+CCACHE_BIN="$(command -v ccache || echo "$HOME/.local/bin/ccache")"
+if [ -x "$CCACHE_BIN" ]; then
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/clang"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/clang++"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/gcc"
+    ln -sf "$CCACHE_BIN" "$HOME/.ccache-bin/g++"
+    export PATH="$HOME/.ccache-bin:/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
+    "$CCACHE_BIN" -M 30G >/dev/null 2>&1 || true
+    echo "Using ccache: $($CCACHE_BIN --version | head -n 1)"
+else
+    export PATH="/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
+fi
 export CC="ccache gcc"
 export CXX="ccache g++"
-export PATH="/usr/lib/ccache/bin:/usr/lib/ccache:$PATH"
 echo "CCACHE_DIR: [$CCACHE_DIR]"
 
 export KBUILD_BUILD_USER="build-user"
@@ -158,7 +171,7 @@ apply_ksu_config() {
                 -e KSU_SUSFS_SUS_SU \
                 -e KSU_SUSFS_SUS_MOUNT \
                 -e KSU_SUSFS_SUS_KSTAT \
-                -e KSU_SUSFS_SPOOF_UNAME \
+                -d KSU_SUSFS_SPOOF_UNAME \
                 -e KSU_SUSFS_ENABLE_LOG \
                 -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                 -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
@@ -312,8 +325,16 @@ rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/
 rm -rf build_artifacts 2>/dev/null || true
 mkdir -p build_artifacts/aosp build_artifacts/miui
 
-echo "Cloning AnyKernel3..."
-git clone https://github.com/AstideLabs/AnyKernel3 -b kona --single-branch --depth=1 anykernel
+echo "Setting up AnyKernel3..."
+if [ -d "../AnyKernel3" ]; then
+    echo "Using local AnyKernel3 (../AnyKernel3)..."
+    rm -rf anykernel/
+    cp -r ../AnyKernel3 anykernel
+    rm -f anykernel/MUNCH-* anykernel/*.zip 2>/dev/null || true
+else
+    git clone https://github.com/kvsnr113/AnyKernel3 -b master --single-branch --depth=1 anykernel || \
+    git clone https://github.com/osm0sis/AnyKernel3 -b master --single-branch --depth=1 anykernel
+fi
 
 local_version_date_str="-${KERNEL_NAME}-${KERNEL_VERSION}"
 sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
@@ -500,18 +521,19 @@ fi
 # DO NOT include dtbo (preserve panel/touch drivers from ROM)
 rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/*/*.img 2>/dev/null
 cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
+sed -i "s/| munch /| ${TARGET_DEVICE} /g" anykernel/anykernel.sh
 [ -d anykernel_template/tools ] && cp -rf anykernel_template/tools/* anykernel/tools/ 2>/dev/null || true
 
 cd anykernel
 
 if [ "$TARGET_OS" == "aosp" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
 elif [ "$TARGET_OS" == "miui" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
 elif [ "$TARGET_OS" == "coloros" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-ColorOS-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-ColorOS-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
 else
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}.zip"
+    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
 fi
 
 zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip

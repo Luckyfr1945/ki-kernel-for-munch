@@ -134,9 +134,7 @@ static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 
 		if (current->cred->uid.val >= 10000)
 			hide = true;
-		else if (strstr(current->comm, ".gms") != NULL ||
-			 strstr(current->comm, "gms.") != NULL ||
-			 strstr(current->comm, "droidguard") != NULL)
+		else if (strstr(current->comm, ".gms") != NULL)
 			hide = true;
 
 		length = scnprintf(tmpbuf, TMPBUFLEN, "%d", hide ? 1 : 0);

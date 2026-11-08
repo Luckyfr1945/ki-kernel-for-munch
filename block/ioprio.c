@@ -31,6 +31,7 @@
 #include <linux/syscalls.h>
 #include <linux/security.h>
 #include <linux/pid_namespace.h>
+#include <linux/fgetpriority.h>
 
 int set_task_ioprio(struct task_struct *task, int ioprio)
 {
@@ -135,15 +136,15 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 			if (!who)
 				user = current_user();
 			else
-#ifdef CONFIG_KSU_SUSFS
 			{
+#ifdef CONFIG_KSU_SUSFS
 				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+					break;
+#endif // #ifdef CONFIG_KSU_SUSFS
+				if (fgetpriority_is_blocked(current_uid().val, uid.val))
 					break;
 				user = find_user(uid);
 			}
-#else
-				user = find_user(uid);
-#endif // #ifdef CONFIG_KSU_SUSFS
 
 			if (!user)
 				break;
@@ -236,15 +237,15 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 			if (!who)
 				user = current_user();
 			else
-#ifdef CONFIG_KSU_SUSFS
 			{
+#ifdef CONFIG_KSU_SUSFS
 				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+					break;
+#endif // #ifdef CONFIG_KSU_SUSFS
+				if (fgetpriority_is_blocked(current_uid().val, uid.val))
 					break;
 				user = find_user(uid);
 			}
-#else
-				user = find_user(uid);
-#endif // #ifdef CONFIG_KSU_SUSFS
 
 			if (!user)
 				break;

@@ -668,9 +668,12 @@ static void cpu_pm_pmu_setup(struct arm_pmu *armpmu, unsigned long cmd)
 	struct perf_event *event;
 	int idx;
 
-	for (idx = 0; idx < armpmu->num_events; idx++) {
+	if (!hw_events)
+		return;
+
+	for_each_set_bit(idx, hw_events->used_mask, armpmu->num_events) {
 		event = hw_events->events[idx];
-		if (!event)
+		if (!event || IS_ERR(event))
 			continue;
 
 		if (event->state != PERF_EVENT_STATE_ACTIVE)
@@ -709,11 +712,17 @@ static int cpu_pm_pmu_notify(struct notifier_block *b, unsigned long cmd,
 			     void *v)
 {
 	struct arm_pmu *armpmu = container_of(b, struct arm_pmu, cpu_pm_nb);
-	struct pmu_hw_events *hw_events = this_cpu_ptr(armpmu->hw_events);
-	int enabled = bitmap_weight(hw_events->used_mask, armpmu->num_events);
+	struct pmu_hw_events *hw_events;
+	bool enabled;
 
 	if (!cpumask_test_cpu(smp_processor_id(), &armpmu->supported_cpus))
 		return NOTIFY_DONE;
+
+	hw_events = this_cpu_ptr(armpmu->hw_events);
+	if (!hw_events)
+		return NOTIFY_DONE;
+
+	enabled = !bitmap_empty(hw_events->used_mask, armpmu->num_events);
 
 	/*
 	 * Always reset the PMU registers on power-up even if

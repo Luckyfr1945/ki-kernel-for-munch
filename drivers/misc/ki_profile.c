@@ -33,12 +33,6 @@ EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
 static DEFINE_SPINLOCK(ki_guard_lock);
 
-/*
- * Profile switch debounce: prevent re-application spam.
- * Tracks last applied mode and timestamp to skip redundant applies.
- */
-static int ki_last_logged_mode = -1;
-
 /* Profile actually applied right now (differs while screen is off) */
 static int ki_active_mode = -1;
 
@@ -59,6 +53,7 @@ EXPORT_SYMBOL_GPL(ki_get_active_profile);
  */
 #define KI_SCREEN_OFF_DELAY_MS	5000
 static bool ki_screen_off_battery = false;
+static int ki_user_thermal_throttle = -1; /* -1 = follow profile, 0 = disabled, 1 = enabled */
 static bool ki_screen_on = true;
 static bool ki_battery_armed;
 static struct delayed_work ki_screen_work;
@@ -74,154 +69,12 @@ extern int watermark_scale_factor;
 extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
-/* Representative CPU of each cluster: Silver, Gold, Prime */
-#define KI_NR_CLUSTERS	3
-static const unsigned int ki_cluster_cpu[KI_NR_CLUSTERS] = { 0, 4, 7 };
-
-struct ki_cluster_tune {
-	unsigned int up_us;		/* sugov up rate limit */
-	unsigned int down_us;		/* sugov down rate limit */
-	unsigned int hispeed_freq;	/* kHz, 0 = disabled */
-	unsigned int hispeed_load;	/* % */
-	unsigned int rtg_boost_freq;	/* kHz, 0 = disabled */
-	unsigned int floor_freq;	/* kHz, 0 = disabled */
-	unsigned int iowait_boost_max;	/* % (0 = disabled, 100 = full) */
-	unsigned int max_freq;		/* kHz, 0 = hardware max */
-};
-
-struct ki_profile_tune {
-	struct ki_cluster_tune cl[KI_NR_CLUSTERS];
-	bool pl;			/* WALT PL hints */
-	bool gpu_perf;			/* kgsl performance mode */
-	bool thermal_throttle;
-	int sched_boost;
-	unsigned int up_migrate, down_migrate;
-	unsigned int grp_up_migrate, grp_down_migrate;
-	unsigned int window_stats_policy; /* 1 = MAX, 2 = MAX_RECENT_AVG */
-	int swappiness;
-	int wmark_scale;
-	int vfs_cache_pressure;
-};
-
-/* User max frequency overrides (0 = follow active profile default) */
-static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
-
 /*
- * User thermal throttle override:
- *  -1: Auto / follow profile default (Balanced/Battery = throttled, Performance = bypass)
- *   0: Forced bypass (Unlocked performance)
- *   1: Forced enabled (Safe active throttling)
- */
-static int ki_user_thermal_throttle = -1;
-static bool ki_thermal_applied = true;	/* protected by ki_profile_mutex */
-
-static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
-	/*
-	 * Battery Saver (Ultra Power Saving & Cool Efficiency):
-	 * Preserves maximum battery life and icy-cool chassis under all scenarios.
-	 * Tasks strictly retained on power-efficient Silver cluster (up_migrate = 98/90, grp = 98/90).
-	 * Frequencies strictly bounded within high-efficiency low-voltage OPP (<0.80V):
-	 *   - Silver: 1.51GHz (1516800)
-	 *   - Gold:   1.65GHz (1651200)
-	 *   - Prime:  1.57GHz (1574400)
-	 * Down-rate 500us drops CPU to 300MHz idle in half a millisecond when finger lifts.
-	 * Up-rate (Silver 2ms, Gold 5ms, Prime 15ms) prevents clock thrashing while
-	 * keeping Prime core practically dormant for daily tasks.
-	 * RTG boost on Silver (979MHz) & Gold (1.05GHz) ensures smooth 60/120Hz UI without black screens.
-	 * Zero floor frequency (floor_freq = 0) enables full idle drop to 300MHz baseline.
-	 * Zero iowait boost prevents I/O reads/downloads from waking high clock states.
-	 * Swappiness 40 minimizes zRAM compression CPU cycles to conserve battery.
-	 * VFS cache pressure 60 keeps dentries cached, avoiding flash I/O wakeups.
-	 */
-	[KI_PROFILE_BATTERY] = {
-		.cl = {
-			{ .up_us = 2000, .down_us = 500, .hispeed_freq = 979200,  .hispeed_load = 92, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1516800 },
-			{ .up_us = 5000, .down_us = 500, .hispeed_freq = 1056000, .hispeed_load = 92, .rtg_boost_freq = 1056000, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1651200 },
-			{ .up_us = 15000, .down_us = 500, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1574400 },
-		},
-		.thermal_throttle = true,
-		.up_migrate = 98, .down_migrate = 90,
-		.grp_up_migrate = 98, .grp_down_migrate = 90,
-		.window_stats_policy = 2,
-		.swappiness = 40, .wmark_scale = 100, .vfs_cache_pressure = 60,
-	},
-	/*
-	 * Balanced (Daily Driver - v1.3 Adem Anyem & Smooth 120Hz Efficiency):
-	 * Restored v1.3 thermal comfort and battery efficiency with butter-smooth 120Hz UI.
-	 * Tasks balanced on Silver cluster (up_migrate = 90/82, grp = 90/82) so casual
-	 * multitasking (WhatsApp, YouTube, TikTok, Maps) stays on cool LITTLE cores,
-	 * while smoothly migrating rendering threads to Big cores on heavy demand.
-	 * Down-rate hold 5000us (5ms) holds clocks across consecutive frames (60Hz/90Hz/120Hz),
-	 * completely eliminating mid-frame frequency dips, stutter, and dropped frames,
-	 * while still enabling fast idle drop to 300MHz baseline when touch stops.
-	 * Up-rate (Silver 850us, Gold 2850us, Prime 3850us) ensures smooth, rapid ramp-up.
-	 * Hispeed load thresholds (Silver 82%, Gold 82%, Prime 84%) trigger power bursts when needed.
-	 * Valid SM8250 OPP frequencies:
-	 *   - Silver: hispeed 1.17GHz, rtg_boost 1.17GHz, floor 0, max 1.80GHz (1804800)
-	 *   - Gold:   hispeed 1.47GHz, rtg_boost 1.47GHz, floor 0, max 2.05GHz (2054400)
-	 *   - Prime:  hispeed 1.61GHz, rtg_boost 1.61GHz, floor 0, max 2.36GHz (2361600)
-	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz baseline.
-	 * Moderate I/O wait boost (iowait_boost_max = 5) prevents app launch and storage lag.
-	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
-	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
-	 */
-	[KI_PROFILE_BALANCED] = {
-		.cl = {
-			{ .up_us = 850,  .down_us = 5000, .hispeed_freq = 1171200, .hispeed_load = 82, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 5, .max_freq = 1804800 },
-			{ .up_us = 2850, .down_us = 5000, .hispeed_freq = 1478400, .hispeed_load = 82, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 5, .max_freq = 2054400 },
-			{ .up_us = 3850, .down_us = 5000, .hispeed_freq = 1612800, .hispeed_load = 84, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
-		},
-		.thermal_throttle = true,
-		.up_migrate = 90, .down_migrate = 82,
-		.grp_up_migrate = 90, .grp_down_migrate = 82,
-		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 100, .vfs_cache_pressure = 70,
-	},
-	/*
-	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
-	 * Designed for competitive gaming (MLBB, Genshin, PUBG 90/120Hz, Wild Rift).
-	 * Instantaneous ramp-up (up_us: 0), frame-synchronized down hold (20ms / 20000us)
-	 * holds clocks across consecutive frames (60Hz=16.6ms, 90Hz=11.1ms, 120Hz=8.33ms),
-	 * completely eliminating mid-frame frequency dips and micro-stutters.
-	 * Aggressive floor frequencies prevent idle stalls during complex scenes:
-	 *   - Silver: floor 806.4MHz, hispeed 1.42GHz (load 55%), rtg_boost 1.42GHz
-	 *   - Gold:   floor 1.26GHz, hispeed 2.20GHz (load 55%), rtg_boost 2.20GHz
-	 *   - Prime:  floor 1.34GHz, hispeed 2.84GHz (load 55%), rtg_boost 2.84GHz
-	 * Sched boost enabled (.sched_boost = 1 / FULL_THROTTLE_BOOST): activates
-	 * core_ctl un-isolation, enables WALT frequency aggregation, and forces
-	 * placement policy to SCHED_BOOST_ON_BIG so render/audio threads are prioritized on Big cores.
-	 * Window stats policy = 1 (WINDOW_STATS_MAX): responds immediately to peak load
-	 * bursts without latency from averaging.
-	 * Eager game thread promotion (up_migrate 55/40, grp 65/50) locks render pipelines to Big cores.
-	 * Uncapped hardware burst maximums (Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz).
-	 * Memory tuning: swappiness 20 (avoids mid-game zRAM swap), watermark_scale 25 (prevents direct reclaim allocstall pauses),
-	 * and vfs_cache_pressure 50 (keeps game asset textures cached in RAM).
-	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
-	 */
-	[KI_PROFILE_PERFORMANCE] = {
-		.cl = {
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 1420800, .hispeed_load = 55, .rtg_boost_freq = 1420800, .floor_freq = 806400,  .iowait_boost_max = 50, .max_freq = 0 },
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2208000, .hispeed_load = 55, .rtg_boost_freq = 2208000, .floor_freq = 1267200, .iowait_boost_max = 50, .max_freq = 0 },
-			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2841600, .hispeed_load = 55, .rtg_boost_freq = 2841600, .floor_freq = 1344000, .iowait_boost_max = 50, .max_freq = 0 },
-		},
-		.pl = true,
-		.gpu_perf = true,
-		.thermal_throttle = false,
-		.sched_boost = 1,
-		.up_migrate = 55, .down_migrate = 40,
-		.grp_up_migrate = 65, .grp_down_migrate = 50,
-		.window_stats_policy = 1,
-		.swappiness = 20, .wmark_scale = 150, .vfs_cache_pressure = 50,
-	},
-};
-
-/*
- * Thermal Auto-Guard:
- * Active whenever thermal bypass is engaged (Performance mode default or user override)
- * while screen is on. Thermal bypass stays active for max FPS, but throttling is re-armed
- * when CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
+ * Thermal Auto-Guard (Performance mode only, active while screen is on):
+ * Thermal bypass stays active for max FPS, but throttling is re-armed when
+ * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
  * Released again once die <= 75C, body <= 43C, and battery <= 41C.
- * Polls every 2s, parked while screen is off with throttling re-armed for pocket safety.
+ * Polls every 2s, parked while screen is off with throttling re-armed.
  */
 #define KI_GUARD_POLL_MS	2000
 #define KI_GUARD_DIE_HOT	85000 /* 85.0°C */
@@ -313,27 +166,10 @@ static void ki_guard_log_missing_zones(void)
 		pr_warn("ki_profile: missing thermal skin zone 'quiet_therm'\n");
 }
 
-/* Caller holds ki_guard_lock; returns true if thermal bypass is active */
-static bool ki_guard_bypass_active_locked(void)
-{
-	int user_throt = READ_ONCE(ki_user_thermal_throttle);
-	int mode = READ_ONCE(ki_active_mode);
-
-	if (user_throt == 0)
-		return true;
-	if (user_throt == 1)
-		return false;
-
-	if (mode < 0 || mode >= KI_PROFILE_MAX)
-		mode = KI_PROFILE_BALANCED;
-
-	return !ki_tunes[mode].thermal_throttle;
-}
-
 /* Caller holds ki_guard_lock; returns true if worker must stop */
 static bool ki_guard_should_stop_locked(void)
 {
-	if (!ki_guard_bypass_active_locked()) {
+	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
 		ki_guard_tripped = false;
 		return true;
 	}
@@ -423,7 +259,135 @@ static void ki_guard_work_fn(struct work_struct *work)
 			   msecs_to_jiffies(KI_GUARD_POLL_MS));
 }
 
+/* Representative CPU of each cluster: Silver, Gold, Prime */
+#define KI_NR_CLUSTERS	3
+static const unsigned int ki_cluster_cpu[KI_NR_CLUSTERS] = { 0, 4, 7 };
 
+struct ki_cluster_tune {
+	unsigned int up_us;		/* sugov up rate limit */
+	unsigned int down_us;		/* sugov down rate limit */
+	unsigned int hispeed_freq;	/* kHz, 0 = disabled */
+	unsigned int hispeed_load;	/* % */
+	unsigned int rtg_boost_freq;	/* kHz, 0 = disabled */
+	unsigned int floor_freq;	/* kHz, 0 = disabled */
+	unsigned int iowait_boost_max;	/* % (0 = disabled, 100 = full) */
+	unsigned int max_freq;		/* kHz, 0 = hardware max */
+};
+
+struct ki_profile_tune {
+	struct ki_cluster_tune cl[KI_NR_CLUSTERS];
+	bool pl;			/* WALT PL hints */
+	bool gpu_perf;			/* kgsl performance mode */
+	bool thermal_throttle;
+	int sched_boost;
+	unsigned int up_migrate, down_migrate;
+	unsigned int grp_up_migrate, grp_down_migrate;
+	unsigned int window_stats_policy; /* 1 = MAX, 2 = MAX_RECENT_AVG */
+	int swappiness;
+	int wmark_scale;
+	int vfs_cache_pressure;
+};
+
+/* User max frequency overrides (0 = follow active profile default) */
+static unsigned int ki_user_max_freq[KI_NR_CLUSTERS] = { 0, 0, 0 };
+
+static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
+	/*
+	 * Battery Saver (Ultra Power Saving & Cool Efficiency):
+	 * Preserves maximum battery life and icy-cool chassis under all scenarios.
+	 * Tasks strictly retained on power-efficient Silver cluster (up_migrate = 98/90, grp = 98/90).
+	 * Frequencies strictly bounded within high-efficiency low-voltage OPP (<0.80V):
+	 *   - Silver: 1.51GHz (1516800)
+	 *   - Gold:   1.65GHz (1651200)
+	 *   - Prime:  1.57GHz (1574400)
+	 * Down-rate 500us drops CPU to 300MHz idle in half a millisecond when finger lifts.
+	 * Up-rate (Silver 2ms, Gold 5ms, Prime 15ms) prevents clock thrashing while
+	 * keeping Prime core practically dormant for daily tasks.
+	 * RTG boost on Silver (979MHz) & Gold (1.05GHz) ensures smooth 60/120Hz UI without black screens.
+	 * Zero floor frequency (floor_freq = 0) enables full idle drop to 300MHz baseline.
+	 * Zero iowait boost prevents I/O reads/downloads from waking high clock states.
+	 * Swappiness 40 minimizes zRAM compression CPU cycles to conserve battery.
+	 * VFS cache pressure 60 keeps dentries cached, avoiding flash I/O wakeups.
+	 */
+	[KI_PROFILE_BATTERY] = {
+		.cl = {
+			{ .up_us = 2000, .down_us = 500, .hispeed_freq = 979200,  .hispeed_load = 92, .rtg_boost_freq = 979200,  .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1516800 },
+			{ .up_us = 5000, .down_us = 500, .hispeed_freq = 1056000, .hispeed_load = 92, .rtg_boost_freq = 1056000, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1651200 },
+			{ .up_us = 15000, .down_us = 500, .hispeed_freq = 1075200, .hispeed_load = 95, .rtg_boost_freq = 0,       .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1574400 },
+		},
+		.thermal_throttle = true,
+		.up_migrate = 98, .down_migrate = 90,
+		.grp_up_migrate = 98, .grp_down_migrate = 90,
+		.window_stats_policy = 2,
+		.swappiness = 40, .wmark_scale = 10, .vfs_cache_pressure = 60,
+	},
+	/*
+	 * Balanced (Daily Driver - v1.3 Adem Anyem & Smooth 120Hz Efficiency):
+	 * Restored v1.3 thermal comfort and battery efficiency with butter-smooth 120Hz UI.
+	 * Tasks balanced on Silver cluster (up_migrate = 95/85, grp = 95/85) so casual
+	 * multitasking (WhatsApp, YouTube, TikTok, Maps) stays on cool LITTLE cores.
+	 * Down-rate hold 1000us (1ms) quickly recovers 300MHz idle floor when touch stops,
+	 * eliminating thermal accumulation and excessive active battery drain.
+	 * Up-rate (Silver 1000us, Gold 2000us, Prime 4000us) mirrors v1.3 sweet spot,
+	 * ensuring Prime core only wakes on heavy sustained load.
+	 * Valid SM8250 OPP frequencies:
+	 *   - Silver: hispeed 1.17GHz, rtg_boost 1.17GHz, floor 0, max 1.80GHz (1804800)
+	 *   - Gold:   hispeed 1.47GHz, rtg_boost 1.47GHz, floor 0, max 2.05GHz (2054400)
+	 *   - Prime:  hispeed 1.61GHz, rtg_boost 1.61GHz, floor 0, max 2.36GHz (2361600)
+	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
+	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
+	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
+	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
+	 */
+	[KI_PROFILE_BALANCED] = {
+		.cl = {
+			{ .up_us = 1000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 85, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1804800 },
+			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
+			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
+		},
+		.thermal_throttle = true,
+		.up_migrate = 95, .down_migrate = 85,
+		.grp_up_migrate = 95, .grp_down_migrate = 85,
+		.window_stats_policy = 2,
+		.swappiness = 50, .wmark_scale = 12, .vfs_cache_pressure = 70,
+	},
+	/*
+	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
+	 * Designed for competitive gaming (MLBB, Genshin, PUBG 90/120Hz, Wild Rift).
+	 * Instantaneous ramp-up (up_us: 0), frame-synchronized down hold (20ms / 20000us)
+	 * holds clocks across consecutive frames (60Hz=16.6ms, 90Hz=11.1ms, 120Hz=8.33ms),
+	 * completely eliminating mid-frame frequency dips and micro-stutters.
+	 * Aggressive floor frequencies prevent idle stalls during complex scenes:
+	 *   - Silver: floor 806.4MHz, hispeed 1.42GHz (load 55%), rtg_boost 1.42GHz
+	 *   - Gold:   floor 1.26GHz, hispeed 2.20GHz (load 55%), rtg_boost 2.20GHz
+	 *   - Prime:  floor 1.34GHz, hispeed 2.84GHz (load 55%), rtg_boost 2.84GHz
+	 * Sched boost enabled (.sched_boost = 1 / FULL_THROTTLE_BOOST): activates
+	 * core_ctl un-isolation, enables WALT frequency aggregation, and forces
+	 * placement policy to SCHED_BOOST_ON_BIG so render/audio threads are prioritized on Big cores.
+	 * Window stats policy = 1 (WINDOW_STATS_MAX): responds immediately to peak load
+	 * bursts without latency from averaging.
+	 * Eager game thread promotion (up_migrate 55/40, grp 65/50) locks render pipelines to Big cores.
+	 * Uncapped hardware burst maximums (Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz).
+	 * Memory tuning: swappiness 20 (avoids mid-game zRAM swap), watermark_scale 25 (prevents direct reclaim allocstall pauses),
+	 * and vfs_cache_pressure 50 (keeps game asset textures cached in RAM).
+	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
+	 */
+	[KI_PROFILE_PERFORMANCE] = {
+		.cl = {
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 1420800, .hispeed_load = 55, .rtg_boost_freq = 1420800, .floor_freq = 806400,  .iowait_boost_max = 50, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2208000, .hispeed_load = 55, .rtg_boost_freq = 2208000, .floor_freq = 1267200, .iowait_boost_max = 50, .max_freq = 0 },
+			{ .up_us = 0, .down_us = 20000, .hispeed_freq = 2841600, .hispeed_load = 55, .rtg_boost_freq = 2841600, .floor_freq = 1344000, .iowait_boost_max = 50, .max_freq = 0 },
+		},
+		.pl = true,
+		.gpu_perf = true,
+		.thermal_throttle = false,
+		.sched_boost = 1,
+		.up_migrate = 55, .down_migrate = 40,
+		.grp_up_migrate = 65, .grp_down_migrate = 50,
+		.window_stats_policy = 1,
+		.swappiness = 20, .wmark_scale = 25, .vfs_cache_pressure = 50,
+	},
+};
 
 static bool ki_gpu_perf_applied;	/* protected by ki_profile_mutex */
 
@@ -449,7 +413,7 @@ static unsigned int ki_target_max(int i, int mode)
 static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
-	int i, ret, err = 0, user_throt;
+	int i, ret, err = 0;
 	unsigned long flags;
 	bool screen_on;
 	bool enable_gpu_perf;
@@ -503,19 +467,12 @@ static int apply_ki_profile(int mode, bool force)
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
 
 	/*
-	 * Determine effective thermal throttling:
-	 * If user explicitly set override:
-	 *   0 (bypass): Active while screen is on. Re-arm throttling when screen is off
-	 *               to prevent overheating in pockets and avoid running guard polls in idle.
-	 *   1 (forced): Always active.
-	 * If auto (-1):
-	 *   Follow profile tune (Performance = bypass with screen on, others = active).
+	 * Re-arm thermal throttling whenever screen is off, even in Performance mode,
+	 * to prevent overheating in pockets and avoid running guard highpri polls in idle.
+	 * When screen is on, respect user override if set via sysfs.
 	 */
-	user_throt = READ_ONCE(ki_user_thermal_throttle);
-	if (user_throt == 0)
-		enable_thermal_throttle = !screen_on;
-	else if (user_throt == 1)
-		enable_thermal_throttle = true;
+	if (READ_ONCE(ki_user_thermal_throttle) >= 0)
+		enable_thermal_throttle = (READ_ONCE(ki_user_thermal_throttle) != 0) || !screen_on;
 	else
 		enable_thermal_throttle = t->thermal_throttle || !screen_on;
 
@@ -526,8 +483,6 @@ static int apply_ki_profile(int mode, bool force)
 	ki_guard_tripped = false;
 	ki_guard_parked = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
-
-	ki_thermal_applied = enable_thermal_throttle;
 
 	/* Thermal auto-guard runs only while screen is on and thermal bypass is active */
 	if (!enable_thermal_throttle)
@@ -549,7 +504,7 @@ static int apply_ki_profile(int mode, bool force)
 		ut = &ki_tunes[user_mode];
 
 		ki_cpufreq_reset_idle_floors(user_mode);
-		/* Swappiness left at default as requested: do not override vm_swappiness */
+		vm_swappiness = ut->swappiness;
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
@@ -557,11 +512,7 @@ static int apply_ki_profile(int mode, bool force)
 		setup_per_zone_wmarks();
 	}
 
-	/* Only log actual profile transitions to avoid dmesg spam */
-	if (mode != ki_last_logged_mode) {
-		pr_info("ki_profile: %s profile active\n", profile_names[mode]);
-		ki_last_logged_mode = mode;
-	}
+	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
 	return err;
 }
 
@@ -594,22 +545,12 @@ static bool ki_apply_incomplete;	/* protected by ki_profile_mutex */
 static int ki_apply_effective(bool force)
 {
 	int mode = ki_effective_mode();
-	int ret, user_throt;
+	int ret;
 	bool screen_on = READ_ONCE(ki_screen_on);
-	bool expected_throttle;
-
-	user_throt = READ_ONCE(ki_user_thermal_throttle);
-	if (user_throt == 0)
-		expected_throttle = !screen_on;
-	else if (user_throt == 1)
-		expected_throttle = true;
-	else
-		expected_throttle = ki_tunes[mode].thermal_throttle || !screen_on;
 
 	force |= ki_force_pending;
 	if (!force && !ki_apply_incomplete && mode == READ_ONCE(ki_active_mode) &&
 	    (ki_tunes[mode].gpu_perf && screen_on) == ki_gpu_perf_applied &&
-	    expected_throttle == ki_thermal_applied &&
 	    !READ_ONCE(ki_guard_parked))
 		return 0;
 
@@ -723,16 +664,6 @@ static struct notifier_block ki_display_nb = {
 
 static struct delayed_work ki_psy_work;
 
-/*
- * Charging transient suppression:
- * When charger is plugged/unplugged, the SMB5 driver fires a burst of IRQs
- * (usbin-uv, chg-state-change) over 1-3 seconds. During this transient,
- * thermals spike briefly and profile re-evaluation can cause severe lag.
- * We defer re-evaluation by 2 seconds after the last PSY event to let
- * the power path stabilize.
- */
-#define KI_PSY_SETTLE_MS	2000
-
 static void ki_psy_work_fn(struct work_struct *work)
 {
 	static int last_supplied = -1;
@@ -765,14 +696,10 @@ static int ki_psy_notifier_cb(struct notifier_block *nb,
 
 	/*
 	 * Only handle USB charger plug/unplug, ignore periodic battery gauge ADC events.
-	 * Defer evaluation by KI_PSY_SETTLE_MS to let SMB5 IRQ storm and thermal
-	 * transients stabilize before any profile re-evaluation.
-	 * mod_delayed_work resets the timer on each new event, so the actual
-	 * evaluation only fires KI_PSY_SETTLE_MS after the LAST event in the burst.
+	 * Defer evaluation to ki_psy_work to keep the notifier callback fast and lightweight.
 	 */
 	if (strcmp(psy->desc->name, "usb") == 0)
-		mod_delayed_work(system_power_efficient_wq, &ki_psy_work,
-				 msecs_to_jiffies(KI_PSY_SETTLE_MS));
+		queue_delayed_work(system_power_efficient_wq, &ki_psy_work, 0);
 
 	return NOTIFY_OK;
 }
@@ -871,65 +798,46 @@ static ssize_t screen_state_show(struct kobject *kobj, struct kobj_attribute *at
 
 static ssize_t thermal_throttle_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int user_throt = READ_ONCE(ki_user_thermal_throttle);
-
-	if (user_throt >= 0)
-		return scnprintf(buf, PAGE_SIZE, "%d\n", user_throt);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-			 ki_tunes[ki_effective_mode()].thermal_throttle ? 1 : 0);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
 }
 
 static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribute *attr,
 				      const char *buf, size_t count)
 {
 	bool val;
-	int user_val;
-	char str[16];
-	char *trimmed;
-	size_t len;
+	int ret;
+	unsigned long flags;
+	bool screen_on;
 
-	len = min(count, sizeof(str) - 1);
-	memcpy(str, buf, len);
-	str[len] = '\0';
-	trimmed = strim(str);
-
-	if (!strcasecmp(trimmed, "auto") || !strcmp(trimmed, "-1") || !strcasecmp(trimmed, "default")) {
-		user_val = -1;
-	} else if (!kstrtobool(trimmed, &val)) {
-		user_val = val ? 1 : 0;
-	} else {
-		return -EINVAL;
-	}
+	ret = kstrtobool(buf, &val);
+	if (ret)
+		return ret;
 
 	mutex_lock(&ki_profile_mutex);
-	WRITE_ONCE(ki_user_thermal_throttle, user_val);
-	ki_apply_effective(true);
-	mutex_unlock(&ki_profile_mutex);
-
-	return count;
-}
-
-static ssize_t thermal_throttle_active_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_thermal_throttle_enabled) ? 1 : 0);
-}
-
-static ssize_t thermal_guard_active_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	unsigned long flags;
-	bool active;
+	WRITE_ONCE(ki_user_thermal_throttle, val ? 1 : 0);
+	screen_on = READ_ONCE(ki_screen_on);
 
 	spin_lock_irqsave(&ki_guard_lock, flags);
-	active = !ki_guard_should_stop_locked();
+	if (!screen_on) {
+		/* Keep thermal throttle armed while screen is off for pocket safety */
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+	} else {
+		WRITE_ONCE(ki_thermal_throttle_enabled, val);
+	}
+	ki_guard_tripped = false;
+	ki_guard_parked = false;
 	spin_unlock_irqrestore(&ki_guard_lock, flags);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", active ? 1 : 0);
-}
+	if (screen_on && !val)
+		mod_delayed_work(system_highpri_wq, &ki_guard_work, 0);
+	else
+		cancel_delayed_work(&ki_guard_work);
 
-static ssize_t thermal_guard_tripped_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_guard_tripped) ? 1 : 0);
+	mutex_unlock(&ki_profile_mutex);
+
+	pr_info("ki_profile: thermal_throttle user set to %d (active=%d)\n",
+		val ? 1 : 0, READ_ONCE(ki_thermal_throttle_enabled));
+	return count;
 }
 
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
@@ -990,9 +898,6 @@ static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
 static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
-static struct kobj_attribute thermal_throttle_active_attr = __ATTR_RO(thermal_throttle_active);
-static struct kobj_attribute thermal_guard_active_attr = __ATTR_RO(thermal_guard_active);
-static struct kobj_attribute thermal_guard_tripped_attr = __ATTR_RO(thermal_guard_tripped);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
@@ -1083,9 +988,6 @@ static struct attribute *ki_profile_attrs[] = {
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
 	&thermal_throttle_attr.attr,
-	&thermal_throttle_active_attr.attr,
-	&thermal_guard_active_attr.attr,
-	&thermal_guard_tripped_attr.attr,
 	&active_profile_attr.attr,
 	&screen_off_battery_attr.attr,
 	&max_freq_silver_attr.attr,
@@ -1096,23 +998,8 @@ static struct attribute *ki_profile_attrs[] = {
 	NULL,
 };
 
-static umode_t ki_profile_is_visible(struct kobject *kobj, struct attribute *attr, int n)
-{
-	if (attr == &mode_attr.attr ||
-	    attr == &thermal_throttle_attr.attr ||
-	    attr == &screen_off_battery_attr.attr ||
-	    attr == &max_freq_silver_attr.attr ||
-	    attr == &max_freq_gold_attr.attr ||
-	    attr == &max_freq_prime_attr.attr ||
-	    attr == &reapply_attr.attr)
-		return 0664;
-
-	return attr->mode;
-}
-
 static const struct attribute_group ki_profile_attr_group = {
 	.attrs = ki_profile_attrs,
-	.is_visible = ki_profile_is_visible,
 };
 
 static struct kobject *ki_profile_kobj;

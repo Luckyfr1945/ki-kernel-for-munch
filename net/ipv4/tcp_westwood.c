@@ -201,17 +201,42 @@ static struct tcp_congestion_ops tcp_westwood __read_mostly = {
 	.cwnd_event	= tcp_westwood_event,
 	.get_info	= tcp_westwood_info,
 	.owner		= THIS_MODULE,
+	.name		= "westwood"
+};
+
+static struct tcp_congestion_ops tcp_westwood_sub __read_mostly = {
+	.init		= tcp_westwood_init,
+	.ssthresh	= tcp_westwood_ssthresh,
+	.cong_control   = tcp_westwood_cong_control,
+	.undo_cwnd      = tcp_westwood_undo_cwnd,
+	.set_state	= tcp_westwood_state,
+	.cwnd_event	= tcp_westwood_event,
+	.get_info	= tcp_westwood_info,
+	.owner		= THIS_MODULE,
 	.name		= "westwood-sub"
 };
 
 static int __init tcp_westwood_register(void)
 {
+	int ret;
+
 	BUILD_BUG_ON(sizeof(struct westwood) > ICSK_CA_PRIV_SIZE);
-	return tcp_register_congestion_control(&tcp_westwood);
+	ret = tcp_register_congestion_control(&tcp_westwood);
+	if (ret)
+		return ret;
+
+	ret = tcp_register_congestion_control(&tcp_westwood_sub);
+	if (ret) {
+		tcp_unregister_congestion_control(&tcp_westwood);
+		return ret;
+	}
+
+	return 0;
 }
 
 static void __exit tcp_westwood_unregister(void)
 {
+	tcp_unregister_congestion_control(&tcp_westwood_sub);
 	tcp_unregister_congestion_control(&tcp_westwood);
 }
 

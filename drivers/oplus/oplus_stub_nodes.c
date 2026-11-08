@@ -30,6 +30,9 @@ static struct device *oplus_chg_battery_dev;
 static struct device *oplus_chg_usb_dev;
 static struct device *oplus_chg_common_dev;
 static struct device *oplus_chg_ac_dev;
+static struct device *oplus_chg_wireless_dev;
+static struct device *oplus_chg_gauge_dev;
+static struct kobject *oplus_display_kobj;
 
 static struct notifier_block psy_nb;
 static bool usb_attr_added = false;
@@ -182,6 +185,65 @@ static const struct file_operations dummy_sink_fops = {
     .llseek = generic_file_llseek,
 };
 
+static ssize_t dummy_one_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "1\n", 2);
+}
+static const struct file_operations dummy_one_fops = {
+    .read = dummy_one_read,
+    .write = dummy_sink_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t dummy_stat_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    static const char stat_str[] = "hans status: active\nfreezer: ok\n";
+    return simple_read_from_buffer(buf, count, ppos, stat_str, strlen(stat_str));
+}
+static const struct file_operations dummy_stat_fops = {
+    .read = dummy_stat_read,
+    .write = dummy_sink_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t sf_target_time_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    static const char time_str[] = "16666666\n";
+    return simple_read_from_buffer(buf, count, ppos, time_str, strlen(time_str));
+}
+static const struct file_operations sf_target_time_fops = {
+    .read = sf_target_time_read,
+    .write = dummy_sink_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t fbg_fps_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    static const char fps_str[] = "120\n";
+    return simple_read_from_buffer(buf, count, ppos, fps_str, strlen(fps_str));
+}
+static const struct file_operations fbg_fps_fops = {
+    .read = fbg_fps_read,
+    .write = dummy_sink_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t target_fps_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    static const char tfps_str[] = "60\n";
+    return simple_read_from_buffer(buf, count, ppos, tfps_str, strlen(tfps_str));
+}
+static const struct file_operations target_fps_fops = {
+    .read = target_fps_read,
+    .write = dummy_sink_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
 static int fbg_frame_boost_enabled = 1;
 static struct ctl_table fbg_sysctl_table[] = {
 	{
@@ -219,6 +281,70 @@ static ssize_t devinfo_lcd_s_read(struct file *file, char __user *buf, size_t co
     return simple_read_from_buffer(buf, count, ppos, "none\n", 5);
 }
 static const struct file_operations devinfo_lcd_s_fops = { .read = devinfo_lcd_s_read, .write = dummy_sink_write };
+
+static ssize_t devinfo_aboard_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "0\n", 2);
+}
+static const struct file_operations devinfo_aboard_fops = { .read = devinfo_aboard_read, .write = dummy_sink_write };
+
+static ssize_t devinfo_ddr_info_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "LPDDR5\n", 7);
+}
+static const struct file_operations devinfo_ddr_info_fops = { .read = devinfo_ddr_info_read, .write = dummy_sink_write };
+
+static ssize_t devinfo_ddr_size_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "8GB\n", 4);
+}
+static const struct file_operations devinfo_ddr_size_fops = { .read = devinfo_ddr_size_read, .write = dummy_sink_write };
+
+static ssize_t shell_temp_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    struct power_supply *psy = power_supply_get_by_name("battery");
+    union power_supply_propval val = { 0 };
+    int temp = 320;
+    char str[16];
+    int len;
+
+    if (psy) {
+        if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val))
+            temp = val.intval;
+        power_supply_put(psy);
+    }
+    len = scnprintf(str, sizeof(str), "%d\n", temp);
+    return simple_read_from_buffer(buf, count, ppos, str, len);
+}
+static ssize_t shell_temp_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
+    return count;
+}
+static const struct file_operations shell_temp_fops = {
+    .read = shell_temp_read,
+    .write = shell_temp_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t horae_mode_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "0\n", 2);
+}
+static ssize_t horae_mode_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
+    return count;
+}
+static const struct file_operations horae_mode_fops = {
+    .read = horae_mode_read,
+    .write = horae_mode_write,
+    .unlocked_ioctl = dummy_sink_ioctl,
+    .compat_ioctl = dummy_sink_ioctl,
+    .llseek = generic_file_llseek,
+};
+
+static ssize_t opbootfrom_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
+    return simple_read_from_buffer(buf, count, ppos, "normal\n", 7);
+}
+static const struct file_operations opbootfrom_fops = {
+    .read = opbootfrom_read,
+    .write = dummy_sink_write,
+    .llseek = generic_file_llseek,
+};
 
 static int batt_health_show(struct seq_file *m, void *v) {
 	struct power_supply *psy;
@@ -264,6 +390,82 @@ static int batt_health_open(struct inode *inode, struct file *file) {
 }
 
 static const struct file_operations batt_health_ops = { .open = batt_health_open, .read = seq_read, .llseek = seq_lseek, .release = single_release };
+
+static int batt_temp_show(struct seq_file *m, void *v) {
+	struct power_supply *psy;
+	union power_supply_propval val = { 0 };
+	int temp = 250;
+
+	psy = power_supply_get_by_name("battery");
+	if (psy) {
+		if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val))
+			temp = val.intval;
+		power_supply_put(psy);
+	}
+	seq_printf(m, "%d\n", temp);
+	return 0;
+}
+static int batt_temp_open(struct inode *inode, struct file *file) {
+	return single_open(file, batt_temp_show, NULL);
+}
+static const struct file_operations batt_temp_fops = {
+	.open = batt_temp_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int proc_ui_soc_show(struct seq_file *m, void *v) {
+	struct power_supply *psy;
+	union power_supply_propval val = { 0 };
+	int soc = 100;
+
+	psy = power_supply_get_by_name("battery");
+	if (psy) {
+		if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val))
+			soc = val.intval;
+		power_supply_put(psy);
+	}
+	seq_printf(m, "%d\n", soc);
+	return 0;
+}
+static int proc_ui_soc_open(struct inode *inode, struct file *file) {
+	return single_open(file, proc_ui_soc_show, NULL);
+}
+static const struct file_operations proc_ui_soc_fops = {
+	.open = proc_ui_soc_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int charge_tech_show(struct seq_file *m, void *v) {
+	seq_puts(m, "SUPERVOOC\n");
+	return 0;
+}
+static int charge_tech_open(struct inode *inode, struct file *file) {
+	return single_open(file, charge_tech_show, NULL);
+}
+static const struct file_operations charge_tech_fops = {
+	.open = charge_tech_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int gauge_fw_show(struct seq_file *m, void *v) {
+	seq_puts(m, "0x0001\n");
+	return 0;
+}
+static int gauge_fw_open(struct inode *inode, struct file *file) {
+	return single_open(file, gauge_fw_show, NULL);
+}
+static const struct file_operations gauge_fw_fops = {
+	.open = gauge_fw_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static ssize_t fast_charge_show(struct device *dev, struct device_attribute *attr, char *buf) {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", get_quick_charge_type() >= QUICK_CHARGE_FAST ? 1 : 0);
@@ -625,6 +827,50 @@ static ssize_t charger_wattage_show(struct device *dev, struct device_attribute 
 }
 static DEVICE_ATTR_RO(charger_wattage);
 
+static ssize_t voocchg_ing_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    struct power_supply *psy = power_supply_get_by_name("battery");
+    union power_supply_propval val = { 0 };
+    int charging = 0;
+    if (psy) {
+        if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &val)) {
+            if (val.intval == POWER_SUPPLY_STATUS_CHARGING || val.intval == POWER_SUPPLY_STATUS_FULL)
+                charging = 1;
+        }
+        power_supply_put(psy);
+    }
+    return scnprintf(buf, PAGE_SIZE, "%d\n", charging);
+}
+static DEVICE_ATTR_RO(voocchg_ing);
+
+static ssize_t svoocchg_ing_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    struct power_supply *psy = power_supply_get_by_name("battery");
+    union power_supply_propval val = { 0 };
+    int fast_charging = 0;
+    if (psy) {
+        if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &val)) {
+            if (val.intval == POWER_SUPPLY_CHARGE_TYPE_FAST)
+                fast_charging = 1;
+        }
+        if (!fast_charging && !power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &val)) {
+            if (val.intval == POWER_SUPPLY_STATUS_CHARGING)
+                fast_charging = 1;
+        }
+        power_supply_put(psy);
+    }
+    return scnprintf(buf, PAGE_SIZE, "%d\n", fast_charging);
+}
+static DEVICE_ATTR_RO(svoocchg_ing);
+
+static ssize_t svooc_100w_icon_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static DEVICE_ATTR_RO(svooc_100w_icon);
+
+static ssize_t adapter_fw_update_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static DEVICE_ATTR_RO(adapter_fw_update);
+
 static struct attribute *oplus_chg_common_attrs[] = {
 	&dev_attr_protocol_type.attr,
 	&dev_attr_ui_power.attr,
@@ -634,6 +880,11 @@ static struct attribute *oplus_chg_common_attrs[] = {
 	&dev_attr_chg_up_limit.attr,
     &dev_attr_mutual_cmd.attr,
     &dev_attr_charger_wattage.attr,
+    &dev_attr_voocchg_ing.attr,
+    &dev_attr_svoocchg_ing.attr,
+    &dev_attr_svooc_100w_icon.attr,
+    &dev_attr_adapter_fw_update.attr,
+    &dev_attr_fast_chg_type.attr,
 	NULL,
 };
 static const struct attribute_group oplus_chg_common_group = {
@@ -651,6 +902,104 @@ static struct attribute *oplus_chg_ac_attrs[] = {
 };
 static const struct attribute_group oplus_chg_ac_group = {
 	.attrs = oplus_chg_ac_attrs,
+};
+
+static ssize_t wireless_online_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static DEVICE_ATTR_RO(wireless_online);
+
+static ssize_t wireless_power_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static DEVICE_ATTR_RO(wireless_power);
+
+static struct attribute *oplus_chg_wireless_attrs[] = {
+	&dev_attr_wireless_online.attr,
+	&dev_attr_wireless_power.attr,
+	NULL,
+};
+static const struct attribute_group oplus_chg_wireless_group = {
+	.attrs = oplus_chg_wireless_attrs,
+};
+
+static ssize_t gauge_chip_ok_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "1\n");
+}
+static DEVICE_ATTR_RO(gauge_chip_ok);
+
+static ssize_t gauge_soh_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	int soh = get_soh();
+	return scnprintf(buf, PAGE_SIZE, "%d\n", soh > 0 ? soh : 100);
+}
+static DEVICE_ATTR_RO(gauge_soh);
+
+static struct attribute *oplus_chg_gauge_attrs[] = {
+	&dev_attr_gauge_chip_ok.attr,
+	&dev_attr_gauge_soh.attr,
+	NULL,
+};
+static const struct attribute_group oplus_chg_gauge_group = {
+	.attrs = oplus_chg_gauge_attrs,
+};
+
+static ssize_t oplus_display_zero_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static ssize_t oplus_display_one_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "1\n");
+}
+static ssize_t oplus_display_serial_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "0000000000\n");
+}
+static ssize_t oplus_display_max_brightness_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "2047\n");
+}
+static ssize_t oplus_display_dummy_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count) {
+	return count;
+}
+
+static struct kobj_attribute oplus_display_adfr_attr = __ATTR(adfr, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_dimlayer_bl_attr = __ATTR(dimlayer_bl_en, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_dimlayer_hbm_attr = __ATTR(dimlayer_hbm, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_hbm_attr = __ATTR(hbm, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_seed_attr = __ATTR(seed, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_sau_closebl_attr = __ATTR(sau_closebl_node, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_fppress_attr = __ATTR(oplus_notify_fppress, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_power_status_attr = __ATTR(power_status, 0664, oplus_display_one_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_serial_attr = __ATTR(panel_serial_number, 0444, oplus_display_serial_show, NULL);
+static struct kobj_attribute oplus_display_cabc_attr = __ATTR(cabc, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_esd_attr = __ATTR(esd, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_ffl_attr = __ATTR(ffl, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_dynamic_osc_attr = __ATTR(dynamic_osc_clock, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_aod_light_attr = __ATTR(aod_light_mode_set, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_panel_pwr_attr = __ATTR(panel_pwr, 0664, oplus_display_one_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_dsi_cmd_attr = __ATTR(dsi_cmd, 0664, oplus_display_zero_show, oplus_display_dummy_store);
+static struct kobj_attribute oplus_display_max_bright_attr = __ATTR(max_brightness, 0444, oplus_display_max_brightness_show, NULL);
+
+static struct attribute *oplus_display_attrs[] = {
+	&oplus_display_adfr_attr.attr,
+	&oplus_display_dimlayer_bl_attr.attr,
+	&oplus_display_dimlayer_hbm_attr.attr,
+	&oplus_display_hbm_attr.attr,
+	&oplus_display_seed_attr.attr,
+	&oplus_display_sau_closebl_attr.attr,
+	&oplus_display_fppress_attr.attr,
+	&oplus_display_power_status_attr.attr,
+	&oplus_display_serial_attr.attr,
+	&oplus_display_cabc_attr.attr,
+	&oplus_display_esd_attr.attr,
+	&oplus_display_ffl_attr.attr,
+	&oplus_display_dynamic_osc_attr.attr,
+	&oplus_display_aod_light_attr.attr,
+	&oplus_display_panel_pwr_attr.attr,
+	&oplus_display_dsi_cmd_attr.attr,
+	&oplus_display_max_bright_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group oplus_display_group = {
+	.attrs = oplus_display_attrs,
 };
 
 static ssize_t usb_quick_charge_type_show(struct device *dev, struct device_attribute *attr, char *buf) {
@@ -704,11 +1053,41 @@ static int __init oplus_stub_nodes_init(void) {
     struct proc_dir_entry *oplus_scheduler, *sched_assist, *sched_audio;
     struct proc_dir_entry *oplus_frame_boost, *oplus_binder;
     struct proc_dir_entry *oplus_afs, *oplus_mem, *devinfo, *proc_storage;
-    struct proc_dir_entry *charger_dir;
+    struct proc_dir_entry *charger_dir, *oplus_hans, *proc_theia, *proc_game_opt;
     int rc;
 
     set_proc_owner(proc_create("bootprof", 0666, NULL, &dummy_sink_fops));
+    set_proc_owner(proc_create("opbootfrom", 0444, NULL, &opbootfrom_fops));
+    set_proc_owner(proc_create("shell-temp", 0666, NULL, &shell_temp_fops));
+    set_proc_owner(proc_create("horae_mode", 0666, NULL, &horae_mode_fops));
     set_proc_owner(proc_create("theiaPwkReport", 0666, NULL, &dummy_sink_fops));
+
+    /* Theia application hang detection event reporting */
+    proc_theia = proc_mkdir("theia", NULL);
+    if (proc_theia) {
+        set_proc_owner(proc_theia);
+        set_proc_owner(proc_create("theia_send_event", 0666, proc_theia, &dummy_sink_fops));
+    }
+
+    /* Oplus Hans background freezer daemon (ColorOS 16/17) */
+    oplus_hans = proc_mkdir("oplus_hans", NULL);
+    if (oplus_hans) {
+        set_proc_owner(oplus_hans);
+        set_proc_owner(proc_create("hans_ctrl", 0666, oplus_hans, &dummy_sink_fops));
+        set_proc_owner(proc_create("hans_type", 0666, oplus_hans, &dummy_sink_fops));
+        set_proc_owner(proc_create("hans_stat", 0444, oplus_hans, &dummy_stat_fops));
+        set_proc_owner(proc_create("pkg_list", 0666, oplus_hans, &dummy_sink_fops));
+    }
+
+    /* HyperBoost / GPA Game Optimization */
+    proc_game_opt = proc_mkdir("game_opt", NULL);
+    if (proc_game_opt) {
+        set_proc_owner(proc_game_opt);
+        set_proc_owner(proc_create("render_thread", 0666, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("game_pid", 0666, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("cpu_load", 0666, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("target_fps", 0666, proc_game_opt, &target_fps_fops));
+    }
 
     proc_storage = proc_mkdir("storage", NULL);
     if (proc_storage) {
@@ -743,6 +1122,16 @@ static int __init oplus_stub_nodes_init(void) {
             set_proc_owner(proc_create("im_flag", 0666, sched_assist, &dummy_sink_fops));
             set_proc_owner(proc_create("ux_task", 0666, sched_assist, &dummy_sink_fops));
             set_proc_owner(proc_create("ux_task_app", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("opt_enable", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("frame_boost", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("sf_target_time", 0666, sched_assist, &sf_target_time_fops));
+            set_proc_owner(proc_create("inherit_ux", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("heavy_task", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("sched_fbg_opt", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("fbg_slide_opt", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("fbg_camera_opt", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("fbg_anim_opt", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("sched_assist_v2", 0666, sched_assist, &dummy_one_fops));
             sched_audio = proc_mkdir("audio", sched_assist);
             if (sched_audio) {
                 set_proc_owner(sched_audio);
@@ -756,6 +1145,13 @@ static int __init oplus_stub_nodes_init(void) {
         set_proc_owner(oplus_frame_boost);
         set_proc_owner(proc_create("ctrl", 0666, oplus_frame_boost, &dummy_sink_fops));
         set_proc_owner(proc_create("sys_ctrl", 0666, oplus_frame_boost, &dummy_sink_fops));
+        set_proc_owner(proc_create("fbg_ctrl", 0666, oplus_frame_boost, &dummy_one_fops));
+        set_proc_owner(proc_create("fbg_fps", 0666, oplus_frame_boost, &fbg_fps_fops));
+        set_proc_owner(proc_create("fbg_level", 0666, oplus_frame_boost, &dummy_sink_fops));
+        set_proc_owner(proc_create("fbg_pid", 0666, oplus_frame_boost, &dummy_sink_fops));
+        set_proc_owner(proc_create("fbg_render_pid", 0666, oplus_frame_boost, &dummy_sink_fops));
+        set_proc_owner(proc_create("fbg_mode", 0666, oplus_frame_boost, &dummy_sink_fops));
+        set_proc_owner(proc_create("fbg_scene", 0666, oplus_frame_boost, &dummy_sink_fops));
     }
 
     oplus_binder = proc_mkdir("oplus_binder", NULL);
@@ -781,12 +1177,19 @@ static int __init oplus_stub_nodes_init(void) {
         set_proc_owner(devinfo);
         set_proc_owner(proc_create("lcd", 0666, devinfo, &devinfo_lcd_fops));
         set_proc_owner(proc_create("lcd_s", 0666, devinfo, &devinfo_lcd_s_fops));
+        set_proc_owner(proc_create("aboard", 0444, devinfo, &devinfo_aboard_fops));
+        set_proc_owner(proc_create("ddr_info", 0444, devinfo, &devinfo_ddr_info_fops));
+        set_proc_owner(proc_create("ddr_size", 0444, devinfo, &devinfo_ddr_size_fops));
     }
 
     charger_dir = proc_mkdir("oplus_charger", NULL);
     if (charger_dir) {
         set_proc_owner(charger_dir);
         set_proc_owner(proc_create("batt_health", 0444, charger_dir, &batt_health_ops));
+        set_proc_owner(proc_create("battery_temp", 0444, charger_dir, &batt_temp_fops));
+        set_proc_owner(proc_create("ui_soc", 0444, charger_dir, &proc_ui_soc_fops));
+        set_proc_owner(proc_create("charge_technology", 0444, charger_dir, &charge_tech_fops));
+        set_proc_owner(proc_create("gauge_fw_ver", 0444, charger_dir, &gauge_fw_fops));
     }
 
     fbg_sysctl_header = register_sysctl_table(fbg_sysctl_root);
@@ -797,6 +1200,21 @@ static int __init oplus_stub_nodes_init(void) {
 		oplus_chg_usb_dev = oplus_chg_create_dev("usb", 1, &oplus_chg_usb_group);
 		oplus_chg_common_dev = oplus_chg_create_dev("common", 2, &oplus_chg_common_group);
 		oplus_chg_ac_dev = oplus_chg_create_dev("ac", 3, &oplus_chg_ac_group);
+		oplus_chg_wireless_dev = oplus_chg_create_dev("wireless", 4, &oplus_chg_wireless_group);
+		oplus_chg_gauge_dev = oplus_chg_create_dev("gauge", 5, &oplus_chg_gauge_group);
+    }
+
+    /* Oplus Display private sysfs API (ColorOS 16/17 Luminous Rendering / SurfaceFlinger) */
+    oplus_display_kobj = kobject_create_and_add("oplus_display", kernel_kobj);
+    if (oplus_display_kobj) {
+        rc = sysfs_create_group(oplus_display_kobj, &oplus_display_group);
+        if (rc)
+            pr_warn("oplus_stub: failed to create oplus_display sysfs group: %d\n", rc);
+        else {
+            rc = sysfs_create_link(kernel_kobj, oplus_display_kobj, "oppo_display");
+            if (rc)
+                pr_debug("oplus_stub: oppo_display alias link failed: %d\n", rc);
+        }
     }
 
 	psy_nb.notifier_call = psy_notifier_call;
@@ -819,6 +1237,20 @@ static void __exit oplus_stub_nodes_exit(void) {
 		}
 	}
 
+	sysfs_remove_link(kernel_kobj, "oppo_display");
+	if (oplus_display_kobj) {
+		sysfs_remove_group(oplus_display_kobj, &oplus_display_group);
+		kobject_put(oplus_display_kobj);
+	}
+
+	if (oplus_chg_class && oplus_chg_gauge_dev) {
+		sysfs_remove_group(&oplus_chg_gauge_dev->kobj, &oplus_chg_gauge_group);
+		device_destroy(oplus_chg_class, MKDEV(0, 5));
+	}
+	if (oplus_chg_class && oplus_chg_wireless_dev) {
+		sysfs_remove_group(&oplus_chg_wireless_dev->kobj, &oplus_chg_wireless_group);
+		device_destroy(oplus_chg_class, MKDEV(0, 4));
+	}
 	if (oplus_chg_class && oplus_chg_ac_dev) {
 		sysfs_remove_group(&oplus_chg_ac_dev->kobj, &oplus_chg_ac_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 3));

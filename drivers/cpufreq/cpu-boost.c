@@ -76,7 +76,7 @@ static bool sched_boost_active;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
-#define MIN_INPUT_INTERVAL (150 * USEC_PER_MSEC)
+#define MIN_INPUT_INTERVAL (80 * USEC_PER_MSEC)
 
 static ssize_t store_input_boost_freq(struct kobject *kobj,
 				      struct kobj_attribute *attr,
@@ -250,10 +250,20 @@ static struct notifier_block boost_adjust_nb = {
 static void update_policy_online(void)
 {
 	unsigned int i;
+	struct cpufreq_policy *policy;
+	cpumask_t visited_cpus;
 
+	cpumask_clear(&visited_cpus);
 	/* Re-evaluate policy to trigger adjust notifier for online CPUs */
 	get_online_cpus();
 	for_each_online_cpu(i) {
+		if (cpumask_test_cpu(i, &visited_cpus))
+			continue;
+		policy = cpufreq_cpu_get(i);
+		if (policy) {
+			cpumask_or(&visited_cpus, &visited_cpus, policy->related_cpus);
+			cpufreq_cpu_put(policy);
+		}
 		pr_debug("Updating policy for CPU%d\n", i);
 		cpufreq_update_policy(i);
 	}
@@ -288,7 +298,7 @@ static void do_input_boost(struct work_struct *work)
 	unsigned int i, ret;
 	struct cpu_sync *i_sync_info;
 
-	cancel_delayed_work_sync(&input_boost_rem);
+	cancel_delayed_work(&input_boost_rem);
 	if (sched_boost_active) {
 		sched_set_boost(0);
 		sched_boost_active = false;
@@ -323,7 +333,7 @@ static void do_powerkey_input_boost(struct work_struct *work)
 	unsigned int i, ret;
 	struct cpu_sync *i_sync_info;
 
-	cancel_delayed_work_sync(&input_boost_rem);
+	cancel_delayed_work(&input_boost_rem);
 	if (sched_boost_active) {
 		sched_set_boost(0);
 		sched_boost_active = false;
@@ -359,6 +369,10 @@ static void cpuboost_input_event(struct input_handle *handle,
 	u64 now;
 
 	if (!input_boost_enabled)
+		return;
+
+	/* Skip finger release */
+	if (type == EV_KEY && code == BTN_TOUCH && value == 0)
 		return;
 
 	now = ktime_to_us(ktime_get());

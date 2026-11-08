@@ -105,7 +105,8 @@
 		regulator-name = "disp_vddio_vreg";
 		/*startup-delay-us = <4000>;*/
 		enable-active-high;
-		/*regulator-boot-on*/
+		regulator-boot-on;
+		regulator-always-on;
 		gpio = <&tlmm 69 0>;
 	 };
 
@@ -719,7 +720,7 @@
 &dsi_l81a_42_04_0a_dual_dphy_video {
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply_l81a>;
 	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
-	qcom,mdss-dsi-bl-min-level = <2>;
+	qcom,mdss-dsi-bl-min-level = <1>;
 	qcom,mdss-dsi-bl-max-level = <2047>;
 	qcom,mdss-brightness-max-level = <2047>;
 	qcom,mdss-brightness-init-level = <307>;

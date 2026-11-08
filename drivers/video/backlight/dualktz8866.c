@@ -224,7 +224,7 @@ static const struct file_operations bl_selftest_fops = {
 static int ktz8866_backlight_update_status(struct backlight_device *backlight)
 {
     struct ktz8866 *bd = bl_get_data(backlight);
-    int exponential_bl = backlight->props.brightness;
+    int exponential_bl = clamp(backlight->props.brightness, 0, BL_LEVEL_MAX);
     int brightness = 0;
     u8 v[2];
 

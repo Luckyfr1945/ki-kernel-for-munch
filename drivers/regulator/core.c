@@ -5369,10 +5369,18 @@ static int regulator_late_cleanup(struct device *dev, void *data)
 	struct regulator_dev *rdev = dev_to_rdev(dev);
 	const struct regulator_ops *ops = rdev->desc->ops;
 	struct regulation_constraints *c = rdev->constraints;
+	const char *name = rdev_get_name(rdev);
 	int enabled, ret;
 
 	if (c && c->always_on)
 		return 0;
+
+	/* Never disable essential display / OLED power rails during late cleanup */
+	if (name && (strstr(name, "display") || strstr(name, "oled") ||
+		     strstr(name, "disp_vddio") || strstr(name, "panel"))) {
+		rdev_info(rdev, "keeping essential display rail enabled\n");
+		return 0;
+	}
 
 	if (!regulator_ops_is_valid(rdev, REGULATOR_CHANGE_STATUS))
 		return 0;

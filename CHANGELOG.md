@@ -1,48 +1,77 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-10-28  
+**Build Date:** 2026-11-08  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
 
-## Ki-kernel v1.6.0 :
-- Fixed Binder Page Allocation Failure & Overnight Sleep of Death (SoD): Increased default `watermark_scale_factor` from 20 to 100 to ensure an ~80MB safety buffer between MIN and LOW watermarks, unlocked sysctl clamping so ROMs can configure safe memory margins, and allowed `kswapd` across all online CPUs during sleep so background maintenance (dexopt, backup, sync) does not cause direct reclaim failure or freeze Binder IPC
-- Fixed Sysfs Invalid Permissions Warning: Corrected `ki_profile` group attribute permissions from 0666 to 0664 to eliminate kernel call trace warnings on boot
-- Added Interactive Volume Key Profile Selector in AnyKernel3: Prompted before flashing boot/vendor_boot to allow users to choose between OC + Undervolt (683 MHz GPU) via Vol(+) or Stock (670 MHz) via Vol(-) with reliable key event parsing (defaults to OC+UV after 15s or when flashed via app)
-- Fixed Bypass Charging on ColorOS / OxygenOS: Ignored non-root / charger-hal-pol polling writes of '0' to bypass_charging and input_suspend in SMB5 driver, keeping bypass charging persistently active during gaming
-- Fixed Sleep of Death (SoD) & ADB Offline on Screen Deep Eco (screen_off_battery): Replaced blocking down_write with down_write_trylock on cpufreq policy rwsem to eliminate deadlocks with secondary CPU offlining during system suspend
-- Fixed Screen-Off Requeue Storm: Silenced highpri_wq 50ms requeue loops in ki_profile when display is asleep and secondary cores are offline, eliminating timer wakeups and deep sleep aborts
-- Fixed Sleep of Death & PCIe Wi-Fi Crash on Weekclock (Boeffla Wakelock Blocker): Removed wlan_pno_wl and wlan_extscan_wl from default blocked wakelocks and whitelisted wlan, pno, dwc3, and usb in is_critical_wakelock() to protect active PCIe Wi-Fi PNO scans and prevent ADB going offline during idle
-- Fixed Dynamic Fsync Screen-Off Suspend Hang: Protected ksys_sync() with a kernel wakeup_source (dyn_fsync_ws) so the device cannot enter deep suspend while storage flush is executing, eliminating UFS I/O state D hangs
-- Ported task_is_critical() (oom_score_adj <= -900) to mm/vmscan.c to skip direct reclaim throttling on SurfaceFlinger, display composer, and camera (eliminates video stuttering, camera lag, and UI rendering stalls)
-- Optimized OPlus Enforcing Spoofing in selinuxfs.c targeting Play Integrity / GMS and user apps while preserving permissive state for system service daemons to prevent hardware service denials (URCC, RIL, camera, audio, sensors)
-- Fixed AnyKernel3 auto-detection order: Checks recovery system fingerprint (ro.system.build.fingerprint), /system_root/my_product, and system build.prop before checking vendor region to guarantee ColorOS / OxygenOS / RealmeUI ports are never misdetected as MIUI
-- Added 2000ms debounce (KI_PSY_SETTLE_MS) in power supply notifier to eliminate SMB5 IRQ storms and severe thermal/profile throttling lag when connecting a charger
-- Added 2-second debounce in ki_daemon bypass charging controller to eliminate charger flapping during plug-in
-- Removed kernel-side vm_swappiness overrides in ki_profile to let ROM defaults manage swap behavior
-- Disabled CONFIG_PROC_CHILDREN in defconfig to eliminate useless task traversal overhead
-- Completely eliminated redundant ki_profile dmesg log spam by tracking last applied profile mode
-- Fixed screen-off suspend aborts (alarmtimer.0.auto error -16) by lengthening daemon poll interval to 10s when display is asleep (fixes heavy battery drain)
-- Optimized daemon polling lifecycle (1.5s during gaming, 3.0s during regular usage, 10.0s when screen is off)
-- Corrected MGLRU presets in WebUI (Mode 1: Safe/Gaming vs Mode 7: Aggressive/Multitasking) to prevent page-table lock stalls while gaming
-- Added Fast Reboot (Zygote restart) in WebUI for AOSP with automatic detection and safe reboot on HyperOS/MIUI
-- Added Android system notifications when Game Turbo activates and deactivates
+## Ki-kernel v1.6.4 (Fatal Sleep Lockup Fix & In-Kernel Non-Root Hotspot Engine) :
+- Fatal Screen-off Sleep Lockup & Black Screen Fix: reverted problematic PM runtime commit `d0b4c0a390fb` (`PM: runtime: Drop pm_runtime_force_suspend/resume()`) in `drivers/base/power/runtime.c` and `include/linux/pm.h`. This commit erroneously omitted `needs_force_resume = 1` for devices that were already runtime-suspended before system sleep (notably the Adreno GPU / KGSL). On wake, `pm_runtime_force_resume()` evaluated `!dev->power.needs_force_resume` and skipped powering back on the Adreno GPU and GDSC rails, causing SurfaceFlinger/InputDispatcher display fence deadlocks, system freezes, and Black Screen of Death.
+- Power Management Workqueue Hardening: reverted `pm_wq` back to per-CPU `WQ_FREEZABLE` in `kernel/power/main.c` and reverted pool lock optimization in `kernel/workqueue.c` to prevent unbound workqueue race conditions during AP suspend/resume transitions.
+- In-Kernel Hotspot DNS DNAT Engine (Root & Non-Root Universal): implemented native in-kernel DNS DNAT redirect hook directly in `net/ipv4/netfilter/iptable_nat.c`. The kernel automatically intercepts DNS queries (port 53 UDP & TCP) originating from tethering interfaces (`wlan1+`, `ap+`, `swlan+`, `rndis+`) and transparently binds them via `nf_nat_setup_info()` to upstream DNS (`1.1.1.1:53`). This guarantees 100% working hotspot internet on Android 16 even on completely unrooted (NOKSU / Non-Root) systems without dnsmasq or userspace iptables rules.
+- In-Kernel BPF Tether Ingress Bypass: hardened `sch_handle_ingress()` in `net/core/dev.c` to automatically bypass ingress qdisc classification on active tether interfaces (`wlan1+`, `ap+`, `rndis+`, `swlan+`), permanently preventing Android BPF tethering offload filters from dropping forwarded client packets across both Root and Non-Root configurations.
+- Zero Background Daemon Overhead: completely eliminated the need for any background userspace hotspot watcher or polling script in `/data/adb/service.d/00_nkm_bypass.sh`. The startup script now cleanly exits immediately after applying device permissions on boot, leaving **zero background processes** while the kernel handles 100% of network offloading and DNS redirection natively.
+- TCP BBR Kernel Warning Silencing: clamped `lost_prev = 0` when `lost_prev < 0` for aggregated GRO/TSO packets in `net/ipv4/tcp_bbr.c`, eliminating harmless `WARN_ONCE` logspam in `dmesg` and removing unused `tp` variable.
 
-## Ki-kernel v1.5.1 :
-- Tuned Balanced profile WALT migration margins to 90/82 (fixed severe FPS drop & stutter in 120Hz/90Hz)
-- Raised Balanced profile down-rate hold duration (down_us) to 5000us (5ms) to eliminate mid-frame dips
-- Accelerated Balanced profile ramp-up (up_us) to 850us / 2850us / 3850us for smooth touch response
-- Optimized Balanced hispeed load thresholds to 82% / 82% / 84% for responsive mid-load transitions
-- Added modest I/O wait boost (iowait_boost_max = 5) in Balanced mode to eliminate storage lag
-- Retained 1.80GHz / 2.05GHz / 2.36GHz frequency ceilings in Balanced profile for maximum thermal comfort
-- Fixed Auto Game Turbo toggle lifecycle bug in WebUI & Ki-Daemon (prevented toggling back ON)
-- Added native 'ki_daemon start' command to spawn detached background processes without external nohup dependency
-- Implemented graceful pause state (DAEMON_ENABLED=0) in Ki-Daemon instead of abrupt SIGKILL/stale PID traps
-- Added instant status file generation with 0666 permissions on Ki-Daemon startup to prevent WebUI race conditions
-- Expanded built-in Auto Game Turbo game detections (Sky: Children of the Light, Free Fire MAX, Roblox, Minecraft, eFootball, CarX Street, Blood Strike, Honor of Kings, Honkai Impact 3, etc.)
-- Hardened kernel Universal Thermal Auto-Guard with persistent user override and pocket safety
+## Ki-kernel v1.6.3 (Display Brightness Range Calibration & AnyKernel3 GPU OC Flasher) :
+- Hotspot & Tethering Fix: bypassed TTL and Hop Limit decrement on forwarded IPv4 (`net/ipv4/ip_forward.c`) and IPv6 (`net/ipv6/ip6_output.c`) packets (ported from e404 / Alexander Winkowski) to prevent carrier DPI tethering blocks and fix "Connected, without internet" bug on connected hotspot devices
+- BPF & Netfilter Defconfig Compatibility: enabled `CONFIG_XDP_SOCKETS=y`, `CONFIG_NETFILTER_XT_TARGET_HL=y`, `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y`, and `CONFIG_IP6_NF_NAT=y` across munch defconfigs (`munch_defconfig` & `munch_stock-defconfig`) to support Tethering BPF maps (`osrtpPolicy.o`) and fix Wi-Fi sharing (STA+SAP) UDP/DHCP checksum validation
+- BPF Generic Pop Header Optimization: corrected `memmove` offset and pull sequence in `bpf_skb_generic_pop()` (`net/core/filter.c`) from upstream commit 315fcbead697 to prevent packet corruption during BPF header pop
+- SuSFS Kernel Panic Fix: guarded `kfree_rcu(old_bitmap, rcu)` with `if (old_bitmap)` in `susfs_set_priority_uid_filter()` and `susfs_priority_app_strings_worker()` (`fs/susfs.c`) to prevent fatal NULL pointer dereference in `__call_rcu()` during initial boot priority UID filter configuration (Issue #1, reported & suggested by @zdanysfa)
+- Memory Reclaim Unevictable Page Hardening: skipped unevictable/mlocked pages (`PageUnevictable`) in `reclaim_pte_range()` (`fs/proc/task_mmu.c`) to prevent isolated count mismatch and VM assertions during Android `CachedAppOptimizer` background reclaim (Issue #1, reported & suggested by @zdanysfa)
+- Display Backlight Reversion to Stock Stability: restored `sde_connector.c` to stock Qualcomm/LineageOS clean driver mapping (`mult_frac`) while keeping `qcom,mdss-dsi-bl-min-level = <1>` in DTS. This completely eliminates all slider jumping, threshold cliffs, and flickering ("redup terus terang") across all ROM frameworks (HyperOS, AOSP, ColorOS).
+- Hardware-Accurate Backlight Calibration: calibrated brightness mapping to 11-bit KTZ8866 hardware DAC (2047) and added defensive clamp in dualktz8866 to prevent array out-of-bounds and driver rejection
+- Fixed AnyKernel3 GPU OC vendor_boot flashing: Exported lowercase `block=vendor_boot` alongside uppercase `BLOCK` to ensure DTB partition is repacked correctly on SM8250
+- Fixed recovery volume key selector: replaced fragile timeout command subshell with continuous background getevent listener to reliably detect Vol+ (OC 683 MHz) and Vol- (Stock 670 MHz) in TWRP/OrangeFox
+- Added automated GPU OC trigger support: Flasher now detects `/sdcard/oc`, `/sdcard/Download/oc`, and `/tmp/oc` to automatically select 683 MHz OC + UV profile even in app-based flashers (Kernel Flasher)
+- Updated Ki-Settings / Ki-Optimizer module to v1.4.0 with WebUI charging, profile, and thermal toggles
+- SMB5 charging driver & Boeffla Wakelock Blocker optimizations
+- Synced KernelSU / BakaSU upstream to latest main (516d3e87) with OriginOS panic prevention (vklp_smaps_rollup block) and preserved multi-manager support
+- Backported Linux 5.4 PM runtime & sleep fixes: resolved force_suspend/resume refcount unbalance, device removal UAF, and wakeirq races to eliminate screen-off wake deadlocks
+- Fixed scheduler PELT period truncation: upgraded period accumulation from u32 to u64 to prevent CPU load tracking freezes
+- Hardened Adreno GPU (KGSL): added refcount zero bailout in vm_open and fixed repeated sparse page mapping indices to prevent game crashes (PUBG/Genshin) and texture buffer corruption
+- Power Management & Deep Sleep: offloaded pm_wq to WQ_UNBOUND, synced Android wakeup_srcu, hardened sleep_time delta calculations, and fixed wakelock counter limits
+- Optimized kernel workqueues: reduced pool lock contention in flush_workqueue_prep_pwqs for unbound workqueues and guarded against NULL current_pwq dereferences
+
+## Ki-kernel v1.6.2 (ColorOS 17 Support, Dynamic Fsync & Thermal Guard Fixes) :
+- Fixed screen-off / lockscreen deadlock: replaced synchronous ksys_sync() in Dynamic Fsync with asynchronous wakeup_flusher_threads() and removed wakelock contention with Android apexd/VFS
+- Fixed Dynamic Thermal Guard toggle: implemented thermal_throttle_store() and made /sys/kernel/ki_profile/thermal_throttle read-write (__ATTR_RW) to allow bypassing thermal throttling for unthrottled gaming
+- Fixed TCP Congestion Control switcher: enabled CONFIG_TCP_CONG_CUBIC and registered both "westwood" and "westwood-sub"
+- Added ColorOS 17 oplus_display sysfs nodes for Luminous Rendering Engine
+- Added ColorOS 17 oplus_hans procfs interface to fix system_server ANRs
+- Added Horae thermal procfs nodes (shell-temp, horae_mode) to prevent false throttling
+- Added SuperVOOC UI sysfs nodes and dynamic fast_chg_type support
+- Expanded OPlus SchedAssist v3 and Frame Boost procfs interfaces
+- Added OPlus Theia watchdog, GameOpt, opbootfrom, and devinfo procfs nodes
+- Added OPlus charger gauge sysfs groups and battery health metrics
+- Migrate anykernel lifaye to anykernel re404
+
+## Ki-kernel v1.6.1 :
+- Fixed Samsung E4 AMOLED black screen bug: permanently protected display power rails (`display_panel_vci`, `disp_vddio_vreg`, `oled_dvdd_ldo`) from being cut off at second 32 by `regulator_late_cleanup`, completely eliminating hard reboots
+- Fixed AnyKernel3 Universal installer: initialized `$AKHOME` directory binding to resolve `! Kernel Image not found` abort during recovery flashing
+- Added built-in fgetpriority UID priority hiding to defeat syscall-based app detection (Applist Detector/Momo)
+- Accelerated display & frame sync: speed up sync_file ioctl by omitting debug names (improves SurfaceFlinger and gaming FPS)
+- Optimized memory zeroing: align clear_page() to 16 bytes for Cortex-A77/A55 cacheline throughput
+- Silenced smcinvoke false error logspam during suspend/resume
+- Fixed ARM PMU and devfreq memlat random reboots and qspinlock lockups
+- Restored stable v1.5 display KMS commit order and touch synchronization
+- Restored stable v1.5 kswapd LITTLE cluster affinity (CPUs 0-3) and watermark scale factor (improves gaming stability and prevents aggressive LMK oom_reaper)
+
+## Ki-kernel v1.6 :
+- Fix Selinux
+- Updated ADIOS I/O scheduler v3.3.0
+- Added AnyKernel GPU selector 
+- Added YukiSU manager support and YukiSU feature
+- Synced SuSFS v2.3.0 upstream changes and fixed UID filter UAF race conditions
+- Added SuSFS multi-user and dual apps UID support with no-atime parsing
+- Fixed Dynamic Fsync screen-off suspend hangs
+- Fixed Binder page allocation failures and improved kswapd sleep reclaim
+- Fixed cpufreq policy rwsem suspend deadlocks
+- Fixed cpu-boost touch workqueue deadlocks and reduced policy lock contention
+- Fixed Wakelock Blocker PCIe Wi-Fi drops and USB/ADB disconnects
+- Fixed Ki-Profile screen-off workqueue loops and deep sleep wakeups
 
 ## Ki-kernel v1.5 :
 - Updated BakaSU and ReSukiSU to UAPI v6

@@ -112,17 +112,20 @@ set_mglru() {
     if ! verify_kernel; then return 1; fi
     local val="$1"
     local silent="$2"
-    if [ "$val" = "7" ] || [ "$val" = "turbo" ] || [ "$val" = "gaming" ] || [ "$val" = "max" ]; then
+    if [ "$val" = "7" ] || [ "$val" = "turbo" ] || [ "$val" = "gaming" ] || [ "$val" = "max" ] || [ "$val" = "aggressive" ] || [ "$val" = "3" ] || [ "$val" = "0x0003" ] || [ "$val" = "0x0007" ]; then
         echo 1 > /proc/mglru 2>/dev/null
         echo 0x0007 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
-        [ -z "$silent" ] && echo -e "${G}✔ MGLRU: GAMING TURBO MODE (0x0007 - Core + Page Table Walk + PMD)!${X}"
-    elif [ "$val" = "1" ] || [ "$val" = "on" ] || [ "$val" = "enable" ] || [ "$val" = "standard" ] || [ "$val" = "core" ]; then
+        [ -f "$CONF_PATH" ] && sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=7/" "$CONF_PATH" 2>/dev/null
+        [ -z "$silent" ] && echo -e "${G}✔ MGLRU: AGGRESSIVE / GAMING TURBO (0x0007/0x0003 - Core + Page Table Walk)!${X}"
+    elif [ "$val" = "1" ] || [ "$val" = "on" ] || [ "$val" = "enable" ] || [ "$val" = "standard" ] || [ "$val" = "core" ] || [ "$val" = "0x0001" ]; then
         echo 0x0001 > /proc/mglru 2>/dev/null
         echo 0x0001 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+        [ -f "$CONF_PATH" ] && sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=1/" "$CONF_PATH" 2>/dev/null
         [ -z "$silent" ] && echo -e "${G}✔ MGLRU: STANDARD MODE (0x0001 - Core generation)!${X}"
     else
         echo 0 > /proc/mglru 2>/dev/null
         echo 0x0000 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+        [ -f "$CONF_PATH" ] && sed -i -E "s/^MGLRU_MODE=.*/MGLRU_MODE=0/" "$CONF_PATH" 2>/dev/null
         [ -z "$silent" ] && echo -e "${Y}✔ MGLRU: DISABLED (Traditional 2-list LRU)${X}"
     fi
 }
@@ -309,6 +312,7 @@ case "$1" in
   "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
   "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 0),
   "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
+  "tcp_available": "$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)",
   "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),
   "battery_pct": $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0),
   "battery_temp": $(echo $(( $(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 300) / 10 ))),
@@ -345,10 +349,12 @@ EOF
         shift
         if command -v ki_daemon >/dev/null 2>&1; then
             ki_daemon "$@"
+        elif [ -x "/data/adb/modules/ki_daemon/bin/ki_daemon" ]; then
+            /data/adb/modules/ki_daemon/bin/ki_daemon "$@"
         elif [ -x "/data/adb/modules/ki_optimizer/bin/ki_daemon" ]; then
             /data/adb/modules/ki_optimizer/bin/ki_daemon "$@"
         else
-            echo "ki_daemon binary not found."
+            echo "ki_daemon is not installed (Ki-Daemon is now a standalone module)."
         fi
         ;;
     help|--help|-h)

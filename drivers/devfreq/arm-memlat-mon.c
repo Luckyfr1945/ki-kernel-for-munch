@@ -160,11 +160,13 @@ static inline void read_event(struct event_data *event)
 {
 	unsigned long ev_count = 0;
 	u64 total, enabled, running;
+	struct perf_event *pevent;
 
-	if (!event->pevent)
+	pevent = READ_ONCE(event->pevent);
+	if (!pevent)
 		return;
 
-	total = perf_event_read_value(event->pevent, &enabled, &running);
+	total = perf_event_read_value(pevent, &enabled, &running);
 	ev_count = total - event->prev_count;
 	event->prev_count = total;
 	event->last_delta = ev_count;
@@ -254,11 +256,12 @@ static unsigned long get_cnt(struct memlat_hwmon *hw)
 
 static void delete_event(struct event_data *event)
 {
+	struct perf_event *pevent;
+
 	event->prev_count = event->last_delta = 0;
-	if (event->pevent) {
-		perf_event_release_kernel(event->pevent);
-		event->pevent = NULL;
-	}
+	pevent = xchg(&event->pevent, NULL);
+	if (pevent)
+		perf_event_release_kernel(pevent);
 }
 
 static struct perf_event_attr *alloc_attr(void)
@@ -426,6 +429,7 @@ static void stop_hwmon(struct memlat_hwmon *hw)
 	unsigned int cpu;
 	struct memlat_mon *mon = to_mon(hw);
 	struct memlat_cpu_grp *cpu_grp = mon->cpu_grp;
+	bool free_grp = false;
 
 	mutex_lock(&cpu_grp->mons_lock);
 	mon->is_active = false;
@@ -444,11 +448,17 @@ static void stop_hwmon(struct memlat_hwmon *hw)
 		devstats->wb_pct = 0;
 	}
 
-	if (!cpu_grp->num_active_mons) {
-		cancel_delayed_work(&cpu_grp->work);
-		free_common_evs(cpu_grp);
-	}
+	if (!cpu_grp->num_active_mons)
+		free_grp = true;
 	mutex_unlock(&cpu_grp->mons_lock);
+
+	if (free_grp) {
+		cancel_delayed_work_sync(&cpu_grp->work);
+		mutex_lock(&cpu_grp->mons_lock);
+		if (!cpu_grp->num_active_mons)
+			free_common_evs(cpu_grp);
+		mutex_unlock(&cpu_grp->mons_lock);
+	}
 }
 
 /**

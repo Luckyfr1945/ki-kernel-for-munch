@@ -201,6 +201,7 @@ out:
 #ifdef CONFIG_KSU_SUSFS
 extern bool susfs_is_priority_uid_filtered(uid_t uid);
 #endif // #ifdef CONFIG_KSU_SUSFS
+#include <linux/fgetpriority.h>
 
 SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 {
@@ -251,6 +252,8 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 			if (cred->uid.val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
 				goto out_unlock;
 #endif // #ifdef CONFIG_KSU_SUSFS
+			if (fgetpriority_is_blocked(cred->uid.val, uid.val))
+				goto out_unlock;
 			user = find_user(uid);
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
@@ -323,6 +326,8 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 			if (cred->uid.val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
 				goto out_unlock;
 #endif // #ifdef CONFIG_KSU_SUSFS
+			if (fgetpriority_is_blocked(cred->uid.val, uid.val))
+				goto out_unlock;
 			user = find_user(uid);
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
@@ -1269,7 +1274,6 @@ extern void susfs_spoof_uname(struct new_utsname* tmp);
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
-	uid_t cur_uid = current_uid().val;
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
@@ -1284,9 +1288,6 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		strcpy(tmp.release, "5.15.404");
 		pr_info("fake uname: %s/%d release=%s\n",
 			 current->comm, current->pid, tmp.release);
-	} else if (cur_uid >= 1000 ||
-		!strcmp(current->comm, "main")) {
-		strlcpy(tmp.release, "5.10.325-ki-kernel+", sizeof(tmp.release));
 	}
 	up_read(&uts_sem);
 #ifdef CONFIG_SPOOF_KERNEL_VERSION
