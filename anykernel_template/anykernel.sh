@@ -619,8 +619,10 @@ for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^(wlan[1-9]|ap[0-9]|rnd
 done
 
 (
+    IP_BIN="/system/bin/ip"
+    [ -x "$IP_BIN" ] || IP_BIN="ip"
     while true; do
-        ip monitor link 2>/dev/null | while read -r line; do
+        $IP_BIN monitor link 2>/dev/null | while read -r line; do
             case "$line" in
                 *UP*wlan[1-9]*|*UP*ap[0-9]*|*UP*rndis[0-9]*|*UP*swlan[0-9]*)
                     iface=$(echo "$line" | sed -E 's/^[0-9]+: ([^:]+):.*/\1/' | tr -d ' ')
