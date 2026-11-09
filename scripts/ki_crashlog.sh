@@ -17,7 +17,7 @@
 DIR=/data/adb/ki_crashlog
 SELF=/data/adb/ki_crashlog.sh
 SERVICE=/data/adb/service.d/ki_crashlog.sh
-MAX_LOG_BYTES=8388608	# rotate kmsg.log at 8 MiB (keeps one .1 backup)
+MAX_LOG_BYTES=8388608	# rotate kmsg.log and status.log at 8 MiB (keeps one .1 backup)
 STATUS_SEC=30		# shell sleep stops during suspend, so no extra wakeups
 CRTC=/sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-0
 
@@ -29,7 +29,7 @@ archive_previous_boot() {
 
 	dst=$DIR/prev_$(date +%Y%m%d_%H%M%S)
 	mkdir -p $dst
-	mv $DIR/kmsg.log* $DIR/status.log $dst/ 2>/dev/null
+	mv $DIR/kmsg.log* $DIR/status.log* $dst/ 2>/dev/null
 	cp /sys/fs/pstore/* $dst/ 2>/dev/null
 	{
 		echo "sys.boot.reason=$(getprop sys.boot.reason)"
@@ -71,6 +71,9 @@ run_logger() {
 	dmesg_pid=$!
 	while true; do
 		status_line >> $DIR/status.log
+		if [ "$(stat -c %s $DIR/status.log)" -gt $MAX_LOG_BYTES ]; then
+			mv -f $DIR/status.log $DIR/status.log.1
+		fi
 		if [ "$(stat -c %s $DIR/kmsg.log)" -gt $MAX_LOG_BYTES ]; then
 			kill $dmesg_pid
 			mv -f $DIR/kmsg.log $DIR/kmsg.log.1
