@@ -6,9 +6,10 @@ on:
       device:
         description: 'Pilih Target Device SM8250'
         required: true
-        default: 'popular - Alioth (POCO F3) & LMI (POCO F2 Pro)'
+        default: 'munch - POCO F4 / Redmi K40S'
         type: choice
         options:
+          - 'munch - POCO F4 / Redmi K40S'
           - 'popular - Alioth (POCO F3) & LMI (POCO F2 Pro)'
           - 'alioth - POCO F3 / Redmi K40'
           - 'lmi - POCO F2 Pro / Redmi K30 Pro'
@@ -214,6 +215,7 @@ jobs:
           TOPIC_ID = int(RAW_TOPIC) if RAW_TOPIC.isdigit() else 4
 
           DEV_NAMES = {
+              "munch": "POCO F4 / Redmi K40S",
               "alioth": "POCO F3 / Redmi K40",
               "apollo": "Mi 10T / Mi 10T Pro",
               "thyme": "Mi 10S",
