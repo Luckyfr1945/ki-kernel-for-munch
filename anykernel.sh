@@ -609,34 +609,6 @@ device_config put netd override_tether_enable_bpf_offload false 2>/dev/null
 device_config put connectivity tether_enable_bpf_offload false 2>/dev/null
 setprop net.tethering.noprofile 1 2>/dev/null
 
-# Hotspot DNS & Offload Watcher (Event-driven Netlink listener: 0 polling, 0 timer wakeups)
-for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^(wlan[1-9]|ap[0-9]|rndis[0-9]|swlan[0-9])'); do
-    tc filter del dev "$iface" ingress 2>/dev/null
-    iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-        iptables -t nat -I PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-    iptables -t nat -C PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-        iptables -t nat -I PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-done
-
-(
-    while true; do
-        ip monitor link 2>/dev/null | while read -r line; do
-            case "$line" in
-                *UP*wlan[1-9]*|*UP*ap[0-9]*|*UP*rndis[0-9]*|*UP*swlan[0-9]*)
-                    iface=$(echo "$line" | sed -E 's/^[0-9]+: ([^:]+):.*/\1/' | tr -d ' ')
-                    [ -n "$iface" ] || continue
-                    tc filter del dev "$iface" ingress 2>/dev/null
-                    iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-                        iptables -t nat -I PREROUTING -i "$iface" -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-                    iptables -t nat -C PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null || \
-                        iptables -t nat -I PREROUTING -i "$iface" -p tcp --dport 53 -j DNAT --to-destination 1.1.1.1:53 2>/dev/null
-                    ;;
-            esac
-        done
-        sleep 5
-    done
-) &
-
 EOF
     if [ -f /data/adb/service.d/00_nkm_bypass.sh ]; then
         chmod 755 /data/adb/service.d/00_nkm_bypass.sh;

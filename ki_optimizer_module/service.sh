@@ -22,8 +22,8 @@ for bin_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/magisk; do
     fi
 done
 
-# Sleep 4 seconds to ensure system settlement
-sleep 4
+# Sleep 12 seconds to ensure system settlement without colliding with initial screen-off
+sleep 12
 
 # Ensure /sdcard/ki_optimizer.conf exists
 if [ ! -f "$CONF_PATH" ]; then
