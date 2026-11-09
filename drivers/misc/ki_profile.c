@@ -416,6 +416,7 @@ static int apply_ki_profile(int mode, bool force)
 	int i, ret, err = 0;
 	unsigned long flags;
 	bool screen_on;
+	bool busy = false;	/* a policy lock was contended, retry the whole apply */
 	bool enable_gpu_perf;
 	bool enable_thermal_throttle;
 
@@ -438,20 +439,26 @@ static int apply_ki_profile(int mode, bool force)
 		unsigned int target_max;
 
 		ret = sugov_set_cluster_rate_limits(cpu, c->up_us, c->down_us);
+		if (ret == -EBUSY) {
+			busy = true;
+			continue;
+		}
 		if (ret) {
 			pr_warn("ki_profile: cpu%u sugov not ready (%d), cpufreq limits skipped\n",
 				cpu, ret);
 			err |= BIT(i);
 			continue;
 		}
-		sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq);
-		sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load);
-		sugov_set_cluster_floor(cpu, c->floor_freq);
-		sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max);
-		sugov_set_cluster_pl(cpu, t->pl);
+		if (sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq) ||
+		    sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load) ||
+		    sugov_set_cluster_floor(cpu, c->floor_freq) ||
+		    sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max) ||
+		    sugov_set_cluster_pl(cpu, t->pl))
+			busy = true;
 
 		target_max = ki_target_max(i, mode);
-		ki_cpufreq_set_limits(cpu, 0, target_max);
+		if (ki_cpufreq_set_limits(cpu, 0, target_max) == -EBUSY)
+			busy = true;
 	}
 
 	screen_on = READ_ONCE(ki_screen_on);
@@ -503,7 +510,8 @@ static int apply_ki_profile(int mode, bool force)
 			user_mode = KI_PROFILE_BALANCED;
 		ut = &ki_tunes[user_mode];
 
-		ki_cpufreq_reset_idle_floors(user_mode);
+		if (ki_cpufreq_reset_idle_floors(user_mode))
+			busy = true;
 		vm_swappiness = ut->swappiness;
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
@@ -513,7 +521,8 @@ static int apply_ki_profile(int mode, bool force)
 	}
 
 	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
-	return err;
+	/* -EBUSY makes every caller retry; err only reports clusters without schedutil */
+	return busy ? -EBUSY : err;
 }
 
 /* Profile that should be applied given user choice, screen state, and power supply */
@@ -843,6 +852,7 @@ static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribut
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 {
 	unsigned int val;
+	int ret;
 
 	if (kstrtouint(buf, 10, &val))
 		return -EINVAL;
@@ -852,10 +862,11 @@ static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 
 	mutex_lock(&ki_profile_mutex);
 	WRITE_ONCE(ki_user_max_freq[i], val);
-	ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
-			      ki_target_max(i, ki_effective_mode()));
+	ret = ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
+				    ki_target_max(i, ki_effective_mode()));
 	mutex_unlock(&ki_profile_mutex);
-	return count;
+	/* value is stored either way; -EBUSY tells the writer it is not live yet */
+	return ret == -EBUSY ? ret : (ssize_t)count;
 }
 
 static ssize_t max_freq_silver_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
