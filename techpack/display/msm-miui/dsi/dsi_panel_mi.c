@@ -945,6 +945,14 @@ int dsi_panel_esd_irq_ctrl(struct dsi_panel *panel,
 	ret = dsi_panel_esd_irq_ctrl_locked(panel, enable);
 	mutex_unlock(&panel->panel_lock);
 
+	/* Ensure in-flight ESD handlers finish before display unprepare proceeds */
+	if (!enable) {
+		if (gpio_is_valid(panel->mi_cfg.esd_err_irq_gpio) && panel->mi_cfg.esd_err_irq)
+			synchronize_irq(panel->mi_cfg.esd_err_irq);
+		if (gpio_is_valid(panel->mi_cfg.esd_err_irq_gpio_sec) && panel->mi_cfg.esd_err_irq_sec)
+			synchronize_irq(panel->mi_cfg.esd_err_irq_sec);
+	}
+
 	return ret;
 }
 
@@ -2019,6 +2027,14 @@ int mi_dsi_panel_read_lhbm_white_reg(struct dsi_panel *panel, int fod_lhbm_white
 		return -EAGAIN;
 	}
 
+	if (!panel->mi_cfg.fod_lhbm_white_update_flag)
+		return 0;
+
+	priv_info = panel->cur_mode->priv_info;
+	cmd_set = &priv_info->cmd_sets[DSI_CMD_SET_MI_FOD_LHBM_WHITE_READ_B2_REG];
+	if (!cmd_set || !cmd_set->count)
+		return 0;
+
 	fod_lhbm_white_cfg = &panel->mi_cfg.fod_lhbm_white_cfg[fod_lhbm_white_state];
 	if (fod_lhbm_white_cfg->update_done) {
 		pr_debug("fod lhbm %d param already updated\n",fod_lhbm_white_state);
@@ -2137,6 +2153,11 @@ int mi_dsi_panel_read_lhbm_white_param(struct dsi_panel *panel)
 	if (!panel || !panel->cur_mode || !panel->cur_mode->priv_info ||!display) {
 		pr_err("invalid params\n");
 		return -EAGAIN;
+	}
+
+	if (!panel->mi_cfg.fod_lhbm_white_update_flag) {
+		pr_debug("[%s] fod_lhbm_white_update_flag is not configed\n", panel->type);
+		return 0;
 	}
 
 	rc = mi_dsi_panel_read_lhbm_white_reg(panel,FOD_LHBM_WHITE_1000NIT_GIROFF);

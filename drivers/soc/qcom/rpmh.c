@@ -567,9 +567,18 @@ int rpmh_flush(const struct device *dev)
 		return 0;
 	}
 
-	do {
-		ret = rpmh_rsc_invalidate(ctrlr_to_drv(ctrlr));
-	} while (ret == -EAGAIN);
+	{
+		unsigned int retry = 500;
+
+		do {
+			ret = rpmh_rsc_invalidate(ctrlr_to_drv(ctrlr));
+			if (ret == -EAGAIN)
+				udelay(10);
+		} while (ret == -EAGAIN && --retry);
+
+		if (ret)
+			return ret;
+	}
 
 	/* First flush the cached batch requests */
 	ret = flush_batch(ctrlr);
@@ -620,9 +629,15 @@ int rpmh_invalidate(const struct device *dev)
 	invalidate_batch(ctrlr);
 	ctrlr->dirty = true;
 
-	do {
-		ret = rpmh_rsc_invalidate(ctrlr_to_drv(ctrlr));
-	} while (ret == -EAGAIN);
+	{
+		unsigned int retry = 500;
+
+		do {
+			ret = rpmh_rsc_invalidate(ctrlr_to_drv(ctrlr));
+			if (ret == -EAGAIN)
+				udelay(10);
+		} while (ret == -EAGAIN && --retry);
+	}
 
 	return ret;
 }

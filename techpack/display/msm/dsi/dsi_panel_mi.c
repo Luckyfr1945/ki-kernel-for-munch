@@ -818,6 +818,10 @@ int dsi_panel_esd_irq_ctrl(struct dsi_panel *panel,
 	ret = dsi_panel_esd_irq_ctrl_locked(panel, enable);
 	mutex_unlock(&panel->panel_lock);
 
+	/* Ensure in-flight ESD handlers finish before display unprepare proceeds */
+	if (!enable && gpio_is_valid(panel->mi_cfg.esd_err_irq_gpio) && panel->mi_cfg.esd_err_irq)
+		synchronize_irq(panel->mi_cfg.esd_err_irq);
+
 	return ret;
 }
 

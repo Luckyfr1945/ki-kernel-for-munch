@@ -2789,6 +2789,18 @@ static irqreturn_t esd_err_irq_handle(int irq, void *data)
 
 	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
 		dsi_panel_acquire_panel_lock(display->panel);
+
+		/* Drop spurious ESD interrupt if ESD checking is disabled or display is inactive */
+		if (!display->panel->mi_cfg.esd_err_enabled ||
+		    !dsi_panel_initialized(display->panel) ||
+		    (display->panel->power_mode != SDE_MODE_DPMS_ON &&
+		     display->panel->power_mode != SDE_MODE_DPMS_LP1)) {
+			DSI_INFO("%s esd irq ignored while disabled or inactive (power_mode=%d)\n",
+				 display->display_type, display->panel->power_mode);
+			dsi_panel_release_panel_lock(display->panel);
+			return IRQ_HANDLED;
+		}
+
 		dsi_panel_esd_irq_ctrl_locked(display->panel, false);
 
 		if (!dsi_panel_initialized(display->panel)) {
