@@ -541,6 +541,7 @@ mkdir -p ../release
 cp -f "$ZIP_FILENAME" ../release/
 mkdir -p ../../release 2>/dev/null || true
 cp -f "$ZIP_FILENAME" ../../release/ 2>/dev/null || true
+cp -f "$ZIP_FILENAME" /home/kiki/Unduhan/ 2>/dev/null || true
 cp -f "$ZIP_FILENAME" /home/kiki/Downloads/ 2>/dev/null || true
 mv "$ZIP_FILENAME" ../
 cd ..
