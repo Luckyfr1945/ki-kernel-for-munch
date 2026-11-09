@@ -1,11 +1,24 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-11-08  
+**Build Date:** 2026-11-09  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
+- Fatal Sleep-of-Death (SOD) & Screen Wake Freeze Resolution: restored upstream `needs_force_resume` sanitization in `drivers/base/power/runtime.c` and `include/linux/pm.h`. Previously, waking from wakelocks or deep sleep evaluated `pm_runtime_need_not_resume(dev)` as `true` on the Qualcomm Adreno 650 GPU (`adreno_device.c`), skipping its `runtime_resume` callback. The GPU remained in `RPM_SUSPENDED` while the panel backlight was powered, causing SurfaceFlinger/WindowManager display fence deadlocks, UI freeze, and triggering 60-second Android Framework Watchdog soft-reboots.
+- Display SDE Kickoff Panic Disabler: set `DEFAULT_PANIC = 0` in `techpack/display/msm/sde_dbg.c` and `msm-miui/sde_dbg.c`. Frame kickoff timeouts and debug dump delays during display wake transitions no longer panic or crash the phone, delegating recovery smoothly to hardware CTL reset. Fixed DMA buffer memory leak and NULL pointer dereference in SDE register dump routines.
+- Cpufreq Sugov Mutex Locking: protected cpufreq governor policy tuning with `down_read_trylock(&policy->rwsem)` in `drivers/misc/ki_profile.c` and retried gracefully when busy. Prevents kernel race conditions and use-after-free faults when switching profiles while secondary cores or the Prime core (CPU7) enter deep sleep/offline.
+- Ordered Workqueue for CPU Boost: migrated `input_boost_work` in `drivers/cpufreq/cpu-boost.c` to an ordered single-threaded workqueue (`cpu_boost_wq`) to prevent touch and powerkey boost races across multiple CPU clusters.
+- Balanced Profile Efficiency & Temperature Safeguard: disabled touch scheduler boost (`.touch_sched_boost = 0, .touch_boost_ms = 0`) in Balanced mode. Completely eliminates the aggressive 1-second full-throttle scheduler lock during scrolling, keeping device temperatures cool and restoring maximum battery efficiency for daily use.
+- Dedicated Performance / Gaming Turbo Boost: touch scheduler boost (`.touch_sched_boost = 1, .touch_boost_ms = 150`) is now strictly exclusive to Performance mode, holding instant 150ms task migration to big cores for competitive zero-latency gaming.
+- Unlocked Swappiness Control: removed hardcoded `vm_swappiness` override from `ki_profile.c`. Memory swappiness is now 100% user-customizable via WebUI `ki_optimizer`, init scripts, or `/proc/sys/vm/swappiness` without being overridden by kernel profile switching.
+- Dynamic Fsync Safety & SQLite Protection: set `dyn_fsync_active` default to `false` in `drivers/misc/dyn_fsync.c`. Eliminates the risk of SQLite database and WhatsApp chat corruption caused by deferred writes during unexpected shutdowns or force reboots, while keeping it opt-in via sysfs.
+- AnyKernel3 HyperOS / MIUI Flashing Fix: restricted live `getprop` ROM inspection to `BOOTMODE=true` in `anykernel.sh` and `anykernel_template/anykernel.sh` to prevent inheriting recovery properties during TWRP/OrangeFox flashing. Removed the generic `ro.product.system.name` fallback that caused HyperOS ports to be misidentified as AOSP, added regex support for Android 14/15/16 HyperOS incremental version strings (`^([0-9]+)?OS[0-9]`), and added inspection for `/system_ext/priv-app/MiuiSystemUI`.
+- Multi-Manager & Signature Verification Expansion: added OriginSU signature support and raised X.509 certificate limits to 2048 bytes in `KernelSU/kernel/manager/apk_sign.c` for full RSA 4096-bit compatibility across modern custom managers.
+- Module Startup Settlement Optimization: relaxed post-boot settlement sleep from 4s to 12s in `ki_optimizer_module/service.sh` to prevent CPU governor initialization from colliding with early post-boot screen-off transitions.
 
 ## Ki-kernel v1.6.4 (Fatal Sleep Lockup Fix & In-Kernel Non-Root Hotspot Engine) :
 - Fatal Screen-off Sleep Lockup & Black Screen Fix: reverted problematic PM runtime commit `d0b4c0a390fb` (`PM: runtime: Drop pm_runtime_force_suspend/resume()`) in `drivers/base/power/runtime.c` and `include/linux/pm.h`. This commit erroneously omitted `needs_force_resume = 1` for devices that were already runtime-suspended before system sleep (notably the Adreno GPU / KGSL). On wake, `pm_runtime_force_resume()` evaluated `!dev->power.needs_force_resume` and skipped powering back on the Adreno GPU and GDSC rails, causing SurfaceFlinger/InputDispatcher display fence deadlocks, system freezes, and Black Screen of Death.
