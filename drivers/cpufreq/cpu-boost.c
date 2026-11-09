@@ -495,7 +495,12 @@ static int cpu_boost_init(void)
 	int cpu, ret;
 	struct cpu_sync *s;
 
-	cpu_boost_wq = alloc_workqueue("cpuboost_wq", WQ_HIGHPRI, 0);
+	/*
+	 * Ordered: the boost works and input_boost_rem read-modify-write
+	 * sched_boost_active, and running them in parallel could leak a
+	 * refcounted sched boost that never gets released.
+	 */
+	cpu_boost_wq = alloc_ordered_workqueue("cpuboost_wq", WQ_HIGHPRI);
 	if (!cpu_boost_wq)
 		return -EFAULT;
 
