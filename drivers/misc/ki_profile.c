@@ -70,7 +70,7 @@ extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
 /*
- * Thermal Auto-Guard (Performance mode only, active while screen is on):
+ * Thermal Auto-Guard (whenever throttling is bypassed, while screen is on):
  * Thermal bypass stays active for max FPS, but throttling is re-armed when
  * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
  * Released again once die <= 75C, body <= 43C, and battery <= 41C.
@@ -169,10 +169,13 @@ static void ki_guard_log_missing_zones(void)
 /* Caller holds ki_guard_lock; returns true if worker must stop */
 static bool ki_guard_should_stop_locked(void)
 {
-	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
-		ki_guard_tripped = false;
+	/*
+	 * Nothing to watch while throttling is on, unless the guard itself armed
+	 * it and must release it. Keyed on the throttle state, not the profile:
+	 * the thermal_throttle node can bypass throttling in any profile.
+	 */
+	if (READ_ONCE(ki_thermal_throttle_enabled) && !ki_guard_tripped)
 		return true;
-	}
 	if (!READ_ONCE(ki_screen_on)) {
 		ki_guard_tripped = false;
 		ki_guard_parked = true;
