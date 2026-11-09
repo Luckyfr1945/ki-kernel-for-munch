@@ -342,12 +342,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
 	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
 	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
-	 * Swappiness 100 (Android's own default) lets cold app memory go to the 8GB
-	 * zRAM; at 50 the kernel dropped file cache instead and HyperOS UMMS killed
-	 * recent apps with most of zRAM still free, so switching apps reloaded them.
-	 * Touch sched boost (FULL_THROTTLE while touching, held 1s for the fling):
-	 * evdev scroll on munch went p90 15ms -> 9ms, matching Performance, while
-	 * idle and screen-off keep the cool Balanced placement.
+	 * Touch sched boost is kept off in Balanced (same as stock/v1.3) to maximize battery life.
+	 * Swappiness is not hardcoded here to allow user / ROM customization via /proc/sys/vm/swappiness.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
@@ -355,13 +351,13 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
 			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
 		},
-		.touch_sched_boost = 1,
-		.touch_boost_ms = 1000,
+		.touch_sched_boost = 0,
+		.touch_boost_ms = 0,
 		.thermal_throttle = true,
 		.up_migrate = 95, .down_migrate = 85,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 100, .wmark_scale = 12, .vfs_cache_pressure = 70,
+		.wmark_scale = 12, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
@@ -376,11 +372,12 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Sched boost enabled (.sched_boost = 1 / FULL_THROTTLE_BOOST): activates
 	 * core_ctl un-isolation, enables WALT frequency aggregation, and forces
 	 * placement policy to SCHED_BOOST_ON_BIG so render/audio threads are prioritized on Big cores.
+	 * Touch sched boost enabled (150ms hold) for ultra-responsive gaming input.
 	 * Window stats policy = 1 (WINDOW_STATS_MAX): responds immediately to peak load
 	 * bursts without latency from averaging.
 	 * Eager game thread promotion (up_migrate 55/40, grp 65/50) locks render pipelines to Big cores.
 	 * Uncapped hardware burst maximums (Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz).
-	 * Memory tuning: swappiness 20 (avoids mid-game zRAM swap), watermark_scale 25 (prevents direct reclaim allocstall pauses),
+	 * Memory tuning: watermark_scale 25 (prevents direct reclaim allocstall pauses),
 	 * and vfs_cache_pressure 50 (keeps game asset textures cached in RAM).
 	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
 	 */
@@ -394,10 +391,12 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.gpu_perf = true,
 		.thermal_throttle = false,
 		.sched_boost = 1,
+		.touch_sched_boost = 1,
+		.touch_boost_ms = 150,
 		.up_migrate = 55, .down_migrate = 40,
 		.grp_up_migrate = 65, .grp_down_migrate = 50,
 		.window_stats_policy = 1,
-		.swappiness = 20, .wmark_scale = 25, .vfs_cache_pressure = 50,
+		.wmark_scale = 25, .vfs_cache_pressure = 50,
 	},
 };
 
@@ -525,7 +524,7 @@ static int apply_ki_profile(int mode, bool force)
 
 		if (ki_cpufreq_reset_idle_floors(user_mode))
 			busy = true;
-		vm_swappiness = ut->swappiness;
+		/* vm_swappiness is left untouched so user/ROM/modules can freely tune /proc/sys/vm/swappiness */
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
