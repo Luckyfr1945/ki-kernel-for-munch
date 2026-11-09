@@ -75,8 +75,9 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         ROM_TYPE="ColorOS / OxygenOS / RealmeUI Port (Manual Override)";
     fi;
 
-    # 2. Check live getprop if available (flashed from booted Android via ksud / FK Kernel Manager / TWRP)
-    if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ]; then
+    # 2. Check live getprop, only when flashed from booted Android (ksud / FK Kernel Manager).
+    # In recovery getprop returns the recovery's own props, not the installed ROM's.
+    if [ "$IS_AOSP" -eq 0 ] && [ "$IS_MIUI" -eq 0 ] && [ "$IS_OPLUS" -eq 0 ] && [ "$BOOTMODE" = "true" ]; then
         if command -v getprop >/dev/null 2>&1; then
             OPLUS_PROP=$(getprop ro.build.version.oplusrom 2>/dev/null);
             [ -z "$OPLUS_PROP" ] && OPLUS_PROP=$(getprop ro.coloros.version 2>/dev/null);
@@ -110,7 +111,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                 IS_OPLUS=1;
                 ROM_TYPE="OPlus Port (ColorOS / OxygenOS / RealmeUI)";
                 ROM_DETAIL="${DISP_ID:-$BRAND}";
-            elif [ -n "$OS_NAME" ] || echo "$BUILD_INC" | grep -q -E "^OS[0-9]"; then
+            elif [ -n "$OS_NAME" ] || echo "$BUILD_INC" | grep -q -E "^([0-9]+)?OS[0-9]"; then
                 IS_MIUI=1;
                 ROM_TYPE="Xiaomi HyperOS";
                 ROM_DETAIL="${OS_NAME:-$BUILD_INC}";
@@ -118,11 +119,10 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                 IS_MIUI=1;
                 ROM_TYPE="Xiaomi MIUI";
                 ROM_DETAIL="${MIUI_NAME:-$BUILD_INC}";
-            elif [ -n "$SYS_NAME" ] || [ -n "$SYS_MODEL" ]; then
-                IS_AOSP=1;
-                ROM_TYPE="AOSP / Custom ROM";
-                ROM_DETAIL="${SYS_NAME:-$SYS_MODEL}";
             fi;
+            # No positive signature: let the filesystem inspection below decide.
+            # ro.product.system.name is set on every ROM ("mainline" on HyperOS
+            # ports), so it can't mean AOSP.
         fi;
     fi;
 
@@ -232,6 +232,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         # Check Xiaomi proprietary app structures (genuine MIUI / HyperOS framework only)
         if [ "$IS_OPLUS" -eq 0 ] && [ "$IS_MIUI" -eq 0 ]; then
             MIUI_DIRS="/s_chk/system/priv-app/MiuiSystemUI /s_chk/priv-app/MiuiSystemUI \
+                       /system_ext/priv-app/MiuiSystemUI \
                        /system_root/system/priv-app/MiuiSystemUI /system/priv-app/MiuiSystemUI \
                        /p_chk/priv-app/MiuiSystemUI /product/priv-app/MiuiSystemUI \
                        /s_chk/system/framework/miui.jar /system_root/system/framework/miui.jar";
@@ -253,7 +254,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
                     INC_VAL=$(grep -E "^ro\.build\.version\.incremental=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
                     REGION_VAL=$(grep -E "^ro\.(vendor\.)?miui\.build\.region=" "$prop" 2>/dev/null | head -n 1 | cut -d= -f2);
 
-                    if [ -n "$HOS_VAL" ] || echo "$INC_VAL" | grep -q -E "^OS[0-9]"; then
+                    if [ -n "$HOS_VAL" ] || echo "$INC_VAL" | grep -q -E "^([0-9]+)?OS[0-9]"; then
                         IS_MIUI=1;
                         ROM_TYPE="Xiaomi HyperOS";
                         ROM_DETAIL="${HOS_VAL:-$INC_VAL}";
