@@ -342,7 +342,9 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
 	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
 	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
-	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
+	 * Swappiness 100 (Android's own default) lets cold app memory go to the 8GB
+	 * zRAM; at 50 the kernel dropped file cache instead and HyperOS UMMS killed
+	 * recent apps with most of zRAM still free, so switching apps reloaded them.
 	 * Touch sched boost (FULL_THROTTLE while touching, held 1s for the fling):
 	 * evdev scroll on munch went p90 15ms -> 9ms, matching Performance, while
 	 * idle and screen-off keep the cool Balanced placement.
@@ -359,7 +361,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 95, .down_migrate = 85,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 12, .vfs_cache_pressure = 70,
+		.swappiness = 100, .wmark_scale = 12, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
