@@ -3559,44 +3559,40 @@ static int smblib_get_screen_on_clamped_level(struct smb_charger *chg, int raw_l
 	union power_supply_propval batt_temp = {0, };
 	int max_level = chg->thermal_levels;
 
-	/*
-	 * Force Fast Charge (Screen ON or OFF):
-	 * Completely unthrottles charging power to full speed (level 0).
-	 * Protects hardware only if battery reaches critical 49.0°C.
-	 */
-	if (chg->force_fast_charge > 0) {
-		smblib_get_prop_from_bms(chg, POWER_SUPPLY_PROP_TEMP, &batt_temp);
-		if (batt_temp.intval >= 490)
-			return raw_level;
-		return 0;
-	}
-
-	if (!chg->screen_on_fast_charge || !chg->screen_is_on)
-		return raw_level;
-
 	smblib_get_prop_from_bms(chg, POWER_SUPPLY_PROP_TEMP, &batt_temp);
 
 	/*
-	 * Screen-On Fast Charge:
-	 * Keeps charging wattage gacor (full speed) while using the phone / gaming:
-	 * - Under 45°C: level 0 (Full turbo speed 67W / PPS)
-	 * - 45°C - 47°C: level 1 (~45W-50W PPS)
-	 * - 47°C - 49°C: level 3 (~35W PPS)
-	 * - >= 49°C: fallback to raw thermal level for battery protection
+	 * Force Fast Charge & Screen-On Fast Charge:
+	 * Keeps charging wattage maximum ("gacor"):
+	 * - Laptop C-to-C gets full 15W (3A @ 5V).
+	 * - 33W QC/HVDCP gets full 40W peak.
+	 * - 67W PPS gets full 67W peak.
+	 *
+	 * Smart Progressive Thermal Stepping (unthrottled charging with safe battery protection):
+	 * - Under 43°C: Level 0 (Full maximum wattage: 67W PPS / 40W QC / 15W USB)
+	 * - 43°C - 45°C: Level 1 (~50W PPS / ~32W QC)
+	 * - 45°C - 47°C: Level 2 (~38W PPS / ~26W QC)
+	 * - 47°C - 49°C: Level 3 (~28W PPS / ~20W QC)
+	 * - >= 49°C: Fallback to raw system thermal level for absolute hardware & battery safety
 	 */
-	if (batt_temp.intval < 450)
-		max_level = 0;
-	else if (batt_temp.intval < 470)
-		max_level = 1;
-	else if (batt_temp.intval < 490)
-		max_level = 3;
-	else
-		max_level = chg->thermal_levels;
+	if (chg->force_fast_charge > 0 || (chg->screen_on_fast_charge && chg->screen_is_on)) {
+		if (batt_temp.intval < 430)
+			max_level = 0;
+		else if (batt_temp.intval < 450)
+			max_level = 1;
+		else if (batt_temp.intval < 470)
+			max_level = 2;
+		else if (batt_temp.intval < 490)
+			max_level = 3;
+		else
+			max_level = chg->thermal_levels;
 
-	if (raw_level > max_level) {
-		pr_info("smb5: Screen-On Fast Charge clamp: raw_lvl=%d -> clamped_lvl=%d (batt_temp=%d, screen_on=%d, force=%d)\n",
-			raw_level, max_level, batt_temp.intval, chg->screen_on_fast_charge, chg->force_fast_charge);
-		return max_level;
+		if (raw_level > max_level) {
+			pr_info("smb5: Fast Charge clamp: raw_lvl=%d -> clamped_lvl=%d (batt_temp=%d, screen_on=%d, force=%d)\n",
+				raw_level, max_level, batt_temp.intval, chg->screen_on_fast_charge, chg->force_fast_charge);
+			return max_level;
+		}
+		return raw_level;
 	}
 
 	return raw_level;
@@ -3721,7 +3717,7 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 		    chg->real_charger_type == POWER_SUPPLY_TYPE_USB_CDP) {
 			if (chg->force_fast_charge > 0) {
 				vote(chg->usb_icl_votable, USB_PSY_VOTER, true, chg->force_fast_charge_ua);
-				vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, false, 0);
+				vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, chg->force_fast_charge_ua);
 			} else {
 				vote(chg->usb_icl_votable, USB_PSY_VOTER, true,
 					(chg->real_charger_type == POWER_SUPPLY_TYPE_USB_CDP) ?
@@ -3744,9 +3740,10 @@ int smblib_set_force_fast_charge(struct smb_charger *chg, int val)
 			   chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
 			   chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5) {
 			if (chg->force_fast_charge > 0) {
-				vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, chg->force_fast_charge_ua);
+				int hvdcp_target = max(chg->force_fast_charge_ua, 3500000);
+				vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, hvdcp_target);
 				if (is_client_vote_enabled(chg->usb_icl_votable, HVDCP2_ICL_VOTER))
-					vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, true, chg->force_fast_charge_ua);
+					vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, true, hvdcp_target);
 			} else {
 				vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, HVDCP_CURRENT_UA);
 				if (is_client_vote_enabled(chg->usb_icl_votable, HVDCP2_ICL_VOTER))
@@ -3825,17 +3822,28 @@ static int smblib_therm_charging(struct smb_charger *chg)
 			thermal_fcc_ua =
 				chg->thermal_fcc_pps_cp[chg->pps_thermal_level];
 		} else {
+			int pd_lvl = smblib_get_screen_on_clamped_level(chg, chg->system_temp_level);
 			thermal_icl_ua =
-				chg->thermal_mitigation_icl[chg->system_temp_level];
+				chg->thermal_mitigation_icl[pd_lvl];
 			thermal_fcc_ua =
-				chg->thermal_mitigation_pd_base[chg->system_temp_level];
+				chg->thermal_mitigation_pd_base[pd_lvl];
+			if (chg->force_fast_charge > 0) {
+				thermal_icl_ua = max(thermal_icl_ua, chg->force_fast_charge_ua);
+				thermal_fcc_ua = max(thermal_fcc_ua, 4500000);
+			}
 		}
 		break;
 	case POWER_SUPPLY_TYPE_USB_DCP:
-	default:
-		thermal_icl_ua = chg->thermal_mitigation_dcp[chg->system_temp_level];
-		thermal_fcc_ua = chg->thermal_mitigation[chg->system_temp_level];
+	default: {
+		int dcp_lvl = smblib_get_screen_on_clamped_level(chg, chg->system_temp_level);
+		thermal_icl_ua = chg->thermal_mitigation_dcp[dcp_lvl];
+		thermal_fcc_ua = chg->thermal_mitigation[dcp_lvl];
+		if (chg->force_fast_charge > 0) {
+			thermal_icl_ua = max(thermal_icl_ua, chg->force_fast_charge_ua);
+			thermal_fcc_ua = max(thermal_fcc_ua, 3500000);
+		}
 		break;
+	}
 	}
 
 	pr_info("###thermal_icl_ua is %d, chg->system_temp_level: %d, thermal_fcc_ua is %d, charger type = %d\n",
@@ -7018,8 +7026,18 @@ static int smblib_handle_usb_current(struct smb_charger *chg,
 	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_FLOAT && (usb_current == SUSPEND_CURRENT_UA))
 		is_float = true;
 
-	if ((usb_current > 0 && usb_current < USBIN_500MA) || (usb_current == USBIN_900MA))
+	if (usb_current > 0 && usb_current < USBIN_500MA)
 		usb_current = USBIN_500MA;
+
+	typec_mode = smblib_get_prop_typec_mode(chg);
+	if (typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH)
+		usb_current = max(usb_current, TYPEC_HIGH_CURRENT_UA);
+	else if (typec_mode == POWER_SUPPLY_TYPEC_SOURCE_MEDIUM)
+		usb_current = max(usb_current, TYPEC_MEDIUM_CURRENT_UA);
+
+	if (chg->force_fast_charge > 0 && usb_current < chg->force_fast_charge_ua)
+		usb_current = chg->force_fast_charge_ua;
+
 	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_FLOAT) {
 		if (usb_current == -ETIMEDOUT || is_float) {
 			/* we do not use USB500mA for float charger */
@@ -7045,14 +7063,23 @@ static int smblib_handle_usb_current(struct smb_charger *chg,
 				 * Valid FLOAT charger, report the current
 				 * based of Rp.
 				 */
-				typec_mode = smblib_get_prop_typec_mode(chg);
+				int target_float = FLOAT_CHARGER_UA;
+				if (typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH)
+					target_float = TYPEC_HIGH_CURRENT_UA;
+				else if (typec_mode == POWER_SUPPLY_TYPEC_SOURCE_MEDIUM)
+					target_float = TYPEC_MEDIUM_CURRENT_UA;
+				if (chg->force_fast_charge > 0)
+					target_float = max(target_float, chg->force_fast_charge_ua);
 				rc = vote(chg->usb_icl_votable,
-						SW_ICL_MAX_VOTER, true, FLOAT_CHARGER_UA);
+						SW_ICL_MAX_VOTER, true, target_float);
 				if (rc < 0)
 					return rc;
 			} else {
+				int target_dcp = DCP_CURRENT_UA;
+				if (chg->force_fast_charge > 0)
+					target_dcp = max(target_dcp, chg->force_fast_charge_ua);
 				rc = vote(chg->usb_icl_votable,
-					SW_ICL_MAX_VOTER, true, DCP_CURRENT_UA);
+					SW_ICL_MAX_VOTER, true, target_dcp);
 				if (rc < 0)
 					return rc;
 			}
@@ -7068,7 +7095,7 @@ static int smblib_handle_usb_current(struct smb_charger *chg,
 			if (rc < 0)
 				return rc;
 			rc = vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER,
-							false, 0);
+							true, usb_current);
 			if (rc < 0)
 				return rc;
 		}
@@ -7091,9 +7118,9 @@ static int smblib_handle_usb_current(struct smb_charger *chg,
 			return rc;
 		}
 
-		rc = vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, false, 0);
+		rc = vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, usb_current);
 		if (rc < 0) {
-			pr_err("Couldn't remove SW_ICL_MAX vote rc=%d\n", rc);
+			pr_err("Couldn't set SW_ICL_MAX vote rc=%d\n", rc);
 			return rc;
 		}
 
@@ -9454,7 +9481,7 @@ static void smblib_handle_hvdcp_check_timeout(struct smb_charger *chg,
 			if (!chg->raise_vbus_to_detect
 					&& chg->real_charger_type != POWER_SUPPLY_TYPE_USB_HVDCP_3P5) {
 				int qc_icl = (chg->force_fast_charge > 0) ?
-						chg->force_fast_charge_ua : 0;
+						max(chg->force_fast_charge_ua, 3500000) : 0;
 				if (chg->is_qc_class_a)
 					vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
 						qc_icl ? qc_icl : HVDCP_CLASS_A_MAX_UA);
@@ -9511,8 +9538,6 @@ static bool smblib_handle_wireless_by_usbin_charge(struct smb_charger *chg)
 
 static void update_sw_icl_max(struct smb_charger *chg, int pst)
 {
-	union power_supply_propval val = {0, };
-
 	if (chg->power_good_en) {
 		smblib_dbg(chg, PR_MISC, "power good on, no update icl\n");
 		return;
@@ -9537,35 +9562,37 @@ static void update_sw_icl_max(struct smb_charger *chg, int pst)
 
 	/* rp-std or legacy, USB BC 1.2 */
 	switch (pst) {
-	case POWER_SUPPLY_TYPE_USB:
-		smblib_get_prop_usb_present(chg, &val);
-		/*
-		 * USB_PSY will vote to increase the current to 500/900mA once
-		 * enumeration is done.
-		 */
-		if (!is_client_vote_enabled(chg->usb_icl_votable,
-						USB_PSY_VOTER)) {
-			int sdp_icl = (chg->force_fast_charge > 0) ?
-					chg->force_fast_charge_ua : SDP_CURRENT_UA;
-			vote(chg->usb_icl_votable, USB_PSY_VOTER, true, sdp_icl);
-			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, false, 0);
-		} else if ((chg->typec_mode == POWER_SUPPLY_TYPEC_NONE)
-				&& (val.intval == 1)) {
-			int sdp_icl = (chg->force_fast_charge > 0) ?
-					chg->force_fast_charge_ua : SDP_CURRENT_UA;
-			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, sdp_icl);
-		} else
-			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, false, 0);
+	case POWER_SUPPLY_TYPE_USB: {
+		int target_icl = SDP_CURRENT_UA;
+		if (chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH)
+			target_icl = TYPEC_HIGH_CURRENT_UA;
+		else if (chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_MEDIUM)
+			target_icl = TYPEC_MEDIUM_CURRENT_UA;
+
+		if (chg->force_fast_charge > 0)
+			target_icl = max(target_icl, chg->force_fast_charge_ua);
+
+		vote(chg->usb_icl_votable, USB_PSY_VOTER, true, target_icl);
+		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, target_icl);
 		break;
-	case POWER_SUPPLY_TYPE_USB_CDP:
-		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
-			(chg->force_fast_charge > 0) ? chg->force_fast_charge_ua : CDP_CURRENT_UA);
+	}
+	case POWER_SUPPLY_TYPE_USB_CDP: {
+		int target_cdp = CDP_CURRENT_UA;
+		if (chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH)
+			target_cdp = TYPEC_HIGH_CURRENT_UA;
+		if (chg->force_fast_charge > 0)
+			target_cdp = max(target_cdp, chg->force_fast_charge_ua);
+		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, target_cdp);
 		break;
-	case POWER_SUPPLY_TYPE_USB_DCP:
-		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
-			(chg->force_fast_charge > 0) ? chg->force_fast_charge_ua : DCP_CURRENT_UA);
+	}
+	case POWER_SUPPLY_TYPE_USB_DCP: {
+		int target_dcp = DCP_CURRENT_UA;
+		if (chg->force_fast_charge > 0)
+			target_dcp = max(target_dcp, chg->force_fast_charge_ua);
+		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, target_dcp);
 		break;
-	case POWER_SUPPLY_TYPE_USB_FLOAT:
+	}
+	case POWER_SUPPLY_TYPE_USB_FLOAT: {
 		/*
 		 * limit ICL to 100mA, the USB driver will enumerate to check
 		 * if this is a SDP and appropriately set the current
@@ -9574,7 +9601,14 @@ static void update_sw_icl_max(struct smb_charger *chg, int pst)
 		if (smblib_handle_wireless_by_usbin_charge(chg))
 			break;
 
-		if (!chg->recheck_charger)
+		if (chg->force_fast_charge > 0 ||
+		    chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH) {
+			int float_icl = (chg->force_fast_charge > 0) ?
+					chg->force_fast_charge_ua : TYPEC_HIGH_CURRENT_UA;
+			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, float_icl);
+		} else if (chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_MEDIUM) {
+			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, TYPEC_MEDIUM_CURRENT_UA);
+		} else if (!chg->recheck_charger)
 			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
 					SDP_100_MA);
 		else
@@ -9582,6 +9616,7 @@ static void update_sw_icl_max(struct smb_charger *chg, int pst)
 					FLOAT_CHARGER_UA);
 
 		break;
+	}
 	case POWER_SUPPLY_TYPE_UNKNOWN:
 	default:
 		if (smblib_handle_wireless_by_usbin_charge(chg))
@@ -12887,10 +12922,10 @@ int smblib_init(struct smb_charger *chg)
 	chg->thermal_status = TEMP_BELOW_RANGE;
 	chg->pps_thermal_level = -EINVAL;
 	chg->screen_is_on = true;
-	chg->screen_on_fast_charge = 0;
+	chg->screen_on_fast_charge = 1;
 	chg->raw_system_temp_level = 0;
-	chg->force_fast_charge = 0;
-	chg->force_fast_charge_ua = 500000;
+	chg->force_fast_charge = 1;
+	chg->force_fast_charge_ua = 3000000;
 	chg->pd_verifed = true;
 #if (!defined CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH) && (!defined CONFIG_DUAL_FUEL_GAUGE_BQ27Z561)
 	chg->esr_work_status = ESR_CHECK_FCC_NOLIMIT;

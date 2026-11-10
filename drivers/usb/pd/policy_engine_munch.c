@@ -5525,8 +5525,10 @@ static void usbpd_fixed_pdo_workfunc(struct work_struct *w)
 				}
 			}
 		}
-		if (!target_pdo)
-			target_pdo = 2;
+		if (!target_pdo) {
+			usbpd_info(&pd->dev, "no 9V fixed pdo found, staying at current 5V contract\n");
+			goto out;
+		}
 
 		usbpd_info(&pd->dev, "fixed pdo force to select to 9V (pdo %d)\n", target_pdo);
 		pd_select_pdo(pd, target_pdo, 0, 0);
