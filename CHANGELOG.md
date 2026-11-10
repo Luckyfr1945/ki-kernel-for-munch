@@ -8,6 +8,7 @@
 ---
 
 ## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
+- Upstream BPF Security & Stability Hardening: backported 15 official upstream Linux stable bugfixes for the eBPF subsystem. Eliminates 3 Use-After-Free vulnerabilities (`bpf_netns_link_update_prog`, `tcp_bpf_sendmsg`, offload info), prevents 4 integer overflow conditions in `bpf_msg_push_data`/`pop_data` and array map element indexing, eliminates `metadata_dst` route leaks on IPv4/IPv6 BPF redirection, resolves race conditions in `bpf_get_btf_vmlinux`, and hardens verifier precision tracking. Provides rock-solid networking and tethering offload reliability across Android 14–17.
 - Laptop 15W C-to-C & Maximum Charging Wattage Unthrottling:
   - Policy Engine Munch: fixed fatal PDO negotiation bug in `drivers/usb/pd/policy_engine_munch.c` where laptops/chargers lacking a 9V fixed PDO caused `usbpd_fixed_pdo_workfunc` to force an invalid PDO index 2, resulting in request rejection and fallback to 500mA. The driver now cleanly retains the negotiated 5V/3A (15W) contract.
   - Type-C Rp & USB Current Resolution: updated `smb5-lib-munch.c` to parse `typec_mode` (`POWER_SUPPLY_TYPEC_SOURCE_HIGH` = 3.0A, `SOURCE_MEDIUM` = 1.5A) in both `update_sw_icl_max` and `smblib_handle_usb_current`. USB gadget enumeration no longer truncates Type-C input current down to 500mA SDP, ensuring full 15W draw from laptop C-to-C ports.
