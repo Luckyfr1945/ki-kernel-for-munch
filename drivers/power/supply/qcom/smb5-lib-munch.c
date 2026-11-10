@@ -11917,9 +11917,7 @@ static void bms_update_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger,
 						bms_update_work);
-	int bms_i2c_error_count;
 	int ret;
-	static int input_suspend = 0;
 	union power_supply_propval val = {0,};
 
 
@@ -11929,18 +11927,10 @@ static void bms_update_work(struct work_struct *work)
 
 	ret = power_supply_get_property(chg->bms_psy,
 			POWER_SUPPLY_PROP_I2C_ERROR_COUNT, &val);
-	if (!ret) {
-			bms_i2c_error_count = val.intval;
-	}
-
-	if (bms_i2c_error_count && chg->batt_psy && !input_suspend) {
-		input_suspend = 1;
-		smblib_set_usb_suspend(chg, true);
-	} else if (!bms_i2c_error_count && chg->batt_psy && input_suspend) {
-		input_suspend = 0;
-		if (!chg->bypass_active)
-			smblib_set_usb_suspend(chg, false);
-	}
+	if (!ret && val.intval)
+		smblib_err(chg,
+			"BMS I2C errors reported (%d), not suspending input\n",
+			val.intval);
 
 	if (chg->batt_psy)
 		power_supply_changed(chg->batt_psy);
