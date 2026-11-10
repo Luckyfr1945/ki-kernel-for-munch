@@ -431,8 +431,6 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -e LTO_NONE \
         -d LTO_CLANG \
         -d LOCALVERSION_AUTO \
-        -d MODULE_SIG_SHA512 \
-        -d MODULE_SIG_HASH \
         -d CORESIGHT \
         -d IPC_LOGGING \
         -d SCHEDSTATS \
