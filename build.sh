@@ -177,7 +177,8 @@ apply_ksu_config() {
                 -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -e KSU_SUSFS_OPEN_REDIRECT \
                 -e KSU_SUSFS_SUS_OVERLAYFS \
-                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+                -e KSU_SUSFS_PRIORITY_UID_FILTER
         else
             scripts/config --file out/.config \
                 -e KSU_MANUAL_HOOK \
@@ -198,7 +199,8 @@ apply_ksu_config() {
                 -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -d KSU_SUSFS_OPEN_REDIRECT \
                 -d KSU_SUSFS_SUS_OVERLAYFS \
-                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+                -d KSU_SUSFS_PRIORITY_UID_FILTER
         fi
     else
         scripts/config --file out/.config \
@@ -220,7 +222,8 @@ apply_ksu_config() {
             -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             -d KSU_SUSFS_OPEN_REDIRECT \
             -d KSU_SUSFS_SUS_OVERLAYFS \
-            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+            -d KSU_SUSFS_PRIORITY_UID_FILTER
     fi
 }
 
