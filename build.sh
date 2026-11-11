@@ -359,6 +359,46 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     apply_ksu_config
     apply_droidspaces_config
+
+    # Enforce pure AOSP optimizations & disable MIUI/OEM proprietary hooks
+    scripts/config --file out/.config \
+        -d SF_BINDER \
+        -d MILLET \
+        -d MIGT \
+        -d MIGT_ENERGY_MODEL \
+        -d BOOTUP_RECLAIM \
+        -d MI_RECLAIM \
+        -d RTMM \
+        -d MIUI_ZRAM_MEMORY_TRACKING \
+        -d REGULATOR_QCOM_RPMH \
+        -d I2C_RETRY \
+        -d PSTORE_COMPRESS \
+        --set-str STATIC_USERMODEHELPER_PATH "" \
+        -e EROFS_FS \
+        -e EROFS_FS_XATTR \
+        -e EROFS_FS_POSIX_ACL \
+        -e EROFS_FS_SECURITY \
+        -e EROFS_FS_ZIP \
+        -e EROFS_FS_PCPU_KTHREAD \
+        -e EROFS_FS_PCPU_KTHREAD_HIPRI \
+        -e OVERLAY_FS \
+        -d DEBUG_FS \
+        -e LTO_NONE \
+        -d LTO_CLANG \
+        -d LOCALVERSION_AUTO \
+        -e MODULE_FORCE_LOAD \
+        -d MODVERSIONS \
+        -d MODULE_SIG \
+        -d MODULE_SIG_ALL \
+        -d MODULE_SIG_SHA512 \
+        -d MODULE_SIG_HASH \
+        -e CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+        -d CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
+        -d CORESIGHT \
+        -d IPC_LOGGING \
+        -d SCHEDSTATS \
+        -d DEBUG_INFO
+
     make $MAKE_ARGS olddefconfig
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
@@ -496,6 +536,8 @@ if [ "$TARGET_OS" == "aosp" ]; then
     mkdir -p anykernel/kernels/aosp/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
     cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
+    cp build_artifacts/aosp/dtb_oc anykernel/kernels/aosp/dtb_oc
+    cp build_artifacts/aosp/dtb_stock anykernel/kernels/aosp/dtb_stock
     cp build_artifacts/aosp/dtb_oc anykernel/dtb_oc
     cp build_artifacts/aosp/dtb_stock anykernel/dtb_stock
     cp build_artifacts/aosp/dtb anykernel/dtb
@@ -503,6 +545,8 @@ elif [ "$TARGET_OS" == "miui" ]; then
     mkdir -p anykernel/kernels/miui/
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
+    cp build_artifacts/miui/dtb_oc anykernel/kernels/miui/dtb_oc
+    cp build_artifacts/miui/dtb_stock anykernel/kernels/miui/dtb_stock
     cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
     cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
     cp build_artifacts/miui/dtb anykernel/dtb
@@ -510,6 +554,8 @@ elif [ "$TARGET_OS" == "coloros" ]; then
     mkdir -p anykernel/kernels/coloros/
     cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
     cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
+    cp build_artifacts/miui/dtb_oc anykernel/kernels/coloros/dtb_oc
+    cp build_artifacts/miui/dtb_stock anykernel/kernels/coloros/dtb_stock
     cp build_artifacts/miui/Image anykernel/Image
     cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
     cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
@@ -518,13 +564,23 @@ else
     mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/ anykernel/kernels/coloros/
     cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
     cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
+    cp build_artifacts/aosp/dtb_oc anykernel/kernels/aosp/dtb_oc
+    cp build_artifacts/aosp/dtb_stock anykernel/kernels/aosp/dtb_stock
+
     cp build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
+    cp build_artifacts/miui/dtb_oc anykernel/kernels/miui/dtb_oc
+    cp build_artifacts/miui/dtb_stock anykernel/kernels/miui/dtb_stock
+
     cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
     cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
-    cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
-    cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
+    cp build_artifacts/miui/dtb_oc anykernel/kernels/coloros/dtb_oc
+    cp build_artifacts/miui/dtb_stock anykernel/kernels/coloros/dtb_stock
+
+    # Fallback DTBs in root (safe stock 670 MHz default)
+    cp build_artifacts/aosp/dtb_oc anykernel/dtb_oc
+    cp build_artifacts/aosp/dtb_stock anykernel/dtb_stock
+    cp build_artifacts/aosp/dtb anykernel/dtb
 fi
 
 # DO NOT include dtbo (preserve panel/touch drivers from ROM)

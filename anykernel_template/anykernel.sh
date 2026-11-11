@@ -306,59 +306,85 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         ui_print "  -> Kernel Target: OEM Display variant (Xiaomi DSI timings)";
         ui_print "  -> Stub Drivers : OPlus Watchdog & Daemons Bypass active";
         rom_arg="rom_port";
-        if [ -f "$AKHOME/kernels/coloros/Image" ]; then
-            cp -f "$AKHOME/kernels/coloros/Image" "$AKHOME/Image";
-            [ -f "$AKHOME/kernels/coloros/dtb" ] && cp -f "$AKHOME/kernels/coloros/dtb" "$AKHOME/dtb_vendor";
-        else
-            cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
-            [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
-        fi;
+        dtbo_arg="dtbo_oem";
+        OS_DIR="$AKHOME/kernels/coloros";
+        [ -d "$OS_DIR" ] || OS_DIR="$AKHOME/kernels/miui";
     elif [ "$IS_MIUI" -eq 1 ] && [ "$IS_AOSP" -eq 0 ]; then
         rom_arg="rom_oem";
+        dtbo_arg="dtbo_oem";
         if [ -n "$ROM_DETAIL" ]; then
             ui_print "  -> ROM Detected : $ROM_TYPE ($ROM_DETAIL)";
         else
             ui_print "  -> ROM Detected : ${ROM_TYPE:-Xiaomi MIUI / HyperOS}";
         fi;
         ui_print "  -> Kernel Target: MIUI / HyperOS";
-        cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
-        [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
+        OS_DIR="$AKHOME/kernels/miui";
     else
         rom_arg="rom_aosp";
+        dtbo_arg="dtbo_def";
         if [ -n "$ROM_DETAIL" ]; then
             ui_print "  -> ROM Detected : ${ROM_TYPE:-AOSP / Custom ROM} ($ROM_DETAIL)";
         else
             ui_print "  -> ROM Detected : ${ROM_TYPE:-AOSP / Custom ROM}";
         fi;
         ui_print "  -> Kernel Target: AOSP";
-        cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
-        [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
+        OS_DIR="$AKHOME/kernels/aosp";
+    fi;
+
+    if [ -f "$OS_DIR/Image" ]; then
+        cp -f "$OS_DIR/Image" "$AKHOME/Image";
+    elif [ -f "$AKHOME/kernels/miui/Image" ]; then
+        cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+    fi;
+
+    if [ -f "$OS_DIR/dtb_oc" ]; then
+        cp -f "$OS_DIR/dtb_oc" "$AKHOME/dtb_oc";
+    fi;
+    if [ -f "$OS_DIR/dtb_stock" ]; then
+        cp -f "$OS_DIR/dtb_stock" "$AKHOME/dtb_stock";
+    fi;
+    if [ -f "$OS_DIR/dtb" ]; then
+        cp -f "$OS_DIR/dtb" "$AKHOME/dtb_vendor";
     fi;
     ui_print "--------------------------------------";
 elif [ -f "$AKHOME/kernels/coloros/Image" ]; then
     rom_arg="rom_port";
+    dtbo_arg="dtbo_oem";
+    OS_DIR="$AKHOME/kernels/coloros";
     ui_print "--------------------------------------";
     ui_print "  -> Kernel Target: ColorOS / OxygenOS / RealmeUI";
     ui_print "  -> Compatibility: Universal OPlus Port Mode";
     ui_print "--------------------------------------";
-    cp -f "$AKHOME/kernels/coloros/Image" "$AKHOME/Image";
-    [ -f "$AKHOME/kernels/coloros/dtb" ] && cp -f "$AKHOME/kernels/coloros/dtb" "$AKHOME/dtb_vendor";
+    cp -f "$OS_DIR/Image" "$AKHOME/Image";
+    [ -f "$OS_DIR/dtb" ] && cp -f "$OS_DIR/dtb" "$AKHOME/dtb_vendor";
+    [ -f "$OS_DIR/dtb_stock" ] && cp -f "$OS_DIR/dtb_stock" "$AKHOME/dtb_stock";
+    [ -f "$OS_DIR/dtb_oc" ] && cp -f "$OS_DIR/dtb_oc" "$AKHOME/dtb_oc";
 elif [ -f "$AKHOME/kernels/miui/Image" ]; then
     rom_arg="rom_oem";
+    dtbo_arg="dtbo_oem";
+    OS_DIR="$AKHOME/kernels/miui";
     ui_print "  -> Target: MIUI / HyperOS";
-    cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
-    [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
+    cp -f "$OS_DIR/Image" "$AKHOME/Image";
+    [ -f "$OS_DIR/dtb" ] && cp -f "$OS_DIR/dtb" "$AKHOME/dtb_vendor";
+    [ -f "$OS_DIR/dtb_stock" ] && cp -f "$OS_DIR/dtb_stock" "$AKHOME/dtb_stock";
+    [ -f "$OS_DIR/dtb_oc" ] && cp -f "$OS_DIR/dtb_oc" "$AKHOME/dtb_oc";
 elif [ -f "$AKHOME/kernels/aosp/Image" ]; then
     rom_arg="rom_aosp";
+    dtbo_arg="dtbo_def";
+    OS_DIR="$AKHOME/kernels/aosp";
     ui_print "  -> Target: AOSP";
-    cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
-    [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
+    cp -f "$OS_DIR/Image" "$AKHOME/Image";
+    [ -f "$OS_DIR/dtb" ] && cp -f "$OS_DIR/dtb" "$AKHOME/dtb_vendor";
+    [ -f "$OS_DIR/dtb_stock" ] && cp -f "$OS_DIR/dtb_stock" "$AKHOME/dtb_stock";
+    [ -f "$OS_DIR/dtb_oc" ] && cp -f "$OS_DIR/dtb_oc" "$AKHOME/dtb_oc";
 elif [ -f "$AKHOME/kernels/Image" ]; then
     rom_arg="rom_port";
+    dtbo_arg="dtbo_oem";
     cp -f "$AKHOME/kernels/Image" "$AKHOME/Image";
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
 elif [ -f "$AKHOME/Image" ]; then
     rom_arg="${rom_arg:-rom_port}";
+    dtbo_arg="${dtbo_arg:-dtbo_oem}";
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
 fi;
 
@@ -479,7 +505,7 @@ rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
 # 1. Flash Kernel Image to boot partition with e404 dynamic cmdline
 ui_print "- Flashing kernel (boot)...";
 split_boot;
-patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_oem},dtbo_oem,dtb_def,batt_def";
+patch_cmdline "e404_args" "e404_args=${rom_arg:-rom_aosp},${dtbo_arg:-dtbo_def},dtb_def,batt_def";
 flash_boot;
 
 # 2. Flash DTB to vendor_boot partition
