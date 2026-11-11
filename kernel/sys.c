@@ -1282,12 +1282,13 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		susfs_spoof_uname(&tmp);
 #endif
 	/*
-	 * Only allow fake uname for actual root system daemons (UID 0) during early
-	 * boot (< 120 seconds) to satisfy Android 16/17 NetBpfLoad kernel checks.
+	 * Only allow fake uname for actual system/root daemons (UID <= 1000, e.g.
+	 * AID_ROOT = 0 for netd/bpfloader, AID_SYSTEM = 1000 for netbpfload/uprobestats)
+	 * to satisfy Android 16/17 and Tethering APEX NetBpfLoad kernel checks.
 	 * Regular user apps (UID >= 10000, Native Detector, games) calling
 	 * prctl(PR_SET_NAME) will NOT trigger this, preventing detection and bans.
 	 */
-	if (unlikely(current_uid().val == 0 && ktime_get_boottime_seconds() < 120)) {
+	if (unlikely(current_uid().val <= 1000)) {
 		if (!strncmp(current->comm, "bpfloader", 9) ||
 		    !strncmp(current->comm, "netbpfload", 10) ||
 		    !strncmp(current->comm, "uprobestats", 11) ||
