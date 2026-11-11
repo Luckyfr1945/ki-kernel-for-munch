@@ -455,13 +455,13 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
     fi;
 fi;
 
-# Apply chosen DTB to vendor_boot
-if [ "$CHOSEN_DTB" = "stock" ] && [ -f "$AKHOME/dtb_stock" ]; then
-    cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
-elif [ -f "$AKHOME/dtb_oc" ]; then
+# Apply chosen DTB to vendor_boot (default fallback is always safe Stock 670 MHz)
+if [ "$CHOSEN_DTB" = "oc" ] && [ -f "$AKHOME/dtb_oc" ]; then
     cp -f "$AKHOME/dtb_oc" "$AKHOME/dtb_vendor";
 elif [ -f "$AKHOME/dtb_stock" ]; then
     cp -f "$AKHOME/dtb_stock" "$AKHOME/dtb_vendor";
+elif [ -f "$AKHOME/dtb_oc" ]; then
+    cp -f "$AKHOME/dtb_oc" "$AKHOME/dtb_vendor";
 fi;
 
 # Preserve existing single-kernel dtb for vendor_boot before clearing boot dtb

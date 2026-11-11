@@ -386,7 +386,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     else
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/aosp/dtb_stock
     fi
-    cp build_artifacts/aosp/dtb_oc build_artifacts/aosp/dtb
+    cp build_artifacts/aosp/dtb_stock build_artifacts/aosp/dtb
     cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
@@ -440,6 +440,8 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -d MODULE_SIG_ALL \
         -d MODULE_SIG_SHA512 \
         -d MODULE_SIG_HASH \
+        -e CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+        -d CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
         -d CORESIGHT \
         -d IPC_LOGGING \
         -d SCHEDSTATS \
@@ -472,7 +474,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
     else
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/miui/dtb_stock
     fi
-    cp build_artifacts/miui/dtb_oc build_artifacts/miui/dtb
+    cp build_artifacts/miui/dtb_stock build_artifacts/miui/dtb
     cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image

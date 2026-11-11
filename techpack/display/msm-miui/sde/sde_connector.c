@@ -2794,7 +2794,8 @@ static irqreturn_t esd_err_irq_handle(int irq, void *data)
 		if (!display->panel->mi_cfg.esd_err_enabled ||
 		    !dsi_panel_initialized(display->panel) ||
 		    (display->panel->power_mode != SDE_MODE_DPMS_ON &&
-		     display->panel->power_mode != SDE_MODE_DPMS_LP1)) {
+		     display->panel->power_mode != SDE_MODE_DPMS_LP1 &&
+		     display->panel->power_mode != SDE_MODE_DPMS_LP2)) {
 			DSI_INFO("%s esd irq ignored while disabled or inactive (power_mode=%d)\n",
 				 display->display_type, display->panel->power_mode);
 			dsi_panel_release_panel_lock(display->panel);
@@ -2832,7 +2833,8 @@ static irqreturn_t esd_err_irq_handle(int irq, void *data)
 		dsi_panel_release_panel_lock(display->panel);
 
 		if (power_mode == SDE_MODE_DPMS_ON ||
-			power_mode == SDE_MODE_DPMS_LP1) {
+			power_mode == SDE_MODE_DPMS_LP1 ||
+			power_mode == SDE_MODE_DPMS_LP2) {
 			_sde_connector_report_panel_dead(c_conn, false);
 		} else {
 			c_conn->panel_dead = true;
