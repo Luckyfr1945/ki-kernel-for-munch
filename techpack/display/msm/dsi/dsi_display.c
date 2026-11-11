@@ -23,6 +23,7 @@
 #include "dsi_pwr.h"
 #include "sde_dbg.h"
 #include "dsi_parser.h"
+#include "exposure_adjustment.h"
 
 #ifdef CONFIG_DRM_SDE_EXPO
 #include "sde_expo_dim_layer.h"
@@ -5162,6 +5163,14 @@ static ssize_t sysfs_disp_param_write(struct device *dev,
 	}
 #endif
 
+	if ((param & 0xF00) == DISPPARAM_DIMMING || (param & 0xF0000) == DISPPARAM_DC_ON) {
+		if (display->panel)
+			ea_panel_mode_ctrl(display->panel, true);
+	} else if ((param & 0xF00) == DISPPARAM_DIMMING_OFF || (param & 0xF0000) == DISPPARAM_DC_OFF) {
+		if (display->panel)
+			ea_panel_mode_ctrl(display->panel, false);
+	}
+
 	ret = dsi_display_set_disp_param(display->drm_conn, param);
 	kfree(input_dup);
 	return ret ? ret : count;
@@ -5171,9 +5180,9 @@ static ssize_t sysfs_dimming_read(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct dsi_display *display = dev_get_drvdata(dev);
-	bool enabled = false;
+	bool enabled = ea_panel_is_enabled();
 
-	if (display && display->drm_conn)
+	if (!enabled && display && display->drm_conn)
 		dsi_display_get_dimming(display->drm_conn, &enabled);
 
 #ifdef CONFIG_DRM_SDE_EXPO
@@ -5207,6 +5216,9 @@ static ssize_t sysfs_dimming_write(struct device *dev,
 		dsi_display_set_backlight(NULL, display, display->panel->bl_config.bl_level);
 	}
 #endif
+
+	if (display->panel)
+		ea_panel_mode_ctrl(display->panel, enable);
 
 	ret = dsi_display_set_dimming(display->drm_conn, enable);
 	return ret ? ret : count;
