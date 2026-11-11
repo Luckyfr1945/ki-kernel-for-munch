@@ -5246,69 +5246,10 @@ static ssize_t sysfs_hbm_write(struct device *dev,
 	return ret ? ret : count;
 }
 
-#ifdef CONFIG_DRM_SDE_EXPO
-static ssize_t sysfs_dimlayer_exposure_read(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct dsi_display *display;
-	struct dsi_panel *panel;
-	bool status;
-
-	display = dev_get_drvdata(dev);
-	if (!display) {
-		pr_err("Invalid display\n");
-		return -EINVAL;
-	}
-
-	panel = display->panel;
-
-	mutex_lock(&panel->panel_lock);
-	status = panel->dimlayer_exposure;
-	mutex_unlock(&panel->panel_lock);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", status);
-}
-
-static ssize_t sysfs_dimlayer_exposure_write(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct dsi_display *display;
-	struct dsi_panel *panel;
-	struct drm_connector *connector = NULL;
-	bool status;
-	int rc = 0;
-
-	display = dev_get_drvdata(dev);
-	if (!display) {
-		pr_err("Invalid display\n");
-		return -EINVAL;
-	}
-
-	rc = kstrtobool(buf, &status);
-	if (rc) {
-		pr_err("%s: kstrtobool failed. rc=%d\n", __func__, rc);
-		return rc;
-	}
-
-	panel = display->panel;
-
-	panel->dimlayer_exposure = status;
-	dsi_display_set_backlight(connector, display, panel->bl_config.bl_level);
-
-	if (display->drm_conn)
-		dsi_display_set_dimming(display->drm_conn, status);
-
-	return count;
-}
-
-static DEVICE_ATTR(dimlayer_exposure, 0664,
-			sysfs_dimlayer_exposure_read,
-			sysfs_dimlayer_exposure_write);
-#endif
-
 static DEVICE_ATTR(disp_param, 0664, sysfs_disp_param_read, sysfs_disp_param_write);
 static DEVICE_ATTR(dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
 static DEVICE_ATTR(dc_dimming, 0664, sysfs_dimming_read, sysfs_dimming_write);
+static DEVICE_ATTR(dimlayer_exposure, 0664, sysfs_dimming_read, sysfs_dimming_write);
 static DEVICE_ATTR(hbm, 0664, sysfs_hbm_read, sysfs_hbm_write);
 static DEVICE_ATTR(msm_fb_ea_enable, 0664, sysfs_dimming_read, sysfs_dimming_write);
 
@@ -5317,9 +5258,7 @@ static struct attribute *display_fs_attrs[] = {
 	&dev_attr_disp_param.attr,
 	&dev_attr_dimming.attr,
 	&dev_attr_dc_dimming.attr,
-#ifdef CONFIG_DRM_SDE_EXPO
 	&dev_attr_dimlayer_exposure.attr,
-#endif
 	&dev_attr_hbm.attr,
 	&dev_attr_msm_fb_ea_enable.attr,
 	NULL,
