@@ -33,17 +33,20 @@
 #include "sde_dbg.h"
 #include "dsi_parser.h"
 #include "dsi_mi_feature.h"
+#include "exposure_adjustment.h"
 #include "../msm_drv.h"
 
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 
 static atomic64_t g_param = ATOMIC64_INIT(DISPPARAM_DIMMING_OFF);
 
-int dsi_display_set_disp_param(struct drm_connector *connector,
-			u32 param_type)
+static int __dsi_display_set_disp_param(struct drm_connector *connector,
+			u32 param_type, bool update_ea)
 {
 	struct dsi_display *display = NULL;
 	struct dsi_bridge *c_bridge = NULL;
+	bool ea_toggle = false;
+	bool ea_enable = false;
 	int ret = 0;
 
 	if (!connector || !connector->encoder || !connector->encoder->bridge) {
@@ -59,15 +62,42 @@ int dsi_display_set_disp_param(struct drm_connector *connector,
 	}
 
 	atomic64_set(&g_param, param_type);
+	if (update_ea) {
+		if ((param_type & 0xF00) == DISPPARAM_DIMMING ||
+		    (param_type & 0xF0000) == DISPPARAM_DC_ON) {
+			ea_toggle = true;
+			ea_enable = true;
+		} else if ((param_type & 0xF00) == DISPPARAM_DIMMING_OFF ||
+			   (param_type & 0xF0000) == DISPPARAM_DC_OFF) {
+			ea_toggle = true;
+			ea_enable = false;
+		}
+	}
+
 	if (sde_kms_is_suspend_blocked(display->drm_dev) &&
 		dsi_panel_is_need_tx_cmd(param_type)) {
+		if (ea_toggle)
+			ea_panel_mode_ctrl(ea_enable);
 		pr_err("sde_kms is suspended, skip to set_disp_param\n");
 		return -EBUSY;
 	}
 
 	ret = dsi_panel_set_disp_param(display->panel, param_type);
+	if (ea_toggle) {
+		ea_panel_mode_ctrl(ea_enable);
+		if (!ret && !sde_kms_is_suspend_blocked(display->drm_dev) &&
+		    display->panel->bl_config.bl_level > 0)
+			dsi_display_set_backlight(connector, display,
+					display->panel->bl_config.bl_level);
+	}
 
 	return ret;
+}
+
+int dsi_display_set_disp_param(struct drm_connector *connector,
+			u32 param_type)
+{
+	return __dsi_display_set_disp_param(connector, param_type, true);
 }
 
 int dsi_display_hbm_set_disp_param(struct drm_connector *connector,
@@ -81,14 +111,14 @@ int dsi_display_hbm_set_disp_param(struct drm_connector *connector,
 	pr_debug("%s fod hbm command:0x%x \n", __func__, op_code);
 
 	if (op_code == DISPPARAM_HBM_FOD_ON) {
-		rc = dsi_display_set_disp_param(connector, DISPPARAM_HBM_FOD_ON);
+		rc = __dsi_display_set_disp_param(connector, DISPPARAM_HBM_FOD_ON, false);
 	} else if (op_code == DISPPARAM_HBM_FOD_OFF) {
 		/* close HBM and restore DC */
-		rc = dsi_display_set_disp_param(connector, DISPPARAM_HBM_FOD_OFF);
+		rc = __dsi_display_set_disp_param(connector, DISPPARAM_HBM_FOD_OFF, false);
 	} else if(op_code == DISPPARAM_DIMMING_OFF) {
-		rc = dsi_display_set_disp_param(connector, DISPPARAM_DIMMING_OFF);
+		rc = __dsi_display_set_disp_param(connector, DISPPARAM_DIMMING_OFF, false);
 	} else if (op_code == DISPPARAM_HBM_BACKLIGHT_RESEND) {
-		rc = dsi_display_set_disp_param(connector, DISPPARAM_HBM_BACKLIGHT_RESEND);
+		rc = __dsi_display_set_disp_param(connector, DISPPARAM_HBM_BACKLIGHT_RESEND, false);
 	}
 
 	return rc;

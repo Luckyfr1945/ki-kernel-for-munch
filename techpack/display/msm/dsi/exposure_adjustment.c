@@ -9,130 +9,211 @@
  * Copyright (C) 2026, Muhammad Guntur <mochtur@gmail.com>
  */
 
-#include <linux/device.h>
-#include <linux/platform_device.h>
-#include <linux/notifier.h>
+#include <linux/bitops.h>
 #include <linux/kernel.h>
+#include <linux/math64.h>
+#include <linux/spinlock.h>
+#include <linux/string.h>
 #include <uapi/drm/msm_drm_pp.h>
 
-#include "dsi_display.h"
-#include "dsi_panel.h"
+#include "../sde/sde_connector.h"
 #include "../sde/sde_crtc.h"
-#include "../sde/sde_plane.h"
-#include "../sde/sde_color_processing.h"
+#include "../sde/sde_hw_dspp.h"
+#include "dsi_mi_feature.h"
 #include "exposure_adjustment.h"
 
-static bool pcc_backlight_enable = false;
-static bool pcc_attenuation_active = false;
-static u32 last_level = ELVSS_OFF_THRESHOLD;
+static DEFINE_SPINLOCK(ea_lock);
+static bool pcc_backlight_enable;
+static bool pcc_attenuation_active;
+static bool ea_dirty;
+static bool ea_last_fod_hbm;
+static u32 ea_coeff = EXPOSURE_ADJUSTMENT_MAX;
 
-static int ea_panel_send_pcc(u32 bl_lvl)
+static inline u32 ea_scale_coeff(u32 val, u32 coeff)
 {
-	int rc;
-	struct drm_crtc *crtc = NULL;
-	struct drm_msm_pcc pcc_blk = {0};
-	struct drm_property *prop;
-	struct drm_property_blob *blob;
-	struct dsi_display *display = NULL;
-	struct msm_drm_private *priv;
-	u32 ea_coeff;
+	bool masked_18 = ((val & ~0x3FFFFU) == 0) && (val & 0x20000U);
+	s32 s = masked_18 ? sign_extend32(val, 17) : (s32)val;
+	s64 scaled = div_s64((s64)s * (s64)coeff, EXPOSURE_ADJUSTMENT_MAX);
 
-	display = get_main_display();
-	if (!display || !display->drm_conn || !display->drm_conn->state)
-		return -ENODEV;
-	crtc = display->drm_conn->state->crtc;
-	if (!crtc || !crtc->dev || !crtc->dev->dev_private) {
-		pr_err("ERROR: Cannot find display panel with CRTC\n");
-		return -ENODEV;
-	}
+	return masked_18 ? ((u32)scaled & 0x3FFFFU) : (u32)(s32)scaled;
+}
 
-	priv = crtc->dev->dev_private;
-	if (!priv->cp_property)
-		return -EINVAL;
-
-	prop = priv->cp_property[1]; // SDE_CP_CRTC_DSPP_PCC
-	if (prop == NULL) {
-		pr_err("FAIL! PCC is not supported!!\n");
-		return -EINVAL;
-	}
-
-	pr_debug("%s: Backlight = %d\n", __func__, bl_lvl);
-
-	if (bl_lvl < ELVSS_OFF_THRESHOLD) {
-		/* Divide after multiplying to keep the threshold continuous. */
-		ea_coeff = EXPOSURE_ADJUSTMENT_MIN +
-			DIV_ROUND_CLOSEST(bl_lvl * (EXPOSURE_ADJUSTMENT_MAX -
-			EXPOSURE_ADJUSTMENT_MIN), ELVSS_OFF_THRESHOLD);
-	} else {
-		ea_coeff = EXPOSURE_ADJUSTMENT_MAX;
-	}
-
-	pr_debug("%s: coeff = %d\n", __func__, ea_coeff);
-
-	pcc_blk.r.r = ea_coeff;
-	pcc_blk.g.g = ea_coeff;
-	pcc_blk.b.b = ea_coeff;
-
-	blob = drm_property_create_blob(crtc->dev, sizeof(pcc_blk), &pcc_blk);
-	if (IS_ERR_OR_NULL(blob)) {
-		pr_err("Failed to create blob. Bailing out.\n");
-		return -EINVAL;
-	}
-
-	rc = sde_cp_crtc_set_property(crtc, prop, blob->base.id);
-	if (rc) {
-		pr_err("DSPP: Cannot set PCC: %d.\n", rc);
-	}
-
-	/* The color-processing node retains its own reference on success. */
-	drm_property_blob_put(blob);
-	return rc;
+static void ea_scale_pcc_plane(struct drm_msm_pcc_coeff *plane, u32 coeff)
+{
+	plane->c = ea_scale_coeff(plane->c, coeff);
+	plane->r = ea_scale_coeff(plane->r, coeff);
+	plane->g = ea_scale_coeff(plane->g, coeff);
+	plane->b = ea_scale_coeff(plane->b, coeff);
+	plane->rg = ea_scale_coeff(plane->rg, coeff);
+	plane->gb = ea_scale_coeff(plane->gb, coeff);
+	plane->rb = ea_scale_coeff(plane->rb, coeff);
+	plane->rgb = ea_scale_coeff(plane->rgb, coeff);
 }
 
 bool ea_panel_is_enabled(void)
 {
-	return pcc_backlight_enable;
+	unsigned long flags;
+	bool enabled;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	enabled = pcc_backlight_enable;
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return enabled;
 }
 
-void ea_panel_mode_ctrl(struct dsi_panel *panel, bool enable)
+bool ea_panel_is_attenuating(void)
 {
-	if (!panel) {
-		struct dsi_display *display = get_main_display();
-		if (display)
-			panel = display->panel;
-	}
+	unsigned long flags;
+	bool active;
 
+	spin_lock_irqsave(&ea_lock, flags);
+	active = pcc_backlight_enable && pcc_attenuation_active &&
+		 ea_coeff < EXPOSURE_ADJUSTMENT_MAX;
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return active;
+}
+
+void ea_panel_notify_dirty(void)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	if (pcc_backlight_enable && pcc_attenuation_active &&
+	    ea_coeff < EXPOSURE_ADJUSTMENT_MAX)
+		ea_dirty = true;
+	spin_unlock_irqrestore(&ea_lock, flags);
+}
+
+bool ea_panel_consume_dirty(void)
+{
+	unsigned long flags;
+	bool dirty;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	dirty = ea_dirty;
+	ea_dirty = false;
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return dirty;
+}
+
+bool ea_panel_check_fod_changed(bool fod_hbm)
+{
+	unsigned long flags;
+	bool changed = false;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	if (ea_last_fod_hbm != fod_hbm) {
+		ea_last_fod_hbm = fod_hbm;
+		if (pcc_backlight_enable && pcc_attenuation_active &&
+		    ea_coeff < EXPOSURE_ADJUSTMENT_MAX) {
+			ea_dirty = true;
+			changed = true;
+		}
+	}
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return changed;
+}
+
+void ea_panel_mode_ctrl(bool enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ea_lock, flags);
 	if (pcc_backlight_enable != enable) {
 		pcc_backlight_enable = enable;
-		pcc_attenuation_active = false;
-		pr_info("ea_panel: mode changed to %d, recovering bl_lvl=%d\n",
-			enable, last_level);
 		if (!enable) {
-			ea_panel_send_pcc(ELVSS_OFF_THRESHOLD);
+			pcc_attenuation_active = false;
+			ea_coeff = EXPOSURE_ADJUSTMENT_MAX;
 		}
-		if (panel)
-			dsi_panel_set_backlight(panel, last_level);
-	} else if (last_level == 0 && !pcc_backlight_enable) {
-		ea_panel_send_pcc(ELVSS_OFF_THRESHOLD);
+		ea_dirty = true;
+		pr_info("ea_panel: mode changed to %d\n", enable);
 	}
+	spin_unlock_irqrestore(&ea_lock, flags);
 }
 
 u32 ea_panel_calc_backlight(u32 bl_lvl)
 {
-	last_level = bl_lvl;
+	unsigned long flags;
+	u32 ret_lvl = bl_lvl;
 
+	spin_lock_irqsave(&ea_lock, flags);
 	if (pcc_backlight_enable && bl_lvl != 0 && bl_lvl < ELVSS_OFF_THRESHOLD) {
-		pcc_attenuation_active = true;
-		if (ea_panel_send_pcc(bl_lvl))
-			pr_err("ERROR: Failed to send PCC\n");
+		u32 coeff = EXPOSURE_ADJUSTMENT_MIN +
+			DIV_ROUND_CLOSEST(bl_lvl * (EXPOSURE_ADJUSTMENT_MAX -
+			EXPOSURE_ADJUSTMENT_MIN), ELVSS_OFF_THRESHOLD);
 
-		return ELVSS_OFF_THRESHOLD;
-	} else {
-		if (pcc_attenuation_active) {
-			pcc_attenuation_active = false;
-			ea_panel_send_pcc(ELVSS_OFF_THRESHOLD);
+		if (!pcc_attenuation_active || ea_coeff != coeff) {
+			ea_coeff = coeff;
+			pcc_attenuation_active = true;
+			ea_dirty = true;
 		}
-		return bl_lvl;
+		ret_lvl = ELVSS_OFF_THRESHOLD;
+	} else {
+		if (pcc_attenuation_active ||
+		    ea_coeff != EXPOSURE_ADJUSTMENT_MAX) {
+			pcc_attenuation_active = false;
+			ea_coeff = EXPOSURE_ADJUSTMENT_MAX;
+			ea_dirty = true;
+		}
 	}
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return ret_lvl;
+}
+
+void ea_panel_modify_pcc(struct sde_crtc *sde_crtc,
+			 struct sde_hw_cp_cfg *hw_cfg,
+			 struct drm_msm_pcc *scratch_pcc)
+{
+	unsigned long flags;
+	u32 coeff;
+	bool active;
+
+	if (!sde_crtc || !hw_cfg || !scratch_pcc)
+		return;
+
+	if (sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY)
+		return;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	active = pcc_backlight_enable && pcc_attenuation_active &&
+		 ea_coeff < EXPOSURE_ADJUSTMENT_MAX;
+	coeff = ea_coeff;
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	if (!active)
+		return;
+
+	if (hw_cfg->payload && hw_cfg->len == sizeof(*scratch_pcc)) {
+		if (hw_cfg->payload != scratch_pcc)
+			memcpy(scratch_pcc, hw_cfg->payload,
+			       sizeof(*scratch_pcc));
+
+		ea_scale_pcc_plane(&scratch_pcc->r, coeff);
+		ea_scale_pcc_plane(&scratch_pcc->g, coeff);
+		ea_scale_pcc_plane(&scratch_pcc->b, coeff);
+		scratch_pcc->r_rr = ea_scale_coeff(scratch_pcc->r_rr, coeff);
+		scratch_pcc->r_gg = ea_scale_coeff(scratch_pcc->r_gg, coeff);
+		scratch_pcc->r_bb = ea_scale_coeff(scratch_pcc->r_bb, coeff);
+		scratch_pcc->g_rr = ea_scale_coeff(scratch_pcc->g_rr, coeff);
+		scratch_pcc->g_gg = ea_scale_coeff(scratch_pcc->g_gg, coeff);
+		scratch_pcc->g_bb = ea_scale_coeff(scratch_pcc->g_bb, coeff);
+		scratch_pcc->b_rr = ea_scale_coeff(scratch_pcc->b_rr, coeff);
+		scratch_pcc->b_gg = ea_scale_coeff(scratch_pcc->b_gg, coeff);
+		scratch_pcc->b_bb = ea_scale_coeff(scratch_pcc->b_bb, coeff);
+	} else {
+		memset(scratch_pcc, 0, sizeof(*scratch_pcc));
+		scratch_pcc->r.r = coeff;
+		scratch_pcc->g.g = coeff;
+		scratch_pcc->b.b = coeff;
+	}
+
+	hw_cfg->payload = scratch_pcc;
+	hw_cfg->len = sizeof(*scratch_pcc);
+	hw_cfg->payload_clear = NULL;
 }
 

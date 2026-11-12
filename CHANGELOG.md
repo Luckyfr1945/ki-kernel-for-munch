@@ -1,6 +1,6 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-11-09  
+**Build Date:** 2026-11-12  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
@@ -8,6 +8,11 @@
 ---
 
 ## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
+- Qualcomm DSPP PCC Anti-Flicker DC Dimming & Display SOD Hardening:
+  - DSPP PCC Exposure Adjustment Integration: implemented Qualcomm DSPP PCC anti-flicker DC dimming (`techpack/display/msm/dsi/exposure_adjustment.c`) for brightness levels below `ELVSS_OFF_THRESHOLD` (500), maintaining stable panel emission while scaling pixel luminance smoothly down to minimum brightness.
+  - Fixed Bright Fallback When Disabling DC Dimming (ON → OFF): unified EA mode handling inside `__dsi_display_set_disp_param()` (`techpack/display/msm/dsi/dsi_display_mi.c`) and removed premature calls in `sysfs_disp_param_write()` / `sysfs_dimming_write()` (`techpack/display/msm/dsi/dsi_display.c`) so `dsi_panel_set_disp_param()` clears `mi_cfg->dc_enable` *before* `ea_panel_mode_ctrl(false)` and refreshes `panel->bl_config.bl_level` via `dsi_display_set_backlight()`. Prevents `dc_skip_set_backlight()` (`dc_type = 1`) from discarding low-brightness updates (`< 440`) and leaving physical backlight stuck at 500 at 100% PCC gain.
+  - Eliminated Random Brightness Flares During Scrolling: replaced out-of-commit `sde_cp_crtc_set_property()` hijacking of `SDE_DSPP_PCC_V4` with a spinlock-protected DSPP post-modifier (`ea_panel_modify_pcc()`) inside `set_dspp_pcc_feature()` (`techpack/display/msm/sde/sde_color_processing.c`) and `sde_kcal_apply()` (`techpack/display/msm/sde/sde_kcal.c`). Composes `userspace PCC * KCAL * EA` in stack-local PCC buffers without mutating userspace property blobs, triggers `ctl->ops.update_bitmask_dspp` flushes even when CP lists are empty, and restores EA attenuation via `ea_dirty` across idle power collapse (`sde_cp_crtc_suspend`), `sde_crtc_enable()`, and FOD HBM overlay transitions.
+  - Eliminated Display-Side SOD Races in EA: removed unlocked `dsi_panel_set_backlight()` and out-of-commit `sde_cp_crtc_set_property()` / `drm_property_blob_put()` calls from `exposure_adjustment.c`, guarding sysfs-triggered backlight refreshes with `sde_kms_is_suspend_blocked()`, `panel->panel_lock`, and `DSI_CORE_CLK`.
 - Pure Hardware DC Dimming & Backlight Stability Resolution (Elimination of Grey Notifications & Sudden Brightness Spikes):
   - Elimination of Grey/Washed-Out Notifications: disabled `CONFIG_DRM_SDE_EXPO` in `konadisp.conf`, `konadispconf.h`, and `munch_defconfig`. Previously, the re404 SDE exposure dim layer driver injected a software black alpha layer (`color_fill = {0,0,0,alpha}`) at the highest mixer stage (`zpos++`). On Android 14–17 AOSP, translucent notification cards and heads-up banners suffered severe alpha interference, making notifications appear washed out and grey.
   - Eradication of Random Brightness Flare-ups ("terang sendiri kadang"): removing `CONFIG_DRM_SDE_EXPO` eliminates the artificial hardware backlight clamp to 440 (`DIM_THRES_LEVEL`). Previously, whenever multi-layer composition (notifications, shade, dialogs) exceeded `maxblendstages` or caused atomic check fallback, the software darkening layer vanished while the physical LEDs were still forced to 440, causing abrupt flashes of high brightness.
