@@ -37,6 +37,7 @@
 #include "sde_hw_catalog.h"
 #include "sde_color_processing.h"
 #include "sde_kcal.h"
+#include "exposure_adjustment.h"
 #include "sde_encoder.h"
 #include "sde_connector.h"
 #include "sde_vbif.h"
@@ -4275,6 +4276,7 @@ static void sde_crtc_enable(struct drm_crtc *crtc,
 		sde_connector_schedule_status_work(cstate->connectors[i], true);
 
 	sde_kcal_notify_dirty();
+	ea_panel_notify_dirty();
 }
 
 /* no input validation - caller API has all the checks */

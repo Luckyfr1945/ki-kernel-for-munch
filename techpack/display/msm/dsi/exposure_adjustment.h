@@ -14,7 +14,9 @@
 
 #include <linux/types.h>
 
-struct dsi_panel;
+struct sde_crtc;
+struct sde_hw_cp_cfg;
+struct drm_msm_pcc;
 
 /**
  * Device-specific parameters
@@ -26,9 +28,16 @@ struct dsi_panel;
 #define EXPOSURE_ADJUSTMENT_MIN    2048
 #define EXPOSURE_ADJUSTMENT_MAX    32768
 
-void ea_panel_mode_ctrl(struct dsi_panel *panel, bool enable);
+void ea_panel_mode_ctrl(bool enable);
 bool ea_panel_is_enabled(void);
+bool ea_panel_is_attenuating(void);
+void ea_panel_notify_dirty(void);
+bool ea_panel_consume_dirty(void);
+bool ea_panel_check_fod_changed(bool fod_hbm);
 u32 ea_panel_calc_backlight(u32 bl_lvl);
+void ea_panel_modify_pcc(struct sde_crtc *sde_crtc,
+			 struct sde_hw_cp_cfg *hw_cfg,
+			 struct drm_msm_pcc *scratch_pcc);
 
 #endif /* EXPOSURE_ADJUSTMENT_H */
 

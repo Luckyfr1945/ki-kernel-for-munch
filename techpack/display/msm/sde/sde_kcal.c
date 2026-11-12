@@ -21,6 +21,7 @@
 #include "sde_hw_mdss.h"
 #include "sde_connector.h"
 #include "sde_kcal.h"
+#include "exposure_adjustment.h"
 
 #define KCAL_UNITY_GAIN 32768U
 
@@ -148,6 +149,7 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 	struct sde_crtc *sde_crtc;
 	struct sde_hw_cp_cfg hw_cfg;
 	struct drm_msm_pcc identity_pcc;
+	struct drm_msm_pcc ea_pcc;
 	struct sde_kms *kms;
 	struct sde_mdss_cfg *catalog;
 	u32 i, num_mixers;
@@ -215,6 +217,8 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 	} else {
 		hw_cfg.payload = &kcal_pcc_cfg;
 	}
+
+	ea_panel_modify_pcc(sde_crtc, &hw_cfg, &ea_pcc);
 
 	for (i = 0; i < num_mixers; i++) {
 		struct sde_hw_dspp *hw_dspp = sde_crtc->mixers[i].hw_dspp;
@@ -293,6 +297,7 @@ void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg
 		pcc->b.c = (u32)clamp_val((s64)(s32)in_pcc.b.c + (s32)kcal_pcc_cfg.b.c, -32768, 32767);
 	} else {
 		hw_cfg->payload = &kcal_pcc_cfg;
+		hw_cfg->len = sizeof(kcal_pcc_cfg);
 	}
 	hw_cfg->payload_clear = NULL;
 	mutex_unlock(&kcal_mutex);

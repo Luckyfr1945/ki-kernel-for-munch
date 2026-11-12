@@ -5163,14 +5163,6 @@ static ssize_t sysfs_disp_param_write(struct device *dev,
 	}
 #endif
 
-	if ((param & 0xF00) == DISPPARAM_DIMMING || (param & 0xF0000) == DISPPARAM_DC_ON) {
-		if (display->panel)
-			ea_panel_mode_ctrl(display->panel, true);
-	} else if ((param & 0xF00) == DISPPARAM_DIMMING_OFF || (param & 0xF0000) == DISPPARAM_DC_OFF) {
-		if (display->panel)
-			ea_panel_mode_ctrl(display->panel, false);
-	}
-
 	ret = dsi_display_set_disp_param(display->drm_conn, param);
 	kfree(input_dup);
 	return ret ? ret : count;
@@ -5216,9 +5208,6 @@ static ssize_t sysfs_dimming_write(struct device *dev,
 		dsi_display_set_backlight(NULL, display, display->panel->bl_config.bl_level);
 	}
 #endif
-
-	if (display->panel)
-		ea_panel_mode_ctrl(display->panel, enable);
 
 	ret = dsi_display_set_dimming(display->drm_conn, enable);
 	return ret ? ret : count;
