@@ -31,8 +31,8 @@ on:
         type: choice
         options:
           - 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
-          - 'ksu - ReSukiSU + SuSFS v2.3.0'
-          - 'nosusfs - ReSukiSU Only (Tanpa SuSFS)'
+          - 'ksu - BakaSU + SuSFS'
+          - 'nosusfs - BakaSU Only (Tanpa SuSFS)'
           - 'noksu - Vanilla Non-Root'
       target_os:
         description: 'Target OS'

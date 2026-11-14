@@ -25,9 +25,9 @@ if [ -z "$1" ]; then
     echo "  target_os     : aosp (default) | miui | coloros (or oplus/oos) | both"
     echo ""
     echo "Examples:"
-    echo "  bash build.sh munch ksu aosp     # Build AOSP with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu miui     # Build MIUI/HyperOS with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu coloros  # Build ColorOS/OxygenOS/RealmeUI with ReSukiSU + SuSFS"
+    echo "  bash build.sh munch ksu aosp     # Build AOSP with BakaSU + SuSFS"
+    echo "  bash build.sh munch ksu miui     # Build MIUI/HyperOS with BakaSU + SuSFS"
+    echo "  bash build.sh munch ksu coloros  # Build ColorOS/OxygenOS/RealmeUI with BakaSU + SuSFS"
     echo "  bash build.sh munch ksu both     # Build Universal Dual-OS zip"
     echo "=========================================================="
     exit 1
