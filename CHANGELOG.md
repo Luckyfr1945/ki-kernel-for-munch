@@ -9,6 +9,9 @@
 
 ## Unreleased — selected stability backports
 
+- Remove the hidden watermark limit of 20 so ROM tuning follows the existing sysctl range.
+- Keep ROM memory settings when switching profiles; profile VM tuning is now opt-in through `memory_tuning`.
+- Let ROMs choose ZRAM size and compressor without forcing 6 GiB or replacing LZO/LZO-RLE with ZSTD.
 - Backport CPUFreq policy initialization, camera request-queue lifetime, BPF checksum/tailcall/sockops, and memory compaction fixes.
 - Restrict KGSL mmap to the address space that opened the device, with balanced mm references.
 - Refresh munch fuel-gauge properties independently of charger presence; preserve local battery guards and fix forced-SOC output ordering.

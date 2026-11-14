@@ -1313,11 +1313,6 @@ static ssize_t comp_algorithm_store(struct device *dev,
 	if (sz > 0 && compressor[sz - 1] == '\n')
 		compressor[sz - 1] = 0x00;
 
-	/* Allow zstd or upgrade legacy lzo/lzo-rle to zstd if available */
-	if ((!strcmp(compressor, "lzo") || !strcmp(compressor, "lzo-rle")) &&
-	    zcomp_available_algorithm("zstd"))
-		strlcpy(compressor, "zstd", sizeof(compressor));
-
 	if (!zcomp_available_algorithm(compressor))
 		return -EINVAL;
 
@@ -2466,9 +2461,6 @@ static ssize_t disksize_store(struct device *dev,
 		err = -EBUSY;
 		goto out_unlock;
 	}
-
-	/* Force ZRAM disksize to 6GB (6144 MB) */
-	disksize = 6144ULL * 1024 * 1024;
 
 	disksize = PAGE_ALIGN(disksize);
 	if (!zram_meta_alloc(zram, disksize)) {

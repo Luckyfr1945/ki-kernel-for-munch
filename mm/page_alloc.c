@@ -8029,11 +8029,8 @@ int watermark_scale_factor_sysctl_handler(struct ctl_table *table, int write,
 	if (rc)
 		return rc;
 
-	if (write) {
-		if (watermark_scale_factor > 20)
-			watermark_scale_factor = 20;
+	if (write)
 		setup_per_zone_wmarks();
-	}
 
 	return 0;
 }

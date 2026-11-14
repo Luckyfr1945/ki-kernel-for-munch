@@ -1,0 +1,20 @@
+What:		/sys/kernel/ki_profile/memory_tuning
+Date:		November 2026
+Contact:	Ki-kernel maintainers
+Description:
+		Read/write boolean, default 0. Access permissions are 0644.
+
+		0 leaves VM settings under ROM/userspace control. Boot profile
+		application, profile changes and explicit reapply do not write
+		watermark_scale_factor, watermark_boost_factor,
+		compact_unevictable_allowed or vfs_cache_pressure.
+
+		Writing 1 applies the selected user profile's VM settings
+		immediately and enables their application on subsequent forced
+		profile updates. Transient screen-off Battery mode does not
+		select a different memory policy. Swappiness is never changed.
+
+		Writing 0 stops further profile VM writes; it does not restore
+		previous values. Userspace may apply its own values afterwards.
+		The setting is not persisted across reboot. CPU, GPU, thermal
+		and idle-floor profile controls operate independently.

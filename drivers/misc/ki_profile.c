@@ -32,6 +32,8 @@ int current_profile_mode = KI_PROFILE_BALANCED;
 EXPORT_SYMBOL_GPL(current_profile_mode);
 static DEFINE_MUTEX(ki_profile_mutex);
 static DEFINE_SPINLOCK(ki_guard_lock);
+/* Leave VM policy to the ROM unless profile memory tuning is opted into. */
+static bool ki_memory_tuning;
 
 /* Profile actually applied right now (differs while screen is off) */
 static int ki_active_mode = -1;
@@ -421,6 +423,26 @@ static unsigned int ki_target_max(int i, int mode)
 	return cap;
 }
 
+/* Caller holds ki_profile_mutex; use the user's profile, not screen-off mode. */
+static void ki_apply_memory_tuning(void)
+{
+	int mode = READ_ONCE(current_profile_mode);
+	const struct ki_profile_tune *t;
+
+	if (!ki_memory_tuning)
+		return;
+	if (mode < 0 || mode >= KI_PROFILE_MAX)
+		mode = KI_PROFILE_BALANCED;
+	t = &ki_tunes[mode];
+
+	/* Swappiness remains under ROM/userspace control in both modes. */
+	watermark_scale_factor = t->wmark_scale;
+	watermark_boost_factor = 0;
+	sysctl_compact_unevictable_allowed = 0;
+	sysctl_vfs_cache_pressure = t->vfs_cache_pressure;
+	setup_per_zone_wmarks();
+}
+
 static int apply_ki_profile(int mode, bool force)
 {
 	const struct ki_profile_tune *t;
@@ -510,26 +532,19 @@ static int apply_ki_profile(int mode, bool force)
 		cancel_delayed_work(&ki_guard_work);
 
 	/*
-	 * Update VM watermarks & idle floors only on explicit force switch (boot or user sysfs),
-	 * never during rapid screen on/off to prevent zone lock contention & SoD.
-	 * Always bound to user's permanent profile selection, never transient screen-off mode.
+	 * Update idle floors and optional VM tuning only on a forced apply.
+	 * Screen transitions must not recalculate watermarks. VM tuning follows
+	 * the user's permanent profile only when explicitly enabled.
 	 */
 	if (force) {
 		int user_mode = READ_ONCE(current_profile_mode);
-		const struct ki_profile_tune *ut;
 
 		if (user_mode < 0 || user_mode >= KI_PROFILE_MAX)
 			user_mode = KI_PROFILE_BALANCED;
-		ut = &ki_tunes[user_mode];
 
 		if (ki_cpufreq_reset_idle_floors(user_mode))
 			busy = true;
-		/* vm_swappiness is left untouched so user/ROM/modules can freely tune /proc/sys/vm/swappiness */
-		watermark_scale_factor = ut->wmark_scale;
-		watermark_boost_factor = 0;
-		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = ut->vfs_cache_pressure;
-		setup_per_zone_wmarks();
+		ki_apply_memory_tuning();
 	}
 
 	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
@@ -917,6 +932,31 @@ static ssize_t max_freq_prime_store(struct kobject *kobj, struct kobj_attribute 
 	return ki_max_freq_store(2, buf, count);
 }
 
+static ssize_t memory_tuning_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_memory_tuning));
+}
+
+static ssize_t memory_tuning_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	bool enabled;
+	int ret;
+
+	ret = kstrtobool(buf, &enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&ki_profile_mutex);
+	WRITE_ONCE(ki_memory_tuning, enabled);
+	ki_apply_memory_tuning();
+	mutex_unlock(&ki_profile_mutex);
+
+	return count;
+}
+
+static struct kobj_attribute memory_tuning_attr = __ATTR_RW(memory_tuning);
 static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
@@ -1008,6 +1048,7 @@ static struct kobj_attribute reapply_attr = __ATTR_WO(reapply);
 
 static struct attribute *ki_profile_attrs[] = {
 	&mode_attr.attr,
+	&memory_tuning_attr.attr,
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
 	&thermal_throttle_attr.attr,
