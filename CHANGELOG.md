@@ -9,6 +9,7 @@
 
 ## Unreleased — selected stability backports
 
+- Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
 - Remove the hidden watermark limit of 20 so ROM tuning follows the existing sysctl range.
 - Keep ROM memory settings when switching profiles; profile VM tuning is now opt-in through `memory_tuning`.
 - Let ROMs choose ZRAM size and compressor without forcing 6 GiB or replacing LZO/LZO-RLE with ZSTD.

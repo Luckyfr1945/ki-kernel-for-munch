@@ -228,8 +228,11 @@ apply_ksu_config() {
 }
 
 apply_droidspaces_config() {
+    local config_file="${1:-out/.config}"
+
     echo "Enforcing Droidspaces & Containerization configs..."
-    scripts/config --file out/.config \
+    scripts/config --file "$config_file" \
+        -e SYSCTL \
         -e SYSVIPC \
         -e POSIX_MQUEUE \
         -e NAMESPACES \
@@ -273,14 +276,12 @@ apply_droidspaces_config() {
         -e NF_NAT \
         -e NF_TABLES \
         -e IP_NF_TARGET_MASQUERADE \
-        -e NETFILTER_XT_TARGET_MASQUERADE \
         -e NETFILTER_XT_TARGET_TCPMSS \
         -e NETFILTER_XT_MATCH_ADDRTYPE \
-        -e NF_CONNTRACK_NETLINK \
+        -e NF_CT_NETLINK \
         -e NF_NAT_REDIRECT \
         -e IP_ADVANCED_ROUTER \
         -e IP_MULTIPLE_TABLES \
-        -e NF_CONNTRACK_IPV4 \
         -e NF_NAT_IPV4 \
         -e IP_NF_NAT \
         -e IPV6 \
@@ -290,17 +291,15 @@ apply_droidspaces_config() {
         -e IP6_NF_MANGLE \
         -e IP6_NF_NAT \
         -e IP6_NF_TARGET_MASQUERADE \
-        -e NF_CONNTRACK_IPV6 \
         -e NF_NAT_IPV6 \
         -e NETFILTER_XT_MATCH_COMMENT \
         -e NETFILTER_XT_MATCH_STATE \
         -e NETFILTER_XT_MATCH_CONNTRACK \
         -e NETFILTER_XT_MATCH_MULTIPORT \
         -e NETFILTER_XT_MATCH_HL \
-        -e NETFILTER_XT_TARGET_REJECT \
         -e IP_NF_TARGET_REJECT \
+        -e IP6_NF_TARGET_REJECT \
         -e NETFILTER_XT_TARGET_LOG \
-        -e IP_NF_TARGET_ULOG \
         -e NETFILTER_XT_MATCH_RECENT \
         -e NETFILTER_XT_MATCH_LIMIT \
         -e NETFILTER_XT_MATCH_HASHLIMIT \
@@ -318,8 +317,7 @@ apply_droidspaces_config() {
         -e NETFILTER_XT_TARGET_CHECKSUM \
         -e USB_CONFIGFS_RNDIS \
         -e USB_CONFIGFS_ECM \
-        --set-val BLK_DEV_LOOP_MIN_COUNT 32 \
-        -d ANDROID_PARANOID_NETWORK
+        --set-val BLK_DEV_LOOP_MIN_COUNT 32
 }
 
 echo "Cleaning build directories..."
@@ -400,6 +398,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         -d DEBUG_INFO
 
     make $MAKE_ARGS olddefconfig
+    bash scripts/check-droidspaces-config.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
@@ -488,6 +487,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -d DEBUG_INFO
 
     make $MAKE_ARGS olddefconfig
+    bash scripts/check-droidspaces-config.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
