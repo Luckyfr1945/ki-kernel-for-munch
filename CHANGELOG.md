@@ -7,6 +7,15 @@
 
 ---
 
+## Unreleased — selected stability backports
+
+- Backport CPUFreq policy initialization, camera request-queue lifetime, BPF checksum/tailcall/sockops, and memory compaction fixes.
+- Restrict KGSL mmap to the address space that opened the device, with balanced mm references.
+- Refresh munch fuel-gauge properties independently of charger presence; preserve local battery guards and fix forced-SOC output ordering.
+- Propagate wired charging errors in munch SMB5 paths, including temperature, night charging, USB online, Type-C setup and charge-pump discovery.
+- Backport selected IPv4/IPv6, netfilter, packet socket, CNSS2 QMI, USB, audio, HID, F2FS and exFAT fixes.
+- Record all 32 source commits, local adaptations, partial imports and validation in `UPSTREAM_BACKPORTS.md`.
+
 ## Ki-kernel v1.6.6 (Display Driver Clean-up, Anti-Flicker DC Dimming Final Stabilization & Anti-SOD Architecture) :
 - Anti-Flicker DC Dimming Calibrated Linear-Light DSPP PCC:
   - Linear-Light Panel Luminance Alignment: replaced sRGB gamma-domain LUT alpha interpolation in `techpack/display/msm/dsi/exposure_adjustment.c` with direct linear panel luminance ratio matching the `l11r` Munch OLED panel (`nits(bl) / nits(thresh)` = `(498 * bl + 1046) / (498 * thresh + 1046)`). Because `DSPP_IGC` linearizes incoming pixels before `DSPP_PCC` and `DSPP_GC` re-applies panel gamma afterward, scaling in linear light eliminates the ~4.1x brightness jump when toggling DC dimming at minimum slider level (`bl = 33`), achieving exact luminance parity between DC ON and DC OFF.

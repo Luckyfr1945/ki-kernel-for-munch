@@ -1103,8 +1103,13 @@ static int smb5_parse_dt_misc(struct smb5 *chip, struct device_node *node)
 
 	chg->qc_class_ab = of_property_read_bool(node,
 				"qcom,distinguish-qc-class-ab");
-	if (chg->wireless_bq)
-		smb5_charge_gpio_init(chg, node);
+	if (chg->wireless_bq) {
+		rc = smb5_charge_gpio_init(chg, node);
+		if (rc < 0) {
+			dev_err(chg->dev, "gpio init failed rc=%d\n", rc);
+			return rc;
+		}
+	}
 
 	if (chg->six_pin_step_charge_enable) {
 		rc = smb5_charge_step_charge_init(chg, node);
@@ -3946,7 +3951,7 @@ static int smb5_configure_typec(struct smb_charger *chg)
 	 */
 	if (chg->pd_not_supported && (val & TYPEC_LEGACY_CABLE_STATUS_BIT)) {
 		pval.intval = POWER_SUPPLY_TYPEC_PR_NONE;
-		smblib_set_prop_typec_power_role(chg, &pval);
+		rc = smblib_set_prop_typec_power_role(chg, &pval);
 		if (rc < 0) {
 			dev_err(chg->dev, "Couldn't disable TYPEC rc=%d\n", rc);
 			return rc;
@@ -3956,7 +3961,7 @@ static int smb5_configure_typec(struct smb_charger *chg)
 		msleep(50);
 
 		pval.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
-		smblib_set_prop_typec_power_role(chg, &pval);
+		rc = smblib_set_prop_typec_power_role(chg, &pval);
 		if (rc < 0) {
 			dev_err(chg->dev, "Couldn't enable TYPEC rc=%d\n", rc);
 			return rc;
@@ -4838,7 +4843,7 @@ static int smb5_determine_initial_status(struct smb5 *chip)
 			if (rc < 0) {
 				pr_err("Couldn't read TYPE_C_MISC_STATUS_REG rc=%d\n",
 					rc);
-				return 0;
+				return rc;
 			}
 
 			pr_err("TYPE_C_SRC_STATUS_REG = 0x%02x\n", stat);

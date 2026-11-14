@@ -277,7 +277,6 @@ struct bq_fg_chip {
 	bool	shutdown_delay;
 	bool	shutdown_delay_enable;
 	bool    force_soc_enable;
-	bool 	usb_in;
 	int cell1_max;
 	int max_charge_current;
 	int max_discharge_current;
@@ -1566,27 +1565,12 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 					union power_supply_propval *val)
 {
 	struct bq_fg_chip *bq = power_supply_get_drvdata(psy);
-	int ret, status, rc = 0;
+	int ret, status;
 	u16 flags;
 	int vbat_mv;
 	static bool shutdown_delay_cancel[FG_MAX_INDEX];
 	static bool last_shutdown_delay[FG_MAX_INDEX];
 	union power_supply_propval pval = {0, };
-	union power_supply_propval prop = {0, };
-	if (!bq->usb_psy) {
-		bq->usb_psy = power_supply_get_by_name("usb");
-		if (!bq->usb_psy) {
-			prop.intval = 1;
-		}
-	}
-	if (bq->usb_psy)
-		rc = power_supply_get_property(bq->usb_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &prop);
-	if (rc < 0)
-		prop.intval = 0;
-	if (prop.intval >= 4000)
-		bq->usb_in = true;
-	else
-		bq->usb_in = false;
 	switch (psp) {
 	case POWER_SUPPLY_PROP_MODEL_NAME:
 		if (bq->old_hw) {
@@ -1604,11 +1588,9 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 3700 * 1000;
 			break;
 		}
-		if (bq->usb_in) {
-			ret = fg_read_volt(bq);
-			if (ret >= 0)
-				bq->batt_volt = ret;
-		}
+		ret = fg_read_volt(bq);
+		if (ret >= 0)
+			bq->batt_volt = ret;
 		/*
 		 * batt_volt is initialised to -ENODATA in probe(). If no
 		 * read has ever succeeded, do not propagate that sentinel
@@ -1628,9 +1610,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = -500;
 			break;
 		}
-		if (bq->usb_in) {
-			fg_read_current(bq, &bq->batt_curr);
-		}
+		fg_read_current(bq, &bq->batt_curr);
 		if (bq->batt_curr < 0 && bq->batt_curr == -ENODATA)
 			return -ENODATA;
 		val->intval = bq->batt_curr * 1000;
@@ -1645,20 +1625,18 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 15;
 			break;
 		}
-		if (bq->usb_in) {
-			bq->batt_soc = fg_read_system_soc(bq);
-		}
+		bq->batt_soc = fg_read_system_soc(bq);
 		if (bq->batt_soc < 0 ||
 		    (bq->batt_soc == 0 &&
 		     i2c_error_cnt[bq->fg_index] >= 3))
 			return -ENODATA;
+		val->intval = bq->batt_soc;
 		if (bq->force_soc_enable) {
 			vbat_mv = fg_read_volt(bq);
 			if (val->intval == 0 && vbat_mv > 4000)
 				val->intval = 10;
 		}
-
-		val->intval = bq->batt_soc;
+		bq->batt_soc = val->intval;
 
 		//add shutdown delay feature
 		if (bq->shutdown_delay_enable) {
@@ -1726,9 +1704,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 250;
 			break;
 		}
-		if (bq->usb_in) {
-			bq->batt_temp = fg_read_temperature(bq);
-		}
+		bq->batt_temp = fg_read_temperature(bq);
 		/*
 		 * Reject the fake 25/50 °C placeholder that
 		 * fg_read_temperature() injects on I2C failure. Do NOT
@@ -1746,11 +1722,9 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = bq->batt_tte;
 			break;
 		}
-		if (bq->usb_in) {
-			ret = fg_read_tte(bq);
-			if (ret >= 0)
-				bq->batt_tte = ret;
-		}
+		ret = fg_read_tte(bq);
+		if (ret >= 0)
+			bq->batt_tte = ret;
 		val->intval = bq->batt_tte;
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
@@ -1758,11 +1732,9 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = bq->batt_ttf;
 			break;
 				}
-		if (bq->usb_in) {
-			ret = fg_read_ttf(bq);
-			if (ret >= 0)
-				bq->batt_ttf = ret;
-		}
+		ret = fg_read_ttf(bq);
+		if (ret >= 0)
+			bq->batt_ttf = ret;
 		val->intval = bq->batt_ttf;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
@@ -1782,11 +1754,9 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 1;
 			break;
 		}
-		if (bq->usb_in) {
-			ret = fg_read_cyclecount(bq);
-			if (ret >= 0)
-				bq->batt_cyclecnt = ret;
-		}
+		ret = fg_read_cyclecount(bq);
+		if (ret >= 0)
+			bq->batt_cyclecnt = ret;
 		val->intval = bq->batt_cyclecnt;
 		break;
 
@@ -1810,9 +1780,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 8000000;
 			break;
 		}
-		if (bq->usb_in) {
-			bq->charging_current = fg_read_charging_current(bq);
-		}
+		bq->charging_current = fg_read_charging_current(bq);
 		val->intval = bq->charging_current;
 		val->intval *= 1000;
 		break;
@@ -1821,9 +1789,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = 4450000;
 			break;
 		}
-		if (bq->usb_in) {
-			bq->charging_voltage = fg_read_charging_voltage(bq);
-		}
+		bq->charging_voltage = fg_read_charging_voltage(bq);
 		val->intval = bq->charging_voltage;
 		bq_dbg(PR_DEBUG, "fg_read_gauge_voltage_max: %d\n", val->intval);
 		val->intval *= 1000;
@@ -1836,9 +1802,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = bq->fake_chip_ok;
 			break;
 		}
-		if (bq->usb_in) {
-			bq->chip_ok = fg_read_word(bq, bq->regs[BQ_FG_REG_BATT_STATUS], &flags);
-		}
+		bq->chip_ok = fg_read_word(bq, bq->regs[BQ_FG_REG_BATT_STATUS], &flags);
 		ret = bq->chip_ok;
 		if (ret < 0)
 			val->intval = 0;
@@ -1849,9 +1813,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 		if (bq->constant_charge_current_max != 0) {
 			val->intval = bq->constant_charge_current_max;
 		} else {
-			if (bq->usb_in) {
-				bq->charging_current = fg_read_charging_current(bq);
-			}
+			bq->charging_current = fg_read_charging_current(bq);
 			val->intval = bq->charging_current;
 			val->intval *= 1000;
 		}
@@ -1889,9 +1851,7 @@ static int fg_get_property(struct power_supply *psy, enum power_supply_property 
 			val->intval = manu_info[RECHARGE_VOL].data;
 		break;
 	case POWER_SUPPLY_PROP_SOH:
-		if (bq->usb_in) {
-			bq->soh = fg_read_soh(bq);
-		}
+		bq->soh = fg_read_soh(bq);
 		val->intval = bq->soh;
 		break;
 	case POWER_SUPPLY_PROP_I2C_ERROR_COUNT:
@@ -2864,19 +2824,8 @@ static void fg_monitor_workfunc(struct work_struct *work)
 		/*if (rc < 0)
 			return;*/
 		fg_update_status(bq);
-		if (bq->usb_in) {
-			bq->plugout_update_count = 0;
-			period = fg_check_full_status(bq);
-			fg_update_charge_full(bq);
-		}
-	}
-	if (!bq->usb_in) {
-		if (bq->plugout_update_count >= 4) {
-			period = MONITOR_WORK_10S*2;
-		} else {
-			period = MONITOR_WORK_2S;
-			bq->plugout_update_count++;
-		}
+		period = fg_check_full_status(bq);
+		fg_update_charge_full(bq);
 	}
 	schedule_delayed_work(&bq->monitor_work, period * HZ);
 }
@@ -3007,7 +2956,6 @@ static int bq_fg_probe(struct i2c_client *client,
 	bq->avg_current = -EINVAL;
 	bq->plugout_update_count = 0;
 	bq->shutdown_soc = false;
-	bq->usb_in = false;
 #ifdef CONFIG_DUAL_FUEL_GAUGE_BQ27Z561
 	FG_REPORT_FULL_SOC = FG_REPORT_FULL_SOC_DEVICE;
 #else

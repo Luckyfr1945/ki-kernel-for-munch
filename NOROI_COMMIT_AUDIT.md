@@ -1,6 +1,8 @@
 # Audit 428 commit re-noroi terhadap Ki-kernel munch
 
-Tanggal audit: 2026-11-14. Scope: working tree lokal termasuk perubahan belum di-commit.
+Tanggal audit: 2026-11-14. Scope: working tree lokal sebelum backport, disimpan dalam snapshot `e03d56c36432`.
+
+**Catatan:** status di bawah merekam keadaan sebelum implementasi. Lihat [UPSTREAM_BACKPORTS.md](UPSTREAM_BACKPORTS.md) untuk patch yang ditambahkan sesudah audit ini.
 
 - Source: [GitHub compare](https://github.com/re-noroi/kernel_sm8250/compare/dc1defa88f947e28a14666151d6af2d084caa345...f93def9604dd3cb4e046a09ce923c9166f6e23c9).
 - Base sumber: `dc1defa88f947e28a14666151d6af2d084caa345`.
