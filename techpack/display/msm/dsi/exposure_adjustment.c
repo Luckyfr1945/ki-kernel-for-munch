@@ -29,6 +29,32 @@ static bool ea_dirty;
 static bool ea_last_fod_hbm;
 static u32 ea_coeff = EXPOSURE_ADJUSTMENT_MAX;
 
+/*
+ * Linear-light DSPP PCC attenuation matching the l11r panel luminance curve
+ * (2.0 nits at DBV 2 to 500.0 nits at DBV 1023, linear interpolation):
+ *   nits(bl) = 2 + 498 * (bl - 2) / 1021 = (498 * bl + 1046) / 1021
+ * Because DSPP_IGC linearizes pixels before DSPP_PCC and DSPP_GC re-applies
+ * panel gamma afterward, scaling linear light by nits(bl) / nits(thresh)
+ * matches native DBV luminance without brightening when toggling DC dimming.
+ */
+static u32 ea_interpolate_coeff(u32 bl_lvl, u32 thresh)
+{
+	u64 num, den, coeff;
+
+	if (!thresh)
+		thresh = ELVSS_OFF_THRESHOLD;
+
+	if (bl_lvl >= thresh)
+		return EXPOSURE_ADJUSTMENT_MAX;
+
+	num = 498ULL * bl_lvl + 1046ULL;
+	den = 498ULL * thresh + 1046ULL;
+	coeff = div64_u64(num * EXPOSURE_ADJUSTMENT_MAX + (den >> 1), den);
+
+	return clamp_t(u32, (u32)coeff, EXPOSURE_ADJUSTMENT_MIN,
+		       EXPOSURE_ADJUSTMENT_MAX);
+}
+
 static inline u32 ea_scale_coeff(u32 val, u32 coeff)
 {
 	bool masked_18 = ((val & ~0x3FFFFU) == 0) && (val & 0x20000U);
@@ -99,7 +125,7 @@ bool ea_panel_consume_dirty(void)
 	return dirty;
 }
 
-bool ea_panel_check_fod_changed(bool fod_hbm)
+bool ea_panel_check_fod_changed(bool fod_hbm, bool kcal_active)
 {
 	unsigned long flags;
 	bool changed = false;
@@ -110,6 +136,8 @@ bool ea_panel_check_fod_changed(bool fod_hbm)
 		if (pcc_backlight_enable && pcc_attenuation_active &&
 		    ea_coeff < EXPOSURE_ADJUSTMENT_MAX) {
 			ea_dirty = true;
+			changed = true;
+		} else if (kcal_active) {
 			changed = true;
 		}
 	}
@@ -135,23 +163,36 @@ void ea_panel_mode_ctrl(bool enable)
 	spin_unlock_irqrestore(&ea_lock, flags);
 }
 
-u32 ea_panel_calc_backlight(u32 bl_lvl)
+u32 ea_panel_get_hw_backlight(u32 bl_lvl, u32 dc_threshold)
 {
 	unsigned long flags;
+	u32 thresh = dc_threshold ? dc_threshold : ELVSS_OFF_THRESHOLD;
 	u32 ret_lvl = bl_lvl;
 
 	spin_lock_irqsave(&ea_lock, flags);
-	if (pcc_backlight_enable && bl_lvl != 0 && bl_lvl < ELVSS_OFF_THRESHOLD) {
-		u32 coeff = EXPOSURE_ADJUSTMENT_MIN +
-			DIV_ROUND_CLOSEST(bl_lvl * (EXPOSURE_ADJUSTMENT_MAX -
-			EXPOSURE_ADJUSTMENT_MIN), ELVSS_OFF_THRESHOLD);
+	if (pcc_backlight_enable && bl_lvl != 0 && bl_lvl < thresh)
+		ret_lvl = thresh;
+	spin_unlock_irqrestore(&ea_lock, flags);
+
+	return ret_lvl;
+}
+
+u32 ea_panel_calc_backlight(u32 bl_lvl, u32 dc_threshold)
+{
+	unsigned long flags;
+	u32 thresh = dc_threshold ? dc_threshold : ELVSS_OFF_THRESHOLD;
+	u32 ret_lvl = bl_lvl;
+
+	spin_lock_irqsave(&ea_lock, flags);
+	if (pcc_backlight_enable && bl_lvl != 0 && bl_lvl < thresh) {
+		u32 coeff = ea_interpolate_coeff(bl_lvl, thresh);
 
 		if (!pcc_attenuation_active || ea_coeff != coeff) {
 			ea_coeff = coeff;
 			pcc_attenuation_active = true;
 			ea_dirty = true;
 		}
-		ret_lvl = ELVSS_OFF_THRESHOLD;
+		ret_lvl = thresh;
 	} else {
 		if (pcc_attenuation_active ||
 		    ea_coeff != EXPOSURE_ADJUSTMENT_MAX) {

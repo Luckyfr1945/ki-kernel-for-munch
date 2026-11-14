@@ -717,7 +717,7 @@ choice
 		bool "Veno" if TCP_CONG_VENO=y
 
 	config DEFAULT_WESTWOOD
-		bool "Westwood" if TCP_CONG_WESTWOOD=y
+		bool "Westwood-Sub" if TCP_CONG_WESTWOOD=y
 
 	config DEFAULT_DCTCP
 		bool "DCTCP" if TCP_CONG_DCTCP=y
@@ -726,7 +726,7 @@ choice
 		bool "CDG" if TCP_CONG_CDG=y
 
 	config DEFAULT_BBR
-		bool "BBR" if TCP_CONG_BBR=y
+		bool "BBRv3" if TCP_CONG_BBR=y
 
 	config DEFAULT_RENO
 		bool "Reno"
@@ -751,7 +751,7 @@ config DEFAULT_TCP_CONG
 	default "reno" if DEFAULT_RENO
 	default "dctcp" if DEFAULT_DCTCP
 	default "cdg" if DEFAULT_CDG
-	default "bbr" if DEFAULT_BBR
+	default "bbrv3" if DEFAULT_BBR
 	default "cubic"
 
 config TCP_MD5SIG

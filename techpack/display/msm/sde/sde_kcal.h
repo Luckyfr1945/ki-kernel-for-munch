@@ -14,6 +14,11 @@ struct sde_hw_cp_cfg;
 
 void sde_kcal_apply(struct drm_crtc *crtc);
 void sde_kcal_notify_dirty(void);
-void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg);
+bool sde_kcal_is_enabled(void);
+bool sde_kcal_consume_dirty(void);
+void sde_kcal_mark_applied(void);
+void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc,
+			 struct sde_hw_cp_cfg *hw_cfg,
+			 struct drm_msm_pcc *scratch_pcc);
 
 #endif /* _SDE_KCAL_H_ */

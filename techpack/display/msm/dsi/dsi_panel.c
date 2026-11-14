@@ -869,6 +869,9 @@ bool dc_skip_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
  * 4. dc type is 1 means need backlight control here, 0 means IC can switch automatically.
  * When meet all the 4 conditions at the same time, skip set this bl.
  */
+	if (ea_panel_is_enabled())
+		return false;
+
 	if (mi_cfg->dc_enable && bl_lvl < mi_cfg->dc_threshold && bl_lvl != 0 && mi_cfg->dc_type) {
 		return true;
 	} else {
@@ -928,14 +931,15 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 	struct dsi_backlight_config *bl = &panel->bl_config;
 	struct dsi_backlight_config *bl_slaver = &panel->bl_slaver_config;
 	struct dsi_panel_mi_cfg *mi_cfg = &panel->mi_cfg;
+	u32 raw_bl_lvl = bl_lvl;
+	u32 prev_last_bl = mi_cfg->last_bl_level;
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
 
-	if (bl_lvl > 0)
-		bl_lvl = ea_panel_calc_backlight(bl_lvl);
+	bl_lvl = ea_panel_calc_backlight(raw_bl_lvl, mi_cfg->dc_threshold);
 
-	DSI_DEBUG("backlight type:%d lvl:%d\n", bl->type, bl_lvl);
+	DSI_DEBUG("backlight type:%d lvl:%d (raw:%d)\n", bl->type, bl_lvl, raw_bl_lvl);
 
 	/* lmi panel must restore to last_bl_level to avoid flash high
 	 * brightness white exiting app lock with DC on (MIUI-1755728),
@@ -976,15 +980,15 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 			DSI_INFO("fod_backlight_flag set, skip set backlight %d\n", bl_lvl);
 		} else {
 			if (mi_cfg->hbm_51_ctrl_flag &&
-				(mi_cfg->fod_hbm_enabled || 
-				 (mi_cfg->thermal_hbm_disabled && bl_lvl > 2047 && mi_cfg->last_bl_level > 0) || 
+				(mi_cfg->fod_hbm_enabled ||
+				 (mi_cfg->thermal_hbm_disabled && bl_lvl > 2047 && prev_last_bl > 0) ||
 				 (mi_cfg->hbm_enabled && !mi_cfg->hbm_brightness && !mi_cfg->thermal_hbm_disabled))) {
-				DSI_INFO("fod_hbm_enabled(%d), hbm_enabled(%d), thermal_hbm_disabled(%d), skip set backlight %d\n", 
+				DSI_INFO("fod_hbm_enabled(%d), hbm_enabled(%d), thermal_hbm_disabled(%d), skip set backlight %d\n",
 						mi_cfg->fod_hbm_enabled, mi_cfg->hbm_enabled, mi_cfg->thermal_hbm_disabled, bl_lvl);
-			} else if (mi_cfg->thermal_hbm_disabled && bl_lvl > 2047 && mi_cfg->last_bl_level == 0) {
-				bl_lvl = 2047;
-				rc = dsi_panel_update_backlight(panel, bl_lvl);
 			} else {
+				if (mi_cfg->thermal_hbm_disabled && bl_lvl > 2047 && prev_last_bl == 0)
+					bl_lvl = 2047;
+
 				rc = dsi_panel_update_backlight(panel, bl_lvl);
 			}
 		}
@@ -999,8 +1003,8 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		rc = -ENOTSUPP;
 	}
 
-	if ((mi_cfg->last_bl_level == 0 || (mi_cfg->dimming_state == STATE_DIM_RESTORE)) && bl_lvl) {
-		if (mi_cfg->panel_on_dimming_delay)
+	if ((prev_last_bl == 0 || (mi_cfg->dimming_state == STATE_DIM_RESTORE)) && bl_lvl) {
+		if (mi_cfg->panel_on_dimming_delay && !ea_panel_is_enabled())
 			schedule_delayed_work(&mi_cfg->dimming_enable_delayed_work,
 				msecs_to_jiffies(mi_cfg->panel_on_dimming_delay));
 
@@ -1008,12 +1012,12 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 			mi_cfg->dimming_state = STATE_NONE;
 	}
 
-	if (mi_cfg->last_bl_level == 0 && bl_lvl && (panel->host_config.cphy_strength || panel->mi_cfg.panel_id == 0x4C38314100420400)){
+	if (prev_last_bl == 0 && bl_lvl && (panel->host_config.cphy_strength || panel->mi_cfg.panel_id == 0x4C38314100420400)){
 		DSI_INFO("disable insert black \n");
 		dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_DISABLE_INSERT_BLACK);
 	}
 
-	if (bl_lvl > 0 && mi_cfg->last_bl_level == 0 && mi_cfg->dc_type) {
+	if (bl_lvl > 0 && prev_last_bl == 0 && mi_cfg->dc_type) {
 		DSI_INFO("crc off\n");
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_CRC_OFF);
 	}
@@ -4765,7 +4769,12 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 
 	mi_cfg->dimming_state = STATE_DIM_RESTORE;
 
-	if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
+	if (ea_panel_is_enabled()) {
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
+		if (rc)
+			DSI_ERR("[%s] failed to send DSI_CMD_SET_MI_DIMMINGOFF cmd, rc=%d\n",
+				panel->name, rc);
+	} else if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_AOD_TO_DC_ON);
 		if (rc)
 			DSI_ERR("[%s] failed to send DSI_CMD_SET_MI_AOD_TO_DC_ON cmd, rc=%d\n",
@@ -5185,7 +5194,12 @@ int dsi_panel_enable(struct dsi_panel *panel)
 		}
 	}
 
-	if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
+	if (ea_panel_is_enabled()) {
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
+		if (rc)
+			DSI_ERR("[%s] failed to send DSI_CMD_SET_MI_DIMMINGOFF cmd, rc=%d\n",
+				panel->name, rc);
+	} else if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_ON);
 		if (rc)
 			DSI_ERR("[%s] failed to send DSI_CMD_SET_MI_DC_ON cmd, rc=%d\n",

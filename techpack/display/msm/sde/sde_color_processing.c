@@ -296,7 +296,7 @@ static int set_dspp_pcc_feature(struct sde_hw_dspp *hw_dspp,
 			memcpy(&local_pcc, local_cfg.payload, sizeof(local_pcc));
 			local_cfg.payload = &local_pcc;
 		}
-		sde_kcal_modify_pcc(hw_crtc, &local_cfg);
+		sde_kcal_modify_pcc(hw_crtc, &local_cfg, &local_pcc);
 		ea_panel_modify_pcc(hw_crtc, &local_cfg, &local_pcc);
 	}
 
@@ -1846,14 +1846,15 @@ void sde_cp_crtc_apply_properties(struct drm_crtc *crtc)
 	mutex_lock(&sde_crtc->crtc_cp_lock);
 
 	ea_need_apply = ea_panel_check_fod_changed(
-		!!(sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY));
+		!!(sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY),
+		sde_kcal_is_enabled());
 
 	if (list_empty(&sde_crtc->dirty_list) &&
 			list_empty(&sde_crtc->ad_dirty) &&
 			list_empty(&sde_crtc->ad_active) &&
 			list_empty(&sde_crtc->active_list)) {
 		ea_need_apply |= ea_panel_consume_dirty();
-		if (!ea_need_apply) {
+		if (!ea_need_apply && !sde_kcal_consume_dirty()) {
 			DRM_DEBUG_DRIVER("all lists are empty\n");
 			goto exit;
 		}
@@ -1894,9 +1895,8 @@ void sde_cp_crtc_apply_properties(struct drm_crtc *crtc)
 	}
 
 apply_ea:
-	if (pcc_applied) {
-		ea_panel_consume_dirty();
-	} else if (ea_need_apply || ea_panel_consume_dirty()) {
+	ea_need_apply |= ea_panel_consume_dirty();
+	if (!pcc_applied && (ea_need_apply || sde_kcal_consume_dirty())) {
 		list_for_each_entry(prop_node, &sde_crtc->feature_list,
 				    feature_list) {
 			if (prop_node->feature == SDE_CP_CRTC_DSPP_PCC) {
@@ -1928,8 +1928,14 @@ apply_ea:
 		}
 	}
 
-	if (set_dspp_flush && !pcc_applied)
+	if (pcc_applied) {
+		if (!(sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY))
+			sde_kcal_mark_applied();
+		else
+			sde_kcal_notify_dirty();
+	} else if (set_dspp_flush) {
 		sde_kcal_notify_dirty();
+	}
 exit:
 	mutex_unlock(&sde_crtc->crtc_cp_lock);
 }
@@ -2283,6 +2289,7 @@ void sde_cp_crtc_suspend(struct drm_crtc *crtc)
 	if (ad_suspend)
 		sde_cp_ad_set_prop(sde_crtc, AD_SUSPEND);
 
+	sde_kcal_notify_dirty();
 	ea_panel_notify_dirty();
 }
 

@@ -24,8 +24,8 @@ struct drm_msm_pcc;
  * @EXPOSURE_ADJUSTMENT_MIN: Minimum available PCC coefficient for OLED panel
  * @EXPOSURE_ADJUSTMENT_MAX: Q15 unity (32768)
  */
-#define ELVSS_OFF_THRESHOLD        500
-#define EXPOSURE_ADJUSTMENT_MIN    2048
+#define ELVSS_OFF_THRESHOLD        440
+#define EXPOSURE_ADJUSTMENT_MIN    256
 #define EXPOSURE_ADJUSTMENT_MAX    32768
 
 void ea_panel_mode_ctrl(bool enable);
@@ -33,8 +33,9 @@ bool ea_panel_is_enabled(void);
 bool ea_panel_is_attenuating(void);
 void ea_panel_notify_dirty(void);
 bool ea_panel_consume_dirty(void);
-bool ea_panel_check_fod_changed(bool fod_hbm);
-u32 ea_panel_calc_backlight(u32 bl_lvl);
+bool ea_panel_check_fod_changed(bool fod_hbm, bool kcal_active);
+u32 ea_panel_calc_backlight(u32 bl_lvl, u32 dc_threshold);
+u32 ea_panel_get_hw_backlight(u32 bl_lvl, u32 dc_threshold);
 void ea_panel_modify_pcc(struct sde_crtc *sde_crtc,
 			 struct sde_hw_cp_cfg *hw_cfg,
 			 struct drm_msm_pcc *scratch_pcc);

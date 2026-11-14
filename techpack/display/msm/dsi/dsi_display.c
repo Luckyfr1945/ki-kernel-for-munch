@@ -210,7 +210,7 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 	struct dsi_display *dsi_display = display;
 	struct dsi_panel *panel;
 	u32 bl_scale, bl_scale_sv;
-	u64 bl_temp;
+	u64 bl_temp = 0;
 	int rc = 0;
 
 	if (dsi_display == NULL || dsi_display->panel == NULL)

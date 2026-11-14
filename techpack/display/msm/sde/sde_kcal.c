@@ -136,11 +136,61 @@ static void kcal_recompute_pcc_locked(void)
 	}
 }
 
+static inline bool kcal_is_masked_18(u32 val)
+{
+	return ((val & ~0x3FFFFU) == 0) && (val & 0x20000U);
+}
+
+static inline s32 kcal_pcc_to_s32(u32 val)
+{
+	return kcal_is_masked_18(val) ? sign_extend32(val, 17) : (s32)val;
+}
+
+static inline u32 kcal_s32_to_pcc(s64 val, bool masked_18)
+{
+	s32 clamped = (s32)clamp_t(s64, val, -131072, 131071);
+
+	return masked_18 ? ((u32)clamped & 0x3FFFFU) : (u32)clamped;
+}
+
 void sde_kcal_notify_dirty(void)
 {
 	mutex_lock(&kcal_mutex);
 	if (kcal_enabled)
 		kcal_dirty = true;
+	mutex_unlock(&kcal_mutex);
+}
+
+bool sde_kcal_is_enabled(void)
+{
+	bool enabled;
+
+	mutex_lock(&kcal_mutex);
+	enabled = kcal_enabled;
+	mutex_unlock(&kcal_mutex);
+
+	return enabled;
+}
+
+bool sde_kcal_consume_dirty(void)
+{
+	bool dirty;
+
+	mutex_lock(&kcal_mutex);
+	dirty = kcal_dirty || (!kcal_enabled && !kcal_restored);
+	mutex_unlock(&kcal_mutex);
+
+	return dirty;
+}
+
+void sde_kcal_mark_applied(void)
+{
+	mutex_lock(&kcal_mutex);
+	if (!kcal_enabled)
+		kcal_restored = true;
+	else
+		kcal_restored = false;
+	kcal_dirty = false;
 	mutex_unlock(&kcal_mutex);
 }
 
@@ -162,14 +212,15 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 	if (!sde_crtc || !sde_crtc->enabled)
 		return;
 
+	mutex_lock(&kcal_mutex);
+
 	/* Safety Guard 1: Never alter display while FOD fingerprint illumination is active */
 	if (sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY) {
 		if (kcal_enabled)
 			kcal_dirty = true;
+		mutex_unlock(&kcal_mutex);
 		return;
 	}
-
-	mutex_lock(&kcal_mutex);
 
 	/* Safety Guard 2: If disabled, only restore identity once if needed, then skip */
 	if (!kcal_enabled) {
@@ -253,7 +304,9 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 	mutex_unlock(&kcal_mutex);
 }
 
-void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg)
+void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc,
+			 struct sde_hw_cp_cfg *hw_cfg,
+			 struct drm_msm_pcc *scratch_pcc)
 {
 	struct drm_msm_pcc *pcc;
 
@@ -276,25 +329,51 @@ void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg
 	 */
 	if (hw_cfg->payload) {
 		struct drm_msm_pcc in_pcc;
+		s32 kr_r, kr_g, kr_b, kg_r, kg_g, kg_b, kb_r, kb_g, kb_b;
+		s32 ir_r, ir_g, ir_b, ig_r, ig_g, ig_b, ib_r, ib_g, ib_b;
 
 		pcc = (struct drm_msm_pcc *)hw_cfg->payload;
 		in_pcc = *pcc;
 
-		pcc->r.r = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.r + (s64)kcal_pcc_cfg.r.g * in_pcc.g.r + (s64)kcal_pcc_cfg.r.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->r.g = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.g + (s64)kcal_pcc_cfg.r.g * in_pcc.g.g + (s64)kcal_pcc_cfg.r.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->r.b = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.b + (s64)kcal_pcc_cfg.r.g * in_pcc.g.b + (s64)kcal_pcc_cfg.r.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		kr_r = kcal_pcc_to_s32(kcal_pcc_cfg.r.r);
+		kr_g = kcal_pcc_to_s32(kcal_pcc_cfg.r.g);
+		kr_b = kcal_pcc_to_s32(kcal_pcc_cfg.r.b);
+		kg_r = kcal_pcc_to_s32(kcal_pcc_cfg.g.r);
+		kg_g = kcal_pcc_to_s32(kcal_pcc_cfg.g.g);
+		kg_b = kcal_pcc_to_s32(kcal_pcc_cfg.g.b);
+		kb_r = kcal_pcc_to_s32(kcal_pcc_cfg.b.r);
+		kb_g = kcal_pcc_to_s32(kcal_pcc_cfg.b.g);
+		kb_b = kcal_pcc_to_s32(kcal_pcc_cfg.b.b);
 
-		pcc->g.r = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.r + (s64)kcal_pcc_cfg.g.g * in_pcc.g.r + (s64)kcal_pcc_cfg.g.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->g.g = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.g + (s64)kcal_pcc_cfg.g.g * in_pcc.g.g + (s64)kcal_pcc_cfg.g.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->g.b = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.b + (s64)kcal_pcc_cfg.g.g * in_pcc.g.b + (s64)kcal_pcc_cfg.g.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		ir_r = kcal_pcc_to_s32(in_pcc.r.r);
+		ir_g = kcal_pcc_to_s32(in_pcc.r.g);
+		ir_b = kcal_pcc_to_s32(in_pcc.r.b);
+		ig_r = kcal_pcc_to_s32(in_pcc.g.r);
+		ig_g = kcal_pcc_to_s32(in_pcc.g.g);
+		ig_b = kcal_pcc_to_s32(in_pcc.g.b);
+		ib_r = kcal_pcc_to_s32(in_pcc.b.r);
+		ib_g = kcal_pcc_to_s32(in_pcc.b.g);
+		ib_b = kcal_pcc_to_s32(in_pcc.b.b);
 
-		pcc->b.r = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.r + (s64)kcal_pcc_cfg.b.g * in_pcc.g.r + (s64)kcal_pcc_cfg.b.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->b.g = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.g + (s64)kcal_pcc_cfg.b.g * in_pcc.g.g + (s64)kcal_pcc_cfg.b.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->b.b = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.b + (s64)kcal_pcc_cfg.b.g * in_pcc.g.b + (s64)kcal_pcc_cfg.b.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->r.r = kcal_s32_to_pcc(div_s64((s64)kr_r * ir_r + (s64)kr_g * ig_r + (s64)kr_b * ib_r, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.r.r));
+		pcc->r.g = kcal_s32_to_pcc(div_s64((s64)kr_r * ir_g + (s64)kr_g * ig_g + (s64)kr_b * ib_g, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.r.g));
+		pcc->r.b = kcal_s32_to_pcc(div_s64((s64)kr_r * ir_b + (s64)kr_g * ig_b + (s64)kr_b * ib_b, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.r.b));
 
-		pcc->r.c = (u32)clamp_val((s64)(s32)in_pcc.r.c + (s32)kcal_pcc_cfg.r.c, -32768, 32767);
-		pcc->g.c = (u32)clamp_val((s64)(s32)in_pcc.g.c + (s32)kcal_pcc_cfg.g.c, -32768, 32767);
-		pcc->b.c = (u32)clamp_val((s64)(s32)in_pcc.b.c + (s32)kcal_pcc_cfg.b.c, -32768, 32767);
+		pcc->g.r = kcal_s32_to_pcc(div_s64((s64)kg_r * ir_r + (s64)kg_g * ig_r + (s64)kg_b * ib_r, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.g.r));
+		pcc->g.g = kcal_s32_to_pcc(div_s64((s64)kg_r * ir_g + (s64)kg_g * ig_g + (s64)kg_b * ib_g, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.g.g));
+		pcc->g.b = kcal_s32_to_pcc(div_s64((s64)kg_r * ir_b + (s64)kg_g * ig_b + (s64)kg_b * ib_b, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.g.b));
+
+		pcc->b.r = kcal_s32_to_pcc(div_s64((s64)kb_r * ir_r + (s64)kb_g * ig_r + (s64)kb_b * ib_r, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.b.r));
+		pcc->b.g = kcal_s32_to_pcc(div_s64((s64)kb_r * ir_g + (s64)kb_g * ig_g + (s64)kb_b * ib_g, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.b.g));
+		pcc->b.b = kcal_s32_to_pcc(div_s64((s64)kb_r * ir_b + (s64)kb_g * ig_b + (s64)kb_b * ib_b, KCAL_UNITY_GAIN), kcal_is_masked_18(in_pcc.b.b));
+
+		pcc->r.c = kcal_s32_to_pcc((s64)kcal_pcc_to_s32(in_pcc.r.c) + kcal_pcc_to_s32(kcal_pcc_cfg.r.c), kcal_is_masked_18(in_pcc.r.c));
+		pcc->g.c = kcal_s32_to_pcc((s64)kcal_pcc_to_s32(in_pcc.g.c) + kcal_pcc_to_s32(kcal_pcc_cfg.g.c), kcal_is_masked_18(in_pcc.g.c));
+		pcc->b.c = kcal_s32_to_pcc((s64)kcal_pcc_to_s32(in_pcc.b.c) + kcal_pcc_to_s32(kcal_pcc_cfg.b.c), kcal_is_masked_18(in_pcc.b.c));
+	} else if (scratch_pcc) {
+		*scratch_pcc = kcal_pcc_cfg;
+		hw_cfg->payload = scratch_pcc;
+		hw_cfg->len = sizeof(*scratch_pcc);
 	} else {
 		hw_cfg->payload = &kcal_pcc_cfg;
 		hw_cfg->len = sizeof(kcal_pcc_cfg);
@@ -338,6 +417,7 @@ static ssize_t kcal_enable_show(struct device *dev, struct device_attribute *att
 static ssize_t kcal_enable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	bool enable;
+	bool changed = false;
 
 	if (strtobool(buf, &enable) < 0) {
 		u32 val;
@@ -357,6 +437,7 @@ static ssize_t kcal_enable_store(struct device *dev, struct device_attribute *at
 			kcal_dirty = true;
 			kcal_restored = false;
 		}
+		changed = true;
 	}
 	mutex_unlock(&kcal_mutex);
 

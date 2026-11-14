@@ -1,11 +1,26 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-11-12  
+**Build Date:** 2026-11-14  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+## Ki-kernel v1.6.6 (Display Driver Clean-up, Anti-Flicker DC Dimming Final Stabilization & Anti-SOD Architecture) :
+- Anti-Flicker DC Dimming Calibrated Linear-Light DSPP PCC:
+  - Linear-Light Panel Luminance Alignment: replaced sRGB gamma-domain LUT alpha interpolation in `techpack/display/msm/dsi/exposure_adjustment.c` with direct linear panel luminance ratio matching the `l11r` Munch OLED panel (`nits(bl) / nits(thresh)` = `(498 * bl + 1046) / (498 * thresh + 1046)`). Because `DSPP_IGC` linearizes incoming pixels before `DSPP_PCC` and `DSPP_GC` re-applies panel gamma afterward, scaling in linear light eliminates the ~4.1x brightness jump when toggling DC dimming at minimum slider level (`bl = 33`), achieving exact luminance parity between DC ON and DC OFF.
+  - Sub-Threshold Headroom: lowered `EXPOSURE_ADJUSTMENT_MIN` to 256 (down from 2048) in `exposure_adjustment.h`, allowing ultra-low brightness levels (e.g. Extra Dim down to DBV 2) to scale cleanly without artificial clamping.
+- Display Sleep-of-Death (SOD) Eradication & Driver Simplification:
+  - Eliminated Deferred Backlight Traps (Black Screen SOD): completely removed asynchronous backlight deferral and queueing (`ea_pending_bl`, `ea_pending_seq`, `ea_commit_seq`) from `techpack/display/msm/dsi/dsi_panel.c` and `exposure_adjustment.c`. `dsi_panel_set_backlight()` now updates physical hardware DBV immediately via `dsi_panel_update_backlight()`. Completely eliminates display wake failures where physical backlight was trapped behind uncommitted sequences during power state transitions.
+  - Eradicated DRM Atomic Commit Workqueue Deadlocks: removed `dsi_display_ea_commit_work()` and background atomic commits (`drm_atomic_nonblocking_commit()`) from `techpack/display/msm/dsi/dsi_display.c`. SDE CRTC commits driven by SurfaceFlinger at 60/120Hz naturally apply dirty DSPP PCC states via `sde_cp_crtc_apply_properties()` and `sde_kcal_apply()` on active frames without competing for `connection_mutex` or hanging on `PP_DONE` timeouts during sleep/wake cycles.
+  - Removed Hazardous DSI Clock Toggling in Pre-Kickoff: eliminated manual `DSI_CORE_CLK` gating and redundant DCS `0x53 0x20` dimming-off commands inside `dsi_display_pre_kickoff()`, preventing DSI command FIFO underflows and display engine stalls prior to frame transmission.
+  - KCAL & EA Harmonious Integration: removed out-of-band commit scheduling from `techpack/display/msm/sde/sde_kcal.c`, allowing SurfaceFlinger's render pipeline to consume `sde_kcal_consume_dirty()` synchronously. Retained 18-bit signed matrix multiplication and stack-local scratch buffers for 100% thread safety across night light, LiveDisplay, KCAL, and DC dimming.
+- TCP Congestion Control Optimization & Dedicated BBRv3 / Westwood-Sub Streamlining:
+  - Clean Dual-Congestion Architecture: streamlined available TCP congestion controls to strictly `bbrv3` and `westwood-sub` (`net/ipv4/tcp_bbr.c`, `net/ipv4/tcp_westwood.c`, `net/ipv4/Kconfig`). Completely eradicated duplicate legacy alias registrations (`bbr`/`bbr3` and `westwood`/`westwood-sub`) and disabled CUBIC/BIC/HTCP across both `munch_defconfig` and `munch_stock-defconfig`.
+  - Fair Queueing (FQ) Pacing Default Enforcement: enabled `CONFIG_NET_SCH_DEFAULT=y`, `CONFIG_DEFAULT_FQ=y`, and `CONFIG_DEFAULT_NET_SCH="fq"` across all kernel configs. Previously, missing `CONFIG_NET_SCH_DEFAULT=y` silently forced `pfifo_fast` as default qdisc, causing BBRv3 to blast un-paced packet bursts into cellular/Wi-Fi uplink queues, triggering severe self-inflicted buffer packet loss and crippling mobile upload throughput. FQ nanosecond packet pacing keeps upload pipelines fully saturated.
+- Upstream NoMount v2.3.0 Subsystem Integration:
+  - Upgraded NoMount VFS redirection subsystem from v2.0.0 (driver 22) to latest official release `v2.3.0-720` (driver 23). Includes OOB read fix when selecting rules from single-element arrays, leaf link reuse, virtual inode lifecycle persistence across lookups, native file resolution from parent, and hardened VFS operations against edge cases.
 
 ## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
 - Qualcomm DSPP PCC Anti-Flicker DC Dimming & Display SOD Hardening:

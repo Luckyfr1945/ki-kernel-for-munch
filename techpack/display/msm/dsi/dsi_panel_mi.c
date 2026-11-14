@@ -30,6 +30,7 @@
 
 #include "mi_disp_nvt_alpha_data.h"
 #include "mi_disp_lhbm.h"
+#include "exposure_adjustment.h"
 
 #define to_dsi_display(x) container_of(x, struct dsi_display, host)
 
@@ -42,6 +43,9 @@ static void panelon_dimming_enable_delayed_work(struct work_struct *work)
 	struct dsi_panel_mi_cfg *mi_cfg = container_of(work,
 				struct dsi_panel_mi_cfg, dimming_enable_delayed_work.work);
 	struct dsi_panel *dsi_panel = mi_cfg->dsi_panel;
+
+	if (ea_panel_is_enabled())
+		return;
 
 	if (dsi_panel && mi_cfg->dc_enable && !mi_cfg->hbm_enabled)
 		dsi_panel_set_disp_param(dsi_panel, DISPPARAM_DIMMING);
@@ -3571,8 +3575,8 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		if (mi_cfg->dimming_state != STATE_DIM_BLOCK) {
 			if (ktime_after(ktime_get(), mi_cfg->fod_hbm_off_time)
 				&& ktime_after(ktime_get(), mi_cfg->fod_backlight_off_time)) {
-				pr_info("dimming on\n");
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGON);
+				pr_info("dimming on (ea immediate 0x53 0x20)\n");
+				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
 			} else {
 				pr_info("skip dimming on due to hbm off\n");
 			}
@@ -3694,6 +3698,8 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 				}
 			}
 			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_OFF);
+			if (!rc && ea_panel_is_enabled())
+				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
 			pr_info("hbm off\n");
 			mi_cfg->dimming_state = STATE_DIM_RESTORE;
 			if (is_thermal_call) {
@@ -3742,6 +3748,8 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 			}
 		}
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_HDR_OFF);
+		if (!rc && ea_panel_is_enabled())
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
 		mi_cfg->dimming_state = STATE_DIM_RESTORE;
 		mi_cfg->hbm_enabled = false;
 		break;
@@ -3943,7 +3951,12 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 						rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
 				}
 			}
-			if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
+			if (ea_panel_is_enabled()) {
+				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
+				if (rc)
+					pr_err("[%s] failed to send DSI_CMD_SET_MI_DIMMINGOFF cmd, rc=%d\n",
+						panel->name, rc);
+			} else if (mi_cfg->dc_type == 0 && mi_cfg->dc_enable) {
 				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_AOD_TO_DC_ON);
 				if (rc)
 					pr_err("[%s] failed to send DSI_CMD_SET_MI_DC_ON cmd, rc=%d\n",
@@ -3999,11 +4012,8 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		break;
 	case DISPPARAM_DC_ON:
 		pr_info("DC on\n");
-		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_ON);
-		if (rc)
-			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGON);
-		if (!rc)
-			rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
+		if (!mi_cfg->fod_hbm_enabled && !mi_cfg->hbm_enabled)
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
 		if (panel->mi_cfg.panel_id == 0x4C334100420200) {
 			mi_dsi_update_lhbm_cmd_b2reg(panel, true);
 			mi_dsi_update_nolp_b2reg(panel, true);
@@ -4015,8 +4025,6 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DC_OFF);
 		if (rc)
 			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
-		if (!rc)
-			rc = dsi_panel_update_backlight(panel, mi_cfg->last_bl_level);
 		if (panel->mi_cfg.panel_id == 0x4C334100420200) {
 			mi_dsi_update_lhbm_cmd_b2reg(panel, false);
 			mi_dsi_update_nolp_b2reg(panel, false);
@@ -4075,10 +4083,19 @@ int dsi_panel_set_disp_param(struct dsi_panel *panel, u32 param)
 		break;
 	case DISPPARAM_FOD_BACKLIGHT:
 		if (fod_backlight == 0x1000) {
+			u32 restore_bl = mi_cfg->last_bl_level;
+
 			pr_info("FOD backlight restore last_bl_level=%d\n",
 				mi_cfg->last_bl_level);
 			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_DIMMINGOFF);
-			if (mi_cfg->dc_enable && mi_cfg->dc_type) {
+			if (ea_panel_is_attenuating()) {
+				restore_bl = ea_panel_get_hw_backlight(
+					panel->bl_config.bl_level,
+					mi_cfg->dc_threshold);
+				pr_info("FOD backlight restore ea hw_bl=%d\n",
+					restore_bl);
+				rc = dsi_panel_update_backlight(panel, restore_bl);
+			} else if (mi_cfg->dc_enable && mi_cfg->dc_type) {
 				pr_info("FOD backlight restore dc_threshold=%d",
 				mi_cfg->dc_threshold);
 				rc = dsi_panel_update_backlight(panel, mi_cfg->dc_threshold);

@@ -4,6 +4,15 @@
  * Clean, Daemon-free, Ultra-Responsive UI
  */
 
+// Micro-haptic feedback helper for native feel
+function haptic(ms = 12) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(ms);
+    }
+  } catch (_) {}
+}
+
 let callbackCounter = 0;
 function getUniqueCallbackName(prefix) {
   return `${prefix}_cb_${Date.now()}_${callbackCounter++}`;
@@ -13,6 +22,20 @@ function getUniqueCallbackName(prefix) {
 function exec(command, options = {}) {
   if (typeof ksu === "undefined") {
     console.log("[Dev Mode] Shell Exec:", command);
+    if (command.includes("uname -r") || command.includes("IS_KI=")) {
+      return Promise.resolve({
+        errno: 0,
+        stdout: `IS_KI=1\nKERNEL=5.10.198-Ki-Kernel-v2.5\nMODEL=POCO F4 (munch)\nBATT=82\nTEMP=325\nPROF=1\nHAS_MGLRU=1\nRAW_MGLRU=1\nHAS_BYPASS=1\nVAL_BYPASS=0\nHAS_FC=1\nVAL_FC=1\nHAS_SCREENOFF=1\nVAL_SCREENOFF=0\nHAS_WAKELOCK=1\nVAL_WAKELOCK=0\nHAS_DYNSYNC=1\nVAL_DYNSYNC=1\nHAS_THERMAL=1\nVAL_THERMAL=1\nVAL_SWAP=130\nVAL_TCP=bbr\nAVAIL_TCP=bbr3 bbr westwood cubic reno\n`,
+        stderr: ""
+      });
+    }
+    if (command.includes("/sys/class/power_supply/battery/capacity")) {
+      return Promise.resolve({
+        errno: 0,
+        stdout: `82\n325\n1\n`,
+        stderr: ""
+      });
+    }
     return Promise.resolve({ errno: 0, stdout: "", stderr: "" });
   }
 
@@ -162,27 +185,27 @@ function setActiveProfileUI(profileId) {
       card.setAttribute("aria-pressed", "false");
     }
   });
-  
+
   if (currentProfile === 0) {
     cardProf0?.classList.add("active");
     cardProf0?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BATTERY";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-battery)";
     }
   } else if (currentProfile === 2) {
     cardProf2?.classList.add("active");
     cardProf2?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "TURBO";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-turbo)";
     }
   } else {
     cardProf1?.classList.add("active");
     cardProf1?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BALANCED";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-balanced)";
     }
   }
 }
@@ -191,7 +214,8 @@ function setActiveProfileUI(profileId) {
 async function setProfileInstant(profileId) {
   if (!isKiKernelActive) return;
   const id = parseInt(profileId, 10);
-  
+  haptic(15);
+
   // Instant visual update (0ms latency feedback)
   setActiveProfileUI(id);
   const names = ["Battery Saver", "Balanced", "Turbo Gaming"];
@@ -318,7 +342,15 @@ async function updateTelemetry() {
     if (lines[1] && elCurTemp) {
       const rawTemp = parseInt(lines[1].trim(), 10);
       if (!isNaN(rawTemp)) {
-        elCurTemp.textContent = `${(rawTemp / 10).toFixed(1)}°C`;
+        const cel = rawTemp / 10;
+        elCurTemp.textContent = `${cel.toFixed(1)}°C`;
+        if (cel >= 43) {
+          elCurTemp.style.color = "var(--danger)";
+        } else if (cel >= 38) {
+          elCurTemp.style.color = "var(--c-turbo)";
+        } else {
+          elCurTemp.style.color = "var(--text)";
+        }
       }
     }
     if (lines[2]) {
@@ -448,7 +480,17 @@ async function refreshState() {
     if (elCurBattery && props["BATT"]) elCurBattery.textContent = `${props["BATT"]}%`;
     if (elCurTemp && props["TEMP"] && props["TEMP"] !== "--") {
       const t = parseInt(props["TEMP"], 10);
-      if (!isNaN(t)) elCurTemp.textContent = `${(t / 10).toFixed(1)}°C`;
+      if (!isNaN(t)) {
+        const cel = t / 10;
+        elCurTemp.textContent = `${cel.toFixed(1)}°C`;
+        if (cel >= 43) {
+          elCurTemp.style.color = "var(--danger)";
+        } else if (cel >= 38) {
+          elCurTemp.style.color = "var(--c-turbo)";
+        } else {
+          elCurTemp.style.color = "var(--text)";
+        }
+      }
     }
 
     setActiveProfileUI(props["PROF"] || 1);
@@ -589,6 +631,7 @@ cardProf2?.addEventListener("click", () => {
 
 async function setMglruInstant(mode) {
   if (!isKiKernelActive) return;
+  haptic(10);
   const modeVal = parseInt(mode, 10);
   setMglruUI(modeVal, true);
   const modeName = modeVal === 7 ? "Aggressive" : modeVal === 1 ? "Standard (Safe)" : "Disabled";
@@ -621,6 +664,7 @@ mglruBtns.forEach(btn => {
 
 // Optimistic Switch Status Badge Updates
 toggleBypass?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeBypass) {
     badgeBypass.textContent = e.target.checked ? "Active" : "Off";
     badgeBypass.classList.toggle("is-off", !e.target.checked);
@@ -628,6 +672,7 @@ toggleBypass?.addEventListener("change", (e) => {
 });
 
 toggleFastCharge?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeFastCharge) {
     badgeFastCharge.textContent = e.target.checked ? "Active" : "Off";
     badgeFastCharge.classList.toggle("is-off", !e.target.checked);
@@ -635,6 +680,7 @@ toggleFastCharge?.addEventListener("change", (e) => {
 });
 
 toggleScreenOff?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeScreenOff) {
     badgeScreenOff.textContent = e.target.checked ? "Active" : "Off";
     badgeScreenOff.classList.toggle("is-off", !e.target.checked);
@@ -642,6 +688,7 @@ toggleScreenOff?.addEventListener("change", (e) => {
 });
 
 toggleWakelock?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeWakelock) {
     badgeWakelock.textContent = e.target.checked ? "Active" : "Off";
     badgeWakelock.classList.toggle("is-off", !e.target.checked);
@@ -649,6 +696,7 @@ toggleWakelock?.addEventListener("change", (e) => {
 });
 
 toggleDynFsync?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeDynFsync) {
     badgeDynFsync.textContent = e.target.checked ? "Active" : "Off";
     badgeDynFsync.classList.toggle("is-off", !e.target.checked);
@@ -656,6 +704,7 @@ toggleDynFsync?.addEventListener("change", (e) => {
 });
 
 toggleThermal?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeThermal) {
     badgeThermal.textContent = e.target.checked ? "Active" : "Bypass";
     badgeThermal.classList.toggle("is-off", !e.target.checked);
@@ -663,6 +712,7 @@ toggleThermal?.addEventListener("change", (e) => {
 });
 
 selectTcp?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeTcp) {
     badgeTcp.textContent = e.target.value;
     badgeTcp.classList.remove("is-off");
@@ -670,6 +720,7 @@ selectTcp?.addEventListener("change", (e) => {
 });
 
 btnApply?.addEventListener("click", () => {
+  haptic(20);
   applyChanges(false);
 });
 

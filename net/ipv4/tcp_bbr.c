@@ -2353,23 +2353,7 @@ static void bbr_main_wrapper(struct sock *sk, const struct rate_sample *rs)
 
 static struct tcp_congestion_ops tcp_bbr_cong_ops __read_mostly = {
 	.flags		= TCP_CONG_NON_RESTRICTED | TCP_CONG_WANTS_CE_EVENTS,
-	.name		= "bbr",
-	.owner		= THIS_MODULE,
-	.init		= bbr_init,
-	.cong_control	= bbr_main_wrapper,
-	.sndbuf_expand	= bbr_sndbuf_expand,
-	.undo_cwnd	= bbr_undo_cwnd,
-	.cwnd_event	= bbr_cwnd_event,
-	.ssthresh	= bbr_ssthresh,
-	.get_info	= bbr_get_info,
-	.set_state	= bbr_set_state,
-	.skb_marked_lost = bbr_skb_marked_lost,
-	.tso_segs	= bbr_tso_segs,
-};
-
-static struct tcp_congestion_ops tcp_bbr3_cong_ops __read_mostly = {
-	.flags		= TCP_CONG_NON_RESTRICTED | TCP_CONG_WANTS_CE_EVENTS,
-	.name		= "bbr3",
+	.name		= "bbrv3",
 	.owner		= THIS_MODULE,
 	.init		= bbr_init,
 	.cong_control	= bbr_main_wrapper,
@@ -2385,24 +2369,13 @@ static struct tcp_congestion_ops tcp_bbr3_cong_ops __read_mostly = {
 
 static int __init bbr_register(void)
 {
-	int ret;
-
 	BUILD_BUG_ON(sizeof(struct bbr) > ICSK_CA_PRIV_SIZE);
 
-	ret = tcp_register_congestion_control(&tcp_bbr_cong_ops);
-	if (ret)
-		return ret;
-
-	ret = tcp_register_congestion_control(&tcp_bbr3_cong_ops);
-	if (ret)
-		tcp_unregister_congestion_control(&tcp_bbr_cong_ops);
-
-	return ret;
+	return tcp_register_congestion_control(&tcp_bbr_cong_ops);
 }
 
 static void __exit bbr_unregister(void)
 {
-	tcp_unregister_congestion_control(&tcp_bbr3_cong_ops);
 	tcp_unregister_congestion_control(&tcp_bbr_cong_ops);
 }
 
