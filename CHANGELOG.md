@@ -7,6 +7,8 @@
 
 ---
 
+- Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
+
 ## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
 - Qualcomm DSPP PCC Anti-Flicker DC Dimming & Display SOD Hardening:
   - DSPP PCC Exposure Adjustment Integration: implemented Qualcomm DSPP PCC anti-flicker DC dimming (`techpack/display/msm/dsi/exposure_adjustment.c`) for brightness levels below `ELVSS_OFF_THRESHOLD` (500), maintaining stable panel emission while scaling pixel luminance smoothly down to minimum brightness.
