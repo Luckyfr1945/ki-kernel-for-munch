@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "modules": {
+    "kernelsu": {
+      "repository": "https://github.com/Baka-SU/BakaSU.git",
+      "commit": "548d1dda060ca198823d8808804d01f5209ef4a9",
+      "tree": "c7f59cbba81604cdb29e72190a83a1e6fc2e35ba",
+      "patch": ".github/ci-patches/bakasu.patch",
+      "patch_sha256": "5f24c0f0d5ee28dc121c873dae8e4a8996cd1ee1188b491e860eae7a8f567680"
+    },
+    "nomount": {
+      "repository": "https://github.com/maxsteeel/nomount.git",
+      "commit": "ab93ee32a589ccb021257b3c1f280e058520d844",
+      "tree": "0d124b7366dada7680ab8d15f4d615ef08e7f220"
+    },
+    "baseband_guard": {
+      "repository": "https://github.com/vc-teahouse/Baseband-guard.git",
+      "commit": "a54e0dc6cf0aff4dd87fec49644a02d2eb612905",
+      "tree": "a0d6f447a1795c74c2c2126838da81f732608227"
+    }
+  }
+}

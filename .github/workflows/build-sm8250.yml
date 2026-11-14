@@ -120,32 +120,14 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
+          submodules: false
+
+      - name: Validate External Module Setup
+        run: python3 -m unittest discover -s scripts/tests -p test_external_modules.py -v
 
       - name: Setup External Modules (BakaSU, NoMount, Baseband-guard)
         run: |
-          # 1. Setup KernelSU (BakaSU)
-          rm -rf KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
-          if [ -f ".github/ci-patches/bakasu.patch" ]; then
-            cd KernelSU
-            git apply ../.github/ci-patches/bakasu.patch || echo "BakaSU patch applied with fallback"
-            cd ..
-          fi
-          mkdir -p drivers
-          ln -sf ../KernelSU/kernel drivers/kernelsu
-
-          # 2. Setup NoMount
-          rm -rf NoMount
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git NoMount || \
-          git clone --depth=1 https://github.com/maxsteeel/nomount.git NoMount
-          mkdir -p fs
-          ln -sf ../NoMount/kernel/src fs/nomount
-
-          # 3. Setup Baseband-guard
-          rm -rf Baseband-guard
-          git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
-          mkdir -p security
-          ln -sf ../Baseband-guard security/baseband-guard
+          python3 scripts/setup-external-modules.py
 
       - name: Install Dependencies & Cross Compilers
         run: |

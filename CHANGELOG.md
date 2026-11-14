@@ -7,8 +7,9 @@
 
 ---
 
-## Unreleased — selected stability backports
+## Unreleased
 
+- Pin BakaSU, NoMount and Baseband-guard sources; verify patch checksums and final source trees before building.
 - Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
 - Remove the hidden watermark limit of 20 so ROM tuning follows the existing sysctl range.
 - Keep ROM memory settings when switching profiles; profile VM tuning is now opt-in through `memory_tuning`.
