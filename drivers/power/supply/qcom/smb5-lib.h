@@ -208,6 +208,7 @@ enum print_reason {
 
 #ifndef CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH
 #define ESR_WORK_VOTER			"ESR_WORK_VOTER"
+#define USER_BYPASS_VOTER		"USER_BYPASS_VOTER"
 #define ESR_WORK_TIME_2S	2000
 #define ESR_WORK_TIME_97S	97000
 
@@ -987,6 +988,8 @@ struct smb_charger {
 	bool			snk_debug_acc_detected;
 	bool			cc_un_compliant_detected;
 	bool			report_input_absent;
+	bool			bypass_active;
+	struct mutex		bypass_lock;
 	bool			batt_temp_irq_enabled;
 	bool			vbat_critical_low_triggered;
 
@@ -1087,6 +1090,7 @@ int smblib_get_prop_batt_iterm(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
+int smblib_set_bypass(struct smb_charger *chg, bool en);
 int smblib_set_prop_battery_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_batt_capacity(struct smb_charger *chg,

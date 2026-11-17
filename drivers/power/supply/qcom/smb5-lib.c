@@ -2402,8 +2402,12 @@ int smblib_get_prop_input_suspend(struct smb_charger *chg,
 int smblib_get_prop_battery_input_suspend(struct smb_charger *chg,
 				  union power_supply_propval *val)
 {
-	val->intval
-		= (get_client_vote(chg->fcc_votable, USER_VOTER) == 0);
+	/*
+	 * Bypass reads as a battery pause: the PD policy manager treats it
+	 * like night charging and keeps the BQ2597X charge pump off.
+	 */
+	val->intval = chg->bypass_active ||
+		(get_client_vote(chg->fcc_votable, USER_VOTER) == 0);
 	return 0;
 }
 
@@ -2549,6 +2553,12 @@ int smblib_get_prop_battery_charging_enabled(struct smb_charger *chg,
 					union power_supply_propval *val)
 {
 	int icl = 0;
+
+	if (chg->bypass_active) {
+		val->intval = 0;
+		return 0;
+	}
+
 	if (chg->is_qc_class_a && !chg->qc3_raise_done)
 		icl = MAIN_ICL_MIN;
 
@@ -2590,6 +2600,10 @@ int smblib_get_prop_batt_status(struct smb_charger *chg,
 			val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
 			return 0;
 		}
+	}
+	if (chg->bypass_active) {
+		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+		return 0;
 	}
 	if (chg->report_input_absent) {
 		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
@@ -3179,6 +3193,47 @@ int smblib_set_prop_input_suspend(struct smb_charger *chg,
 	return rc;
 }
 
+/*
+ * Bypass charging: stop charging the battery while the adapter keeps
+ * powering the system. Charging is disabled through chg_disable, the
+ * charge pump stays off because battery_input_suspend reads as paused,
+ * and ICL throttling votes are released so input is not cut. Thermal,
+ * moisture and adapter safety voters are left untouched.
+ */
+int smblib_set_bypass(struct smb_charger *chg, bool en)
+{
+	int rc;
+
+	if (!chg->chg_disable_votable)
+		return -ENODEV;
+
+	mutex_lock(&chg->bypass_lock);
+	if (chg->bypass_active == en) {
+		mutex_unlock(&chg->bypass_lock);
+		return 0;
+	}
+	chg->bypass_active = en;
+
+	rc = vote(chg->chg_disable_votable, USER_BYPASS_VOTER, en, 0);
+	if (rc < 0)
+		smblib_err(chg, "Couldn't vote %s chg_disable rc=%d\n",
+			   en ? "enable" : "disable", rc);
+
+	if (en && chg->usb_icl_votable) {
+		vote(chg->usb_icl_votable, USER_VOTER, false, 0);
+		vote(chg->usb_icl_votable, MAIN_CHG_SUSPEND_VOTER, false, 0);
+		vote(chg->usb_icl_votable, MAIN_ICL_MIN_VOTER, false, 0);
+	}
+	mutex_unlock(&chg->bypass_lock);
+
+	power_supply_changed(chg->batt_psy);
+	if (chg->usb_psy)
+		power_supply_changed(chg->usb_psy);
+
+	pr_info("SMB5: bypass charging %s\n", en ? "enabled" : "disabled");
+	return rc;
+}
+
 int smblib_set_prop_battery_input_suspend(struct smb_charger *chg,
 		const union power_supply_propval *val)
 {
@@ -3642,6 +3697,14 @@ int smblib_set_prop_battery_charging_enabled(struct smb_charger *chg,
 				const union power_supply_propval *val)
 {
 	int icl = 0;
+
+	/*
+	 * While bypass is active, do not let the PD policy manager or
+	 * userspace throttle ICL (that would drain the battery instead).
+	 */
+	if (chg->bypass_active)
+		return 0;
+
 	if (chg->is_qc_class_a && !chg->qc3_raise_done)
 		icl = MAIN_ICL_MIN;
 
@@ -3885,6 +3948,25 @@ static void smblib_reg_work(struct work_struct *work)
 					get_effective_client(chg->awake_votable));
 
 	if (usb_present) {
+		if (chg->bypass_active && chg->bms_psy) {
+			union power_supply_propval bval = {0, };
+			int b_soc = -EINVAL, b_temp = -EINVAL;
+
+			if (!power_supply_get_property(chg->bms_psy,
+					POWER_SUPPLY_PROP_CAPACITY, &bval))
+				b_soc = bval.intval;
+			if (!power_supply_get_property(chg->bms_psy,
+					POWER_SUPPLY_PROP_TEMP, &bval))
+				b_temp = bval.intval;
+
+			/* Safety guard: leave bypass at SOC <= 15% or batt > 48C */
+			if ((b_soc >= 0 && b_soc <= 15) || b_temp > 480) {
+				pr_warn("SMB5: bypass safety guard (SOC=%d%%, temp=%d), disabling\n",
+					b_soc, b_temp);
+				smblib_set_bypass(chg, false);
+			}
+		}
+
 		smblib_dbg(chg, PR_OEM, "ICL vote value is %d voted by %s\n",
 					get_effective_result(chg->usb_icl_votable),
 					get_effective_client(chg->usb_icl_votable));
@@ -12417,6 +12499,7 @@ int smblib_init(struct smb_charger *chg)
 	mutex_init(&chg->irq_status_lock);
 	mutex_init(&chg->dcin_aicl_lock);
 	mutex_init(&chg->dpdm_lock);
+	mutex_init(&chg->bypass_lock);
 	spin_lock_init(&chg->typec_pr_lock);
 	INIT_WORK(&chg->batt_update_work, batt_update_work);
 	INIT_WORK(&chg->bms_update_work, bms_update_work);

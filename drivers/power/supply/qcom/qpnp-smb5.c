@@ -19,6 +19,8 @@
 #include <linux/regulator/machine.h>
 #include <linux/iio/consumer.h>
 #include <linux/pmic-voter.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
 #include <linux/usb/typec.h>
 #include "smb5-reg.h"
 #include "smb5-lib.h"
@@ -3400,6 +3402,68 @@ static const struct power_supply_desc batt_psy_desc = {
 	.property_is_writeable = smb5_batt_prop_is_writeable,
 };
 
+static ssize_t bypass_charging_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct smb_charger *chg = power_supply_get_drvdata(to_power_supply(dev));
+
+	if (!chg)
+		return -ENODEV;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chg->bypass_active ? 1 : 0);
+}
+
+static ssize_t bypass_charging_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct smb_charger *chg = power_supply_get_drvdata(to_power_supply(dev));
+	int val, rc;
+
+	if (!chg)
+		return -ENODEV;
+	if (kstrtoint(buf, 10, &val))
+		return -EINVAL;
+	rc = smblib_set_bypass(chg, !!val);
+	return rc < 0 ? rc : count;
+}
+static DEVICE_ATTR_RW(bypass_charging);
+
+/* /proc/bypass_charging: same control for non-root userspace (as on munch) */
+static ssize_t bypass_proc_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[4];
+	int len;
+
+	len = scnprintf(kbuf, sizeof(kbuf), "%d\n",
+			(__smbchg && __smbchg->bypass_active) ? 1 : 0);
+	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
+}
+
+static ssize_t bypass_proc_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char kbuf[16];
+	size_t len = min(count, sizeof(kbuf) - 1);
+	int val, rc;
+
+	if (!__smbchg)
+		return -ENODEV;
+	if (copy_from_user(kbuf, buf, len))
+		return -EFAULT;
+	kbuf[len] = '\0';
+	if (kstrtoint(strim(kbuf), 10, &val))
+		return -EINVAL;
+	rc = smblib_set_bypass(__smbchg, !!val);
+	return rc < 0 ? rc : count;
+}
+
+static const struct file_operations bypass_proc_fops = {
+	.owner = THIS_MODULE,
+	.read = bypass_proc_read,
+	.write = bypass_proc_write,
+	.llseek = default_llseek,
+};
+
 static int smb5_init_batt_psy(struct smb5 *chip)
 {
 	struct power_supply_config batt_cfg = {};
@@ -3415,6 +3479,11 @@ static int smb5_init_batt_psy(struct smb5 *chip)
 		pr_err("Couldn't register battery power supply\n");
 		return PTR_ERR(chg->batt_psy);
 	}
+
+	if (device_create_file(&chg->batt_psy->dev, &dev_attr_bypass_charging))
+		pr_err("Couldn't create bypass_charging sysfs node\n");
+	if (!proc_create("bypass_charging", 0666, NULL, &bypass_proc_fops))
+		pr_err("Couldn't create /proc/bypass_charging\n");
 
 	return rc;
 }
@@ -5219,6 +5288,9 @@ static void smb5_shutdown(struct platform_device *pdev)
 {
 	struct smb5 *chip = platform_get_drvdata(pdev);
 	struct smb_charger *chg = &chip->chg;
+
+	if (chg->bypass_active)
+		smblib_set_bypass(chg, false);
 
 	/* disable all interrupts */
 	smb5_disable_interrupts(chg);
