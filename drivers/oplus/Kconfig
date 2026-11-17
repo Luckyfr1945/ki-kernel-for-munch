@@ -63,6 +63,14 @@ config OPLUS_POWERINFO_FTM
 	help
 	  Select this config to enable powerinfo ftm.
 
+config OPLUS_HANS
+	bool "OPlus HANS generic netlink handshake"
+	depends on OPLUS_PORT || E404_OPLUS
+	default y
+	help
+	  Register the "oplus_hans" generic netlink family used by the
+	  ColorOS 16/17 freezer daemon and answer its handshake.
+
 config OPLUS_STUB_NODES
 	bool "oplus missing nodes stubs"
 	depends on OPLUS_PORT || E404_OPLUS

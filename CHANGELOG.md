@@ -122,6 +122,9 @@
 
 ---
 
+- ColorOS 16/17 port components synced with OPlus SM8550 vendor sources (`vendor/oplus/kernel`, OnePlus 12R 16.0.0):
+  - New `oplus_hans` generic netlink family (`CONFIG_OPLUS_HANS`): answers the ofreezer daemon handshake (`LOOP_BACK`, cpuctl v2) and reports cgroup v2 freezer support, so the framework freezes apps through `cgroup.freeze`. Binder/signal unfreeze reports are not implemented (no GKI vendor hooks on 4.19).
+  - Added missing stub nodes: `sched_assist_enabled`, `debug_enabled`, `lowend_plat_opt`, `sched_disable_camera_ux`, `sched_control_ux_select`, `sched_group_enabled`, `sched_ddl_enabled` (`/proc/oplus_scheduler/sched_assist/`); `async_ux_enable`, `set_last_async_ux`, `set_async_ux_after_pending`, `all_tasks_ux_sts`, `sched_debug`, `use_t_vendordata`, `unset_async_ux_inrestore`, `get_random_binder_task` (`/proc/oplus_binder/`); `heavy_task_info`, `rt_info`, `rt_num`, `cpu_min_freq`, `cpu_max_freq`, `disable_cpufreq_limit`, `fake_cpu7_cpuinfo_max_freq`, `skip_gameself_setaffinity` (`/proc/game_opt/`); `frame_boost_debug`, `input_boost_enabled`, `slide_boost_enabled`, `slide_min_util` (`/proc/sys/fbg/`).
 - Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
 - Ki-Settings v1.5.0: added opt-in Rust 80% charging limit (`ki-charge-limit`, bypass at 80%, resume at 75%) and component versions in WebUI.
 - NoMount upstream sync to v2.3.0 (`maxsteeel/nomount` dev `00e7c5d`): inode-based rules, pre-opened backing file cache, O(1) revalidate, UAF/OOB fixes, and rejection of rules whose backing path is virtual (#120).
