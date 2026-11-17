@@ -122,6 +122,8 @@
 
 ---
 
+- Hotspot TTL fix: forwarded packets decrement TTL/hop limit again and the `ttl <= 1` check (ICMP time exceeded) is restored, so routing loops through tethered clients end instead of circulating forever. Only traffic from a tethered client to the carrier upstream keeps its original TTL, so carrier tethering detection stays bypassed.
+- TCP default switched from `bbr` to CUBIC. `bbr` and `bbr3` both run the same incomplete BBRv3 port (loss notification only on the RACK/RTO path, wrong in-flight accounting for new segments); it stays selectable but is now labelled experimental in Ki-Settings, which also defaults to `cubic`.
 - ColorOS 16/17 port components synced with OPlus SM8550 vendor sources (`vendor/oplus/kernel`, OnePlus 12R 16.0.0):
   - New `oplus_hans` generic netlink family (`CONFIG_OPLUS_HANS`): answers the ofreezer daemon handshake (`LOOP_BACK`, cpuctl v2) and reports cgroup v2 freezer support, so the framework freezes apps through `cgroup.freeze`. Binder/signal unfreeze reports are not implemented (no GKI vendor hooks on 4.19).
   - Added missing stub nodes: `sched_assist_enabled`, `debug_enabled`, `lowend_plat_opt`, `sched_disable_camera_ux`, `sched_control_ux_select`, `sched_group_enabled`, `sched_ddl_enabled` (`/proc/oplus_scheduler/sched_assist/`); `async_ux_enable`, `set_last_async_ux`, `set_async_ux_after_pending`, `all_tasks_ux_sts`, `sched_debug`, `use_t_vendordata`, `unset_async_ux_inrestore`, `get_random_binder_task` (`/proc/oplus_binder/`); `heavy_task_info`, `rt_info`, `rt_num`, `cpu_min_freq`, `cpu_max_freq`, `disable_cpufreq_limit`, `fake_cpu7_cpuinfo_max_freq`, `skip_gameself_setaffinity` (`/proc/game_opt/`); `frame_boost_debug`, `input_boost_enabled`, `slide_boost_enabled`, `slide_min_util` (`/proc/sys/fbg/`).
