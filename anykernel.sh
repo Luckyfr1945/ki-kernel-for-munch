@@ -537,8 +537,8 @@ chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
-chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
-chmod 666 /proc/mglru 2>/dev/null
+chmod 644 /sys/kernel/mm/lru_gen/* 2>/dev/null
+chmod 644 /proc/mglru 2>/dev/null
 chmod 664 /proc/bypass_charging 2>/dev/null
 chmod 664 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 664 /sys/module/sync/parameters/fsync_enabled 2>/dev/null

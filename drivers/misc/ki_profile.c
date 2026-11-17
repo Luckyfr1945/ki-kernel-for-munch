@@ -377,7 +377,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * bursts without latency from averaging.
 	 * Eager game thread promotion (up_migrate 55/40, grp 65/50) locks render pipelines to Big cores.
 	 * Uncapped hardware burst maximums (Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz).
-	 * Memory tuning: watermark_scale 25 (prevents direct reclaim allocstall pauses),
+	 * Memory tuning: watermark_scale 20 (sysctl max; prevents direct reclaim allocstall pauses),
 	 * and vfs_cache_pressure 50 (keeps game asset textures cached in RAM).
 	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
 	 */
@@ -396,7 +396,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.up_migrate = 55, .down_migrate = 40,
 		.grp_up_migrate = 65, .grp_down_migrate = 50,
 		.window_stats_policy = 1,
-		.wmark_scale = 25, .vfs_cache_pressure = 50,
+		.wmark_scale = 20, .vfs_cache_pressure = 50,
 	},
 };
 
@@ -1029,6 +1029,43 @@ static struct kobject *ki_profile_kobj;
 static struct delayed_work ki_profile_delayed_work;
 static int boot_settle_retries;
 
+/*
+ * TWRP/OrangeFox have no PowerHAL or top-app boost, so their single-threaded
+ * UI stays on a LITTLE core under schedutil and lags. A/B bootloaders pass
+ * androidboot.force_normal_boot=1 only when booting Android, so its absence
+ * on an A/B device means recovery: pin each cluster at its Balanced max.
+ */
+static struct delayed_work ki_recovery_work;
+static int ki_recovery_retries;
+
+static void ki_recovery_work_fn(struct work_struct *work)
+{
+	int i, err = 0;
+
+	for (i = 0; i < KI_NR_CLUSTERS; i++) {
+		unsigned int cpu = ki_cluster_cpu[i];
+		unsigned int freq = ki_tunes[KI_PROFILE_BALANCED].cl[i].max_freq;
+
+		if (!freq)
+			freq = ki_cpufreq_get_max(cpu);
+		if (freq && ki_cpufreq_set_limits(cpu, freq, freq) == -EBUSY)
+			err = -EBUSY;
+	}
+
+	if (err && ki_recovery_retries++ < 10) {
+		schedule_delayed_work(&ki_recovery_work, msecs_to_jiffies(500));
+		return;
+	}
+	pr_info("ki_profile: recovery boot, clusters pinned at Balanced max%s\n",
+		err ? " (partial)" : "");
+}
+
+static bool __init ki_is_recovery_boot(void)
+{
+	return strstr(saved_command_line, "androidboot.slot_suffix=") &&
+	       !strstr(saved_command_line, "androidboot.force_normal_boot=1");
+}
+
 static void ki_profile_delayed_work_fn(struct work_struct *work)
 {
 	int err;
@@ -1084,6 +1121,13 @@ static int __init ki_profile_init(void)
 	/* Control interface via /proc/ki_profile (0644: root RW, user RO) */
 	if (!proc_create("ki_profile", 0644, NULL, &ki_profile_proc_fops))
 		pr_warn("ki_profile: Failed to create /proc/ki_profile entry\n");
+
+	/* Recovery: skip profiles and notifiers, just keep the UI fast */
+	if (ki_is_recovery_boot()) {
+		INIT_DELAYED_WORK(&ki_recovery_work, ki_recovery_work_fn);
+		schedule_delayed_work(&ki_recovery_work, 0);
+		return 0;
+	}
 
 	/* 3. Apply default profile */
 	mutex_lock(&ki_profile_mutex);

@@ -1313,10 +1313,14 @@ static ssize_t comp_algorithm_store(struct device *dev,
 	if (sz > 0 && compressor[sz - 1] == '\n')
 		compressor[sz - 1] = 0x00;
 
-	/* Allow zstd or upgrade legacy lzo/lzo-rle to zstd if available */
+	/*
+	 * Upgrade legacy lzo/lzo-rle to lz4: kswapd is pinned to the LITTLE
+	 * cluster, so a cheap compressor keeps background reclaim ahead of
+	 * allocations. An explicit zstd request is still honored.
+	 */
 	if ((!strcmp(compressor, "lzo") || !strcmp(compressor, "lzo-rle")) &&
-	    zcomp_available_algorithm("zstd"))
-		strlcpy(compressor, "zstd", sizeof(compressor));
+	    zcomp_available_algorithm("lz4"))
+		strlcpy(compressor, "lz4", sizeof(compressor));
 
 	if (!zcomp_available_algorithm(compressor))
 		return -EINVAL;
@@ -2466,9 +2470,6 @@ static ssize_t disksize_store(struct device *dev,
 		err = -EBUSY;
 		goto out_unlock;
 	}
-
-	/* Force ZRAM disksize to 6GB (6144 MB) */
-	disksize = 6144ULL * 1024 * 1024;
 
 	disksize = PAGE_ALIGN(disksize);
 	if (!zram_meta_alloc(zram, disksize)) {
