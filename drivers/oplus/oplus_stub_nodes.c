@@ -245,14 +245,23 @@ static const struct file_operations target_fps_fops = {
 };
 
 static int fbg_frame_boost_enabled = 1;
+static int fbg_frame_boost_debug;
+static int fbg_input_boost_enabled;
+static int fbg_slide_boost_enabled;
+static int fbg_slide_min_util;
+#define FBG_SYSCTL_INT(name, var) {			\
+		.procname	= name,			\
+		.data		= &var,			\
+		.maxlen		= sizeof(int),		\
+		.mode		= 0666,			\
+		.proc_handler	= proc_dointvec,	\
+	}
 static struct ctl_table fbg_sysctl_table[] = {
-	{
-		.procname	= "frame_boost_enabled",
-		.data		= &fbg_frame_boost_enabled,
-		.maxlen		= sizeof(int),
-		.mode		= 0666,
-		.proc_handler	= proc_dointvec,
-	},
+	FBG_SYSCTL_INT("frame_boost_enabled", fbg_frame_boost_enabled),
+	FBG_SYSCTL_INT("frame_boost_debug", fbg_frame_boost_debug),
+	FBG_SYSCTL_INT("input_boost_enabled", fbg_input_boost_enabled),
+	FBG_SYSCTL_INT("slide_boost_enabled", fbg_slide_boost_enabled),
+	FBG_SYSCTL_INT("slide_min_util", fbg_slide_min_util),
 	{ }
 };
 
@@ -1087,6 +1096,14 @@ static int __init oplus_stub_nodes_init(void) {
         set_proc_owner(proc_create("game_pid", 0666, proc_game_opt, &dummy_sink_fops));
         set_proc_owner(proc_create("cpu_load", 0666, proc_game_opt, &dummy_sink_fops));
         set_proc_owner(proc_create("target_fps", 0666, proc_game_opt, &target_fps_fops));
+        set_proc_owner(proc_create("heavy_task_info", 0444, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("rt_info", 0664, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("rt_num", 0444, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("cpu_min_freq", 0664, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("cpu_max_freq", 0664, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("disable_cpufreq_limit", 0664, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("fake_cpu7_cpuinfo_max_freq", 0664, proc_game_opt, &dummy_sink_fops));
+        set_proc_owner(proc_create("skip_gameself_setaffinity", 0664, proc_game_opt, &dummy_sink_fops));
     }
 
     proc_storage = proc_mkdir("storage", NULL);
@@ -1132,6 +1149,13 @@ static int __init oplus_stub_nodes_init(void) {
             set_proc_owner(proc_create("fbg_camera_opt", 0666, sched_assist, &dummy_one_fops));
             set_proc_owner(proc_create("fbg_anim_opt", 0666, sched_assist, &dummy_one_fops));
             set_proc_owner(proc_create("sched_assist_v2", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("sched_assist_enabled", 0666, sched_assist, &dummy_one_fops));
+            set_proc_owner(proc_create("debug_enabled", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("lowend_plat_opt", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("sched_disable_camera_ux", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("sched_control_ux_select", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("sched_group_enabled", 0666, sched_assist, &dummy_sink_fops));
+            set_proc_owner(proc_create("sched_ddl_enabled", 0666, sched_assist, &dummy_sink_fops));
             sched_audio = proc_mkdir("audio", sched_assist);
             if (sched_audio) {
                 set_proc_owner(sched_audio);
@@ -1158,6 +1182,14 @@ static int __init oplus_stub_nodes_init(void) {
     if (oplus_binder) {
         set_proc_owner(oplus_binder);
         set_proc_owner(proc_create("ux_flag", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("async_ux_enable", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("set_last_async_ux", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("set_async_ux_after_pending", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("all_tasks_ux_sts", 0444, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("sched_debug", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("use_t_vendordata", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("unset_async_ux_inrestore", 0666, oplus_binder, &dummy_sink_fops));
+        set_proc_owner(proc_create("get_random_binder_task", 0666, oplus_binder, &dummy_sink_fops));
     }
 
     oplus_afs = proc_mkdir("oplus_afs_config", NULL);

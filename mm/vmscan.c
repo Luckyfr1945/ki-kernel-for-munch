@@ -5385,7 +5385,7 @@ static ssize_t mglru_proc_read(struct file *file, char __user *buf,
 		"  [bit 1] Page table walk     : %s\n"
 		"  [bit 2] Non-leaf PMD walk   : %s\n"
 		"\n"
-		"Usage (non-root accessible):\n"
+		"Usage (root):\n"
 		"  echo 1 > /proc/mglru       -> Enable Standard (0x0001 / recommended for Android)\n"
 		"  echo 7 > /proc/mglru       -> Enable Turbo (0x0007 / Core + Page Table Walk)\n"
 		"  echo 0 > /proc/mglru       -> Disable (0x0000 / traditional 2-list LRU)\n"
@@ -5471,7 +5471,7 @@ static int __init init_lru_gen(void)
 	debugfs_create_file("lru_gen_full", 0444, NULL, NULL, &lru_gen_ro_fops);
 
 #ifdef CONFIG_PROC_FS
-	proc_create("mglru", 0666, NULL, &mglru_proc_fops);
+	proc_create("mglru", 0644, NULL, &mglru_proc_fops);
 #endif
 
 	return 0;

@@ -4,6 +4,15 @@
  * Clean, Daemon-free, Ultra-Responsive UI
  */
 
+// Micro-haptic feedback helper for native feel
+function haptic(ms = 12) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(ms);
+    }
+  } catch (_) {}
+}
+
 let callbackCounter = 0;
 function getUniqueCallbackName(prefix) {
   return `${prefix}_cb_${Date.now()}_${callbackCounter++}`;
@@ -13,6 +22,26 @@ function getUniqueCallbackName(prefix) {
 function exec(command, options = {}) {
   if (typeof ksu === "undefined") {
     console.log("[Dev Mode] Shell Exec:", command);
+    if (command.includes("KI_CHARGE_CHECK=1")) {
+      return Promise.resolve({ errno: 0, stdout: "SUPPORTED=1\nENABLED=0\nSTATUS=Off\n", stderr: "" });
+    }
+    if (command.includes("KI_ABOUT_CHECK=1")) {
+      return Promise.resolve({ errno: 0, stdout: "KERNEL=Preview only\nSUSFS=Preview only\nNOMOUNT=Preview only\nDROIDSPACE=Preview only\n", stderr: "" });
+    }
+    if (command.includes("uname -r") || command.includes("IS_KI=")) {
+      return Promise.resolve({
+        errno: 0,
+        stdout: `IS_KI=1\nKERNEL=5.10.198-Ki-Kernel-v2.5\nMODEL=POCO F4 (munch)\nBATT=82\nTEMP=325\nPROF=1\nHAS_MGLRU=1\nRAW_MGLRU=1\nHAS_BYPASS=1\nVAL_BYPASS=0\nHAS_FC=1\nVAL_FC=1\nHAS_SCREENOFF=1\nVAL_SCREENOFF=0\nHAS_WAKELOCK=1\nVAL_WAKELOCK=0\nHAS_DYNSYNC=1\nVAL_DYNSYNC=1\nHAS_THERMAL=1\nVAL_THERMAL=1\nVAL_SWAP=130\nVAL_TCP=bbr\nAVAIL_TCP=bbr3 bbr westwood cubic reno\n`,
+        stderr: ""
+      });
+    }
+    if (command.includes("/sys/class/power_supply/battery/capacity")) {
+      return Promise.resolve({
+        errno: 0,
+        stdout: `82\n325\n1\n`,
+        stderr: ""
+      });
+    }
     return Promise.resolve({ errno: 0, stdout: "", stderr: "" });
   }
 
@@ -162,27 +191,27 @@ function setActiveProfileUI(profileId) {
       card.setAttribute("aria-pressed", "false");
     }
   });
-  
+
   if (currentProfile === 0) {
     cardProf0?.classList.add("active");
     cardProf0?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BATTERY";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-battery)";
     }
   } else if (currentProfile === 2) {
     cardProf2?.classList.add("active");
     cardProf2?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "TURBO";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-turbo)";
     }
   } else {
     cardProf1?.classList.add("active");
     cardProf1?.setAttribute("aria-pressed", "true");
     if (elCurProfile) {
       elCurProfile.textContent = "BALANCED";
-      elCurProfile.style.color = "var(--accent)";
+      elCurProfile.style.color = "var(--c-balanced)";
     }
   }
 }
@@ -191,7 +220,8 @@ function setActiveProfileUI(profileId) {
 async function setProfileInstant(profileId) {
   if (!isKiKernelActive) return;
   const id = parseInt(profileId, 10);
-  
+  haptic(15);
+
   // Instant visual update (0ms latency feedback)
   setActiveProfileUI(id);
   const names = ["Battery Saver", "Balanced", "Turbo Gaming"];
@@ -241,7 +271,7 @@ function setMglruUI(mode, isSupported = true) {
       badgeMglru.textContent = "Aggressive";
       badgeMglru.classList.remove("is-off");
     } else if (currentMglruMode === 1) {
-      badgeMglru.textContent = "Standard (Safe)";
+      badgeMglru.textContent = "Standard";
       badgeMglru.classList.remove("is-off");
     } else {
       badgeMglru.textContent = "Disabled";
@@ -318,7 +348,15 @@ async function updateTelemetry() {
     if (lines[1] && elCurTemp) {
       const rawTemp = parseInt(lines[1].trim(), 10);
       if (!isNaN(rawTemp)) {
-        elCurTemp.textContent = `${(rawTemp / 10).toFixed(1)}°C`;
+        const cel = rawTemp / 10;
+        elCurTemp.textContent = `${cel.toFixed(1)}°C`;
+        if (cel >= 43) {
+          elCurTemp.style.color = "var(--danger)";
+        } else if (cel >= 38) {
+          elCurTemp.style.color = "var(--c-turbo)";
+        } else {
+          elCurTemp.style.color = "var(--text)";
+        }
       }
     }
     if (lines[2]) {
@@ -448,7 +486,17 @@ async function refreshState() {
     if (elCurBattery && props["BATT"]) elCurBattery.textContent = `${props["BATT"]}%`;
     if (elCurTemp && props["TEMP"] && props["TEMP"] !== "--") {
       const t = parseInt(props["TEMP"], 10);
-      if (!isNaN(t)) elCurTemp.textContent = `${(t / 10).toFixed(1)}°C`;
+      if (!isNaN(t)) {
+        const cel = t / 10;
+        elCurTemp.textContent = `${cel.toFixed(1)}°C`;
+        if (cel >= 43) {
+          elCurTemp.style.color = "var(--danger)";
+        } else if (cel >= 38) {
+          elCurTemp.style.color = "var(--c-turbo)";
+        } else {
+          elCurTemp.style.color = "var(--text)";
+        }
+      }
     }
 
     setActiveProfileUI(props["PROF"] || 1);
@@ -491,7 +539,7 @@ async function applyChanges(silent = false) {
 
   const prof = currentProfile;
   const mglru = currentMglruMode;
-  const bypass = toggleBypass?.checked ? 1 : 0;
+  const bypass = chargeLimitAutoBypass ? 0 : (toggleBypass?.checked ? 1 : 0);
   const fastcharge = toggleFastCharge?.checked ? 1 : 0;
   const screenoff = toggleScreenOff?.checked ? 1 : 0;
   const wakelock = toggleWakelock?.checked ? 1 : 0;
@@ -509,8 +557,10 @@ async function applyChanges(silent = false) {
     echo ${mglru} > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
 
     # 3. Apply Bypass Charging
-    echo ${bypass} > /proc/bypass_charging 2>/dev/null
-    echo ${bypass} > /sys/class/power_supply/battery/bypass_charging 2>/dev/null
+    if [ ! -f /data/adb/ki-charge-limit/held-bypass ]; then
+      echo ${bypass} > /proc/bypass_charging 2>/dev/null
+      echo ${bypass} > /sys/class/power_supply/battery/bypass_charging 2>/dev/null
+    fi
 
     # 4. Apply Fast Charge
     echo ${fastcharge} > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
@@ -564,6 +614,7 @@ async function applyChanges(silent = false) {
 
   try {
     await exec(script);
+    await refreshChargeLimit();
     if (!silent) {
       const profName = prof === 0 ? "Battery Saver" : prof === 2 ? "Turbo Gaming" : "Balanced";
       showToast(`${profName} profile & tweaks applied`);
@@ -589,9 +640,10 @@ cardProf2?.addEventListener("click", () => {
 
 async function setMglruInstant(mode) {
   if (!isKiKernelActive) return;
+  haptic(10);
   const modeVal = parseInt(mode, 10);
   setMglruUI(modeVal, true);
-  const modeName = modeVal === 7 ? "Aggressive" : modeVal === 1 ? "Standard (Safe)" : "Disabled";
+  const modeName = modeVal === 7 ? "Aggressive" : modeVal === 1 ? "Standard" : "Disabled";
   showToast(`MGLRU: ${modeName}`);
 
   try {
@@ -621,6 +673,7 @@ mglruBtns.forEach(btn => {
 
 // Optimistic Switch Status Badge Updates
 toggleBypass?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeBypass) {
     badgeBypass.textContent = e.target.checked ? "Active" : "Off";
     badgeBypass.classList.toggle("is-off", !e.target.checked);
@@ -628,6 +681,7 @@ toggleBypass?.addEventListener("change", (e) => {
 });
 
 toggleFastCharge?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeFastCharge) {
     badgeFastCharge.textContent = e.target.checked ? "Active" : "Off";
     badgeFastCharge.classList.toggle("is-off", !e.target.checked);
@@ -635,6 +689,7 @@ toggleFastCharge?.addEventListener("change", (e) => {
 });
 
 toggleScreenOff?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeScreenOff) {
     badgeScreenOff.textContent = e.target.checked ? "Active" : "Off";
     badgeScreenOff.classList.toggle("is-off", !e.target.checked);
@@ -642,6 +697,7 @@ toggleScreenOff?.addEventListener("change", (e) => {
 });
 
 toggleWakelock?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeWakelock) {
     badgeWakelock.textContent = e.target.checked ? "Active" : "Off";
     badgeWakelock.classList.toggle("is-off", !e.target.checked);
@@ -649,6 +705,7 @@ toggleWakelock?.addEventListener("change", (e) => {
 });
 
 toggleDynFsync?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeDynFsync) {
     badgeDynFsync.textContent = e.target.checked ? "Active" : "Off";
     badgeDynFsync.classList.toggle("is-off", !e.target.checked);
@@ -656,6 +713,7 @@ toggleDynFsync?.addEventListener("change", (e) => {
 });
 
 toggleThermal?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeThermal) {
     badgeThermal.textContent = e.target.checked ? "Active" : "Bypass";
     badgeThermal.classList.toggle("is-off", !e.target.checked);
@@ -663,6 +721,7 @@ toggleThermal?.addEventListener("change", (e) => {
 });
 
 selectTcp?.addEventListener("change", (e) => {
+  haptic(10);
   if (badgeTcp) {
     badgeTcp.textContent = e.target.value;
     badgeTcp.classList.remove("is-off");
@@ -670,6 +729,7 @@ selectTcp?.addEventListener("change", (e) => {
 });
 
 btnApply?.addEventListener("click", () => {
+  haptic(20);
   applyChanges(false);
 });
 
@@ -678,5 +738,172 @@ setInterval(updateTelemetry, 3500);
 
 // Initialize on Load
 document.addEventListener("DOMContentLoaded", () => {
-  refreshState();
+  refreshState().then(refreshChargeLimit);
+});
+
+// Read versions only when About is opened or refreshed.
+const aboutPanel = document.getElementById("about-panel");
+const aboutRefresh = document.getElementById("btn-about-refresh");
+let aboutLoaded = false;
+async function refreshAbout() {
+  if (aboutRefresh.disabled) return;
+  aboutRefresh.disabled = true;
+  const fields = ["kernel", "susfs", "nomount", "droidspace"];
+  fields.forEach(name => { document.getElementById(`about-${name}`).textContent = "Checking..."; });
+  try {
+    const { errno, stdout } = await exec(`
+      KI_ABOUT_CHECK=1
+      printf 'KERNEL=%s\n' "$(uname -r)"
+      SUSFS=""
+      for tool in /data/adb/ksu/bin/ksu_susfs /data/adb/modules/susfs4ksu/ksu_susfs /data/adb/modules/susfs4ksu/tools/ksu_susfs; do
+        [ -x "$tool" ] || continue
+        SUSFS=$("$tool" show version 2>/dev/null | head -n 1)
+        [ -n "$SUSFS" ] && break
+      done
+      printf 'SUSFS=%s\n' "$SUSFS"
+      printf 'NOMOUNT=%s\n' "$(cat /sys/module/nomount/version 2>/dev/null | head -n 1)"
+      PACKAGES=$(pm list packages 2>/dev/null | sed -n '/[Dd][Rr][Oo][Ii][Dd][Ss][Pp][Aa][Cc][Ee]/s/^package://p')
+      DROIDSPACE=""
+      for pkg in $PACKAGES; do
+        VERSION=$(dumpsys package "$pkg" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -n 1)
+        [ -n "$DROIDSPACE" ] && DROIDSPACE="$DROIDSPACE; "
+        DROIDSPACE="$DROIDSPACE$pkg ($VERSION)"
+      done
+      printf 'DROIDSPACE=%s\n' "$DROIDSPACE"
+    `);
+    if (Number(errno) !== 0) throw new Error("Version query failed");
+    const versions = {};
+    stdout.split("\n").forEach(line => {
+      const split = line.indexOf("=");
+      if (split > 0) versions[line.slice(0, split).toLowerCase()] = line.slice(split + 1).trim();
+    });
+    aboutLoaded = true;
+    fields.forEach(name => {
+      document.getElementById(`about-${name}`).textContent = versions[name] ||
+        (name === "droidspace" ? "App not detected" : "Version unavailable");
+    });
+  } catch (err) {
+    fields.forEach(name => { document.getElementById(`about-${name}`).textContent = "Unable to check"; });
+    showToast("Unable to read component versions", true);
+  } finally {
+    aboutRefresh.disabled = false;
+  }
+}
+const settingsPanel = document.getElementById("settings-panel");
+const settingsDock = document.getElementById("settings-dock");
+const pageTabs = [document.getElementById("tab-settings"), document.getElementById("tab-about")];
+let selectedPageTab = 0;
+let tabTransitionId = 0;
+let tabAnimations = [];
+async function selectPageTab(index) {
+  if (index === selectedPageTab) return;
+  selectedPageTab = index;
+  const transitionId = ++tabTransitionId;
+  tabAnimations.forEach(animation => animation.cancel());
+  tabAnimations = [];
+  pageTabs.forEach((tab, i) => {
+    tab.setAttribute("aria-selected", String(i === index));
+    tab.tabIndex = i === index ? 0 : -1;
+  });
+  const panels = [settingsPanel, aboutPanel];
+  const outgoing = panels.find(panel => !panel.hidden);
+  const incoming = panels[index];
+  const animate = typeof incoming.animate === "function" &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (animate && outgoing !== incoming) {
+    const fadeOut = outgoing.animate([{ opacity: 1 }, { opacity: 0 }],
+      { duration: 80, easing: "ease-out", fill: "forwards" });
+    tabAnimations.push(fadeOut);
+    await fadeOut.finished.catch(() => {});
+    if (transitionId !== tabTransitionId) return;
+  }
+  panels.forEach((panel, i) => { panel.hidden = i !== index; });
+  settingsDock.hidden = index !== 0;
+  tabAnimations.forEach(animation => animation.cancel());
+  tabAnimations = [];
+  if (index === 1 && !aboutLoaded) refreshAbout();
+  if (index === 0) refreshChargeLimit();
+  if (animate) {
+    const fadeIn = incoming.animate(
+      [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }],
+      { duration: 160, easing: "ease-out" });
+    tabAnimations.push(fadeIn);
+    await fadeIn.finished.catch(() => {});
+    if (transitionId !== tabTransitionId) return;
+    tabAnimations = [];
+  }
+}
+pageTabs.forEach((tab, index) => {
+  tab.addEventListener("click", () => selectPageTab(index));
+  tab.addEventListener("keydown", event => {
+    let next;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") next = 1 - index;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = 1;
+    else return;
+    event.preventDefault();
+    selectPageTab(next);
+    pageTabs[next].focus();
+  });
+});
+aboutRefresh?.addEventListener("click", refreshAbout);
+
+// The charging limit applies immediately and runs independently of the WebUI.
+const chargeLimitToggle = document.getElementById("toggle-charge-limit");
+const chargeLimitStatus = document.getElementById("charge-limit-status");
+let chargeLimitBusy = false;
+let chargeLimitAutoBypass = false;
+async function refreshChargeLimit() {
+  if (chargeLimitBusy) return;
+  try {
+    const { errno, stdout } = await exec(`
+      KI_CHARGE_CHECK=1
+      BIN=/data/adb/modules/ki_optimizer/bin/ki-charge-limit
+      if [ -x "$BIN" ] && [ -w /sys/class/power_supply/battery/battery_input_suspend ] &&
+         [ -w /sys/class/power_supply/battery/bypass_charging ] && [ -r /sys/class/power_supply/battery/night_charging ]; then
+        echo SUPPORTED=1
+        "$BIN" status
+        printf 'BYPASS=%s\n' "$(cat /sys/class/power_supply/battery/bypass_charging)"
+      else
+        echo SUPPORTED=0
+      fi
+    `);
+    if (Number(errno) !== 0) throw new Error("Unable to read charging limit");
+    const props = Object.fromEntries(stdout.trim().split("\n").map(line => {
+      const split = line.indexOf("=");
+      return [line.slice(0, split), line.slice(split + 1)];
+    }));
+    chargeLimitToggle.disabled = !isKiKernelActive || props.SUPPORTED !== "1";
+    chargeLimitToggle.checked = props.ENABLED === "1";
+    chargeLimitAutoBypass = props.AUTO_BYPASS === "1";
+    if (props.SUPPORTED === "1") {
+      updateFeatureRow(rowBypass, toggleBypass, badgeBypass, true, props.BYPASS === "1", "Active", "Off");
+      toggleBypass.disabled = chargeLimitAutoBypass;
+    }
+    chargeLimitStatus.textContent = props.SUPPORTED === "1" ? (props.STATUS || "Off") : "Unavailable on this device";
+  } catch (_) {
+    chargeLimitToggle.disabled = true;
+    chargeLimitStatus.textContent = "Unable to check charging limit";
+  }
+}
+chargeLimitToggle?.addEventListener("change", async () => {
+  if (chargeLimitBusy || !isKiKernelActive) return;
+  chargeLimitBusy = true;
+  chargeLimitToggle.disabled = true;
+  const enabled = chargeLimitToggle.checked;
+  chargeLimitStatus.textContent = enabled ? "Starting..." : "Stopping...";
+  try {
+    const result = await exec(`/data/adb/modules/ki_optimizer/bin/ki-charge-limit ${enabled ? "on" : "off"}`);
+    if (Number(result.errno) !== 0) throw new Error(result.stderr || "Charging limit failed");
+    haptic(10);
+    showToast(enabled ? "Charging limit enabled" : "Charging limit disabled");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    chargeLimitBusy = false;
+    await refreshChargeLimit();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshChargeLimit();
 });

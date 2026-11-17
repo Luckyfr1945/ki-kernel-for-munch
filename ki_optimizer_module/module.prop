@@ -1,6 +1,6 @@
 id=ki_optimizer
 name=Ki-Kernel Settings
-version=v1.4.0
-versionCode=140
+version=v1.5.0
+versionCode=150
 author=Luckyfr1945
-description=Clean & responsive KernelSU/Magisk WebUI controller for Ki-Kernel: CPU Power Profiles, Multi-Gen LRU, Bypass Charging, Screen-On Fast Charge, Dynamic Fsync, Thermal Guard & dynamic TCP Congestion Control.
+description=Ki-Kernel settings: power profiles, memory, charging, thermal and network controls. Includes a Rust-based 80% charging limit and component versions.

@@ -15,6 +15,7 @@
 #include "dsi_ctrl_hw.h"
 #include "dsi_parser.h"
 #include "dsi_mi_feature.h"
+#include "exposure_adjustment.h"
 
 #include "dsi_display.h"
 #include "sde_dbg.h"
@@ -930,6 +931,9 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
+
+	if (bl_lvl > 0)
+		bl_lvl = ea_panel_calc_backlight(bl_lvl);
 
 	DSI_DEBUG("backlight type:%d lvl:%d\n", bl->type, bl_lvl);
 

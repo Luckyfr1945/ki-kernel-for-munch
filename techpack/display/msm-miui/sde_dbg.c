@@ -21,7 +21,13 @@
 
 #define SDE_DBG_BASE_MAX		10
 
-#define DEFAULT_PANIC		1
+/*
+ * Do not panic on display errors by default: when the display HAL does not
+ * register for DRM_EVENT_SDE_HW_RECOVERY, a single pp_done timeout on panel
+ * resume would panic (and reboot) the phone instead of resetting the CTL.
+ * Re-enable via /sys/kernel/debug/dri/0/debug/panic for bring-up debugging.
+ */
+#define DEFAULT_PANIC		0
 #define DEFAULT_REGDUMP		SDE_DBG_DUMP_IN_MEM
 #define DEFAULT_DBGBUS_SDE	SDE_DBG_DUMP_IN_MEM
 #define DEFAULT_DBGBUS_VBIFRT	SDE_DBG_DUMP_IN_MEM
@@ -221,6 +227,7 @@ static struct sde_dbg_base {
 	struct sde_dbg_evtlog *evtlog;
 	struct sde_dbg_reglog *reglog;
 	struct list_head reg_base_list;
+	void *reg_dump_base;
 	void *reg_dump_addr;
 	struct device *dev;
 	struct mutex mutex;
@@ -2958,7 +2965,7 @@ static void _sde_dump_reg(const char *dump_name, u32 reg_dump_flag,
 	end_addr = addr + len_bytes;
 
 	if (in_mem) {
-		if (dump_mem && !(*dump_mem)) {
+		if (dump_mem && !(*dump_mem) && dbg_base->reg_dump_addr) {
 			*dump_mem = dbg_base->reg_dump_addr;
 			dbg_base->reg_dump_addr += len_padded;
 		}
@@ -3152,12 +3159,16 @@ static void _sde_dump_reg_by_ranges(struct sde_dbg_reg_base *dbg,
 				addr, range_node->offset.start,
 				range_node->offset.end);
 
-			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-					dbg->name);
-			dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
-			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-					range_node->range_name);
-			dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+			/* dump buffer allocation can fail; never offset a NULL base */
+			if (dbg_base->reg_dump_addr) {
+				scnprintf(dbg_base->reg_dump_addr,
+						REG_BASE_NAME_LEN, dbg->name);
+				dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
+				scnprintf(dbg_base->reg_dump_addr,
+						REG_BASE_NAME_LEN,
+						range_node->range_name);
+				dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+			}
 			_sde_dump_reg(range_node->range_name, reg_dump_flag,
 					dbg->base, addr, len,
 					&range_node->reg_dump);
@@ -3170,10 +3181,12 @@ static void _sde_dump_reg_by_ranges(struct sde_dbg_reg_base *dbg,
 				dbg->max_offset);
 		addr = dbg->base;
 		len = dbg->max_offset;
-		scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
-				dbg->name);
-		dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
-		dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+		if (dbg_base->reg_dump_addr) {
+			scnprintf(dbg_base->reg_dump_addr, REG_BASE_NAME_LEN,
+					dbg->name);
+			dbg_base->reg_dump_addr += REG_BASE_NAME_LEN;
+			dbg_base->reg_dump_addr += RANGE_NAME_LEN;
+		}
 		_sde_dump_reg(dbg->name, reg_dump_flag, dbg->base, addr, len,
 				&dbg->reg_dump);
 	}
@@ -3547,8 +3560,16 @@ static void _sde_dump_array(struct sde_dbg_reg_base *blk_arr[],
 	mutex_lock(&sde_dbg_base.mutex);
 
 	reg_dump_size =  _sde_dbg_get_reg_dump_size();
-	dbg_base->reg_dump_addr = dma_alloc_coherent(sde_dbg_base.dev,
-			reg_dump_size, &phys, GFP_KERNEL);
+	/* allocate once and reuse: a fresh buffer per dump leaks on every timeout */
+	if (!dbg_base->reg_dump_base)
+		dbg_base->reg_dump_base = dma_alloc_coherent(sde_dbg_base.dev,
+				reg_dump_size, &phys, GFP_KERNEL);
+
+	dbg_base->reg_dump_addr = dbg_base->reg_dump_base;
+
+	if (!dbg_base->reg_dump_addr)
+		pr_err("Failed to allocate memory for reg_dump_addr size:%d\n",
+				reg_dump_size);
 
 	if (dump_all)
 		sde_evtlog_dump_all(sde_dbg_base.evtlog);

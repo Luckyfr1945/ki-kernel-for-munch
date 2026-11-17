@@ -502,6 +502,7 @@
 	mi,mdss-panel-on-dimming-delay = <120>;
 	mi,mdss-dsi-panel-hbm-brightness = <1>;
 	mi,mdss-dsi-panel-dc-threshold = <440>;
+	mi,mdss-dsi-panel-dc-type = <0>;
 	mi,mdss-dsi-panel-max-brightness-clone = <4095>;
 	mi,mdss-dsi-pan-enable-smart-fps;
 	mi,mdss-dsi-smart-fps-max_framerate = <120>;
@@ -512,6 +513,10 @@
 			mi,mdss-dsi-dimmingon-command-state = "dsi_hs_mode";
 			mi,mdss-dsi-dimmingoff-command = [39 01 00 00 00 00 02 53 20];
 			mi,mdss-dsi-dimmingoff-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-on-command = [39 01 00 00 00 00 02 53 28];
+			mi,mdss-dsi-dc-on-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-off-command = [39 01 00 00 00 00 02 53 20];
+			mi,mdss-dsi-dc-off-command-state = "dsi_hs_mode";
 
 			mi,mdss-dsi-hbm-on-command = [
 				39 01 00 00 00 00 02 53 E8
@@ -587,6 +592,10 @@
 			mi,mdss-dsi-dimmingon-command-state = "dsi_hs_mode";
 			mi,mdss-dsi-dimmingoff-command = [39 01 00 00 00 00 02 53 20];
 			mi,mdss-dsi-dimmingoff-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-on-command = [39 01 00 00 00 00 02 53 28];
+			mi,mdss-dsi-dc-on-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-off-command = [39 01 00 00 00 00 02 53 20];
+			mi,mdss-dsi-dc-off-command-state = "dsi_hs_mode";
 
 			mi,mdss-dsi-hbm-on-command = [
 				39 01 00 00 00 00 02 53 E8
@@ -662,6 +671,10 @@
 			mi,mdss-dsi-dimmingon-command-state = "dsi_hs_mode";
 			mi,mdss-dsi-dimmingoff-command = [39 01 00 00 00 00 02 53 20];
 			mi,mdss-dsi-dimmingoff-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-on-command = [39 01 00 00 00 00 02 53 28];
+			mi,mdss-dsi-dc-on-command-state = "dsi_hs_mode";
+			mi,mdss-dsi-dc-off-command = [39 01 00 00 00 00 02 53 20];
+			mi,mdss-dsi-dc-off-command-state = "dsi_hs_mode";
 
 			mi,mdss-dsi-hbm-on-command = [
 				39 01 00 00 00 00 02 53 E8

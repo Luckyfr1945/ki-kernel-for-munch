@@ -1,11 +1,184 @@
 # Ki-kernel for POCO F4 / Redmi K40S (munch)
 
-**Build Date:** 2026-11-08  
+**Build Date:** 2026-11-12  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
 **Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
 
 ---
+
+<details>
+<summary><b>Full Feature List</b></summary>
+
+### Build & Base
+- Based on LineageOS 22.2 SM8250 kernel (MIUI features and some drivers from UtsavBalar1231)
+- Clang LTO + ThinLTO, `-O3`, ARMv8.2-A Kryo 585 tuning
+- Variants: KSU+SuSFS, KSU only, No-KSU — targets AOSP, MIUI/HyperOS, ColorOS/OxygenOS/RealmeUI, or Universal zip
+- `/proc/config.gz` reflects the real build config
+- Defconfigs for other SM8250 devices (alioth, apollo, lmi, umi, cmi, cas, thyme, pipa, elish, enuma, dagu, psyche) with parallel CI builds
+
+### Root & Hiding
+- KernelSU (BakaSU, UAPI v6) with LSM hooks and 32-bit userspace support
+- Multi-manager: BakaSU, ReSukiSU, OriginSU (RSA 4096-bit), FinaSU, MidoriSU, KowSU, KSUN, RKSU, MKSU, YukiSU
+- SuSFS v2.4.0: sus_path, sus_map, sus_netlink, sus_su, sus_mount, sus_kstat, sus_overlayfs, open_redirect, cmdline/bootconfig spoof, symbol hiding, AVC log spoofing, priority UID filter (multi-user & dual apps)
+- NoMount v2.3.0 kernel integration (inode-based rules, pre-opened backing file cache)
+- Baseband-guard LSM
+- Built-in fgetpriority UID priority hiding (defeats Applist Detector/Momo)
+- Per-UID SELinux enforcing spoof for OPlus ports
+- uname handling for Android 16/17 BPF loaders
+
+### Ki-Profile (In-Kernel Performance Profiles)
+- Battery / Balanced / Performance via `/sys/kernel/ki_profile/` and `/proc/ki_profile` (non-root)
+- Nodes: `mode`, `current_profile`, `active_profile`, `available_modes`, `screen_state`, `screen_off_battery`, `thermal_throttle`, `max_freq_silver/gold/prime`, `reapply`
+- Per-cluster schedutil tuning (rate limits, hispeed, iowait boost), WALT/migration tuning, per-zone VM watermarks
+- Touch sched boost (Performance only), Thermal Guard with temperature auto-guard, auto Battery on screen-off
+
+### CPU, Scheduler & Core
+- Schedutil default, 300 MHz idle floor, ordered-workqueue CPU input boost
+- PELT u64 fix, reduced newidle balance cost, 120Hz scroll tuning
+- rwsem/osq spinning optimizations, correct RT timerslack
+- Backported syscalls: futex_waitv (449), epoll_pwait2 (441), clone3 set PID
+- NTSYNC driver (Windows NT sync for Wine/emulators)
+- 16-byte aligned `clear_page()`, faster `sync_file` ioctl, lockless per-CPU Blake2s RNG
+- PREEMPT, HZ_250, PSI, WALT, SchedTune, Core Control
+
+### Memory
+- Multi-Gen LRU (MGLRU) with `/proc/mglru` control (3 modes, root write)
+- ZRAM with LZ4 default (ZSTD, LZ4HC, LZ4KD, LZO available), ROM-defined size, writeback & readahead
+- kswapd bound to LITTLE cluster, watermark boost disabled, user-controlled swappiness
+- OPlus NANDswap
+
+### Storage & Filesystems
+- I/O schedulers: Maple (default), ADIOS v3.3.0, BFQ, Kyber
+- Dynamic Fsync v2.0 (`/sys/kernel/dyn_fsync/`, off by default)
+- F2FS (compression, tuned GC), EROFS (zip/xattr/security), exFAT, NTFS, OverlayFS, FUSE, USB UAS
+- DM_BOW (Virtual A/B), dm-user, dm-snapshot, verity FEC, default-key
+- Ramdisk decompressors: GZIP, BZIP2, LZMA, XZ, LZO, LZ4
+
+### Networking
+- TCP: BBR (default), Westwood, westwood-sub, CUBIC — Qdisc: FQ (default), CAKE, FQ_CODEL, HTB, netem
+- In-kernel hotspot engine (root & non-root): DNS DNAT, tether BPF ingress bypass, TTL/HopLimit decrement bypass
+- Protocol-specific USB tether names (`ncm%d`, `rndis%d`, `ecm%d`)
+- Full netfilter/iptables incl. IPv6 NAT/NPT, TPROXY, quota2, TTL/HL, CHECKSUM
+- Modern eBPF backport for Android 16/17, XDP sockets, upstream BPF security fixes
+- WireGuard, TUN, VETH, Bridge, MACVLAN, IPVLAN, kernel-side per-app network isolation
+
+### Containers
+- Droidspaces / LXC / Docker: all namespaces, cgroups (memcg+swap, freezer, device, pids, BPF), seccomp, POSIX MQ, devtmpfs, nftables
+- BINFMT_MISC binary emulation
+
+### Display
+- KCAL hardware color calibration (`kcal`, `kcal_enable`, `kcal_min`, `kcal_sat`, `kcal_val`, `kcal_cont`, `kcal_hue`, `kcal_invert`), Night Light & LiveDisplay compatible
+- Hardware DC Dimming + Qualcomm DSPP PCC exposure adjustment (`dimlayer_exposure`, `dimming`, `dc_dimming`, `disp_param`, `hbm`)
+- KTZ8866 11-bit backlight calibration, `bl-min-level=1`
+- SOD hardening: HyperOS DozeSuspend ESD handling, FOD LHBM white read guard, SDE/rotator debug panic disabled, protected OLED power rails
+
+### GPU (Adreno 650)
+- Selectable DTB: 683 MHz OC + Extreme UV, or Stock 670 MHz (default) — volume key or `/sdcard/oc` trigger
+- POPP removed, idle frequency reporting, KGSL hardening
+
+### Charging & Battery
+- Bypass charging (True Bypass, 3A ICL) via `/proc/bypass_charging` (non-root)
+- Force Fast Charge & Screen-On Fast Charge with progressive thermal stepping
+- 67W PPS and 15W laptop USB-C to USB-C charging
+- Nodes: `charging_limit_current`, `battery_health`, `battery_cycle_count`, `thermal_fcc_override`, `weak_chg_icl_ua`, `pd_disabled`
+- Aftermarket battery gauge fixes
+
+### Power Management
+- Boeffla Wakelock Blocker (`/sys/kernel/wakelock_blocker/`)
+- qcacld Wi-Fi wakelocks removed
+- Linux 5.4 PM runtime/sleep backports, CAF RPMH transaction loops
+- Reduced debug/logging in cnss2, xhci, iommu, lmh, tsens, synx, npu, clk
+
+### ColorOS / OxygenOS Port Support (OPlus)
+- OPlus subsystem: project, nwpower, wakelock profiler, sleep monitor, IPv6 RTO, oemports10t
+- Stub nodes: `oplus_display`, Frame Boost, SchedAssist v2/v3, UX task, HANS, Horae, SuperVOOC, `oplus_charger`, devinfo, Theia, GameOpt, oplus_mem/storage, opbootfrom
+
+### Other Drivers
+- Hybrid IR blaster (ir-spi + LIRC) for AOSP & MIUI
+- PS5 DualSense (`HID_PLAYSTATION`) and Sony HID
+- Focaltech touch and aw86927 haptic optimizations
+- `n0kz_attributes` for NKM compatibility
+- USB gadget: RNDIS, ECM, NCM, MIDI, UVC, UAC1/2, HID
+- Binder Freeze API + Frozen Notification (Android 17), TF_CLEAR_BUF
+- pstore/ramoops (v5.4 backport, 4MB)
+
+### Module Security
+- AOSP: MODVERSIONS + SHA-512 module signing (anti-cheat safe)
+- MIUI/HyperOS: force load enabled for stock vendor modules
+
+### AnyKernel3 Installer
+- Auto ROM detection (AOSP / MIUI / HyperOS / ColorOS) with system_ext, vendor and region inspection
+- Native aarch64 keycheck volume key selector
+- Hardened split_boot / vendor_boot and A/B slot handling, TWRP/OrangeFox and EROFS ColorOS support
+
+### Userspace Companions
+- Ki-Settings (ki_optimizer) v1.5.0 WebUI: profiles, MGLRU, bypass charging, fast charge, Screen-Off Battery, Thermal Guard, wakelock blocker, dynamic fsync, TCP congestion, VFS cache pressure, I/O scheduler, component versions
+- `ki-charge-limit` (Rust): opt-in 80% charging limit — pauses via kernel bypass at 80%, resumes at 75%, persists across reboot
+- Ki-Daemon (Rust): Auto Game Turbo — switches to Performance + bypass charging while gaming and restores after
+- On-device test scripts: crash logger, jank, SOD and reboot stress tests
+
+</details>
+
+---
+
+- ColorOS 16/17 port components synced with OPlus SM8550 vendor sources (`vendor/oplus/kernel`, OnePlus 12R 16.0.0):
+  - New `oplus_hans` generic netlink family (`CONFIG_OPLUS_HANS`): answers the ofreezer daemon handshake (`LOOP_BACK`, cpuctl v2) and reports cgroup v2 freezer support, so the framework freezes apps through `cgroup.freeze`. Binder/signal unfreeze reports are not implemented (no GKI vendor hooks on 4.19).
+  - Added missing stub nodes: `sched_assist_enabled`, `debug_enabled`, `lowend_plat_opt`, `sched_disable_camera_ux`, `sched_control_ux_select`, `sched_group_enabled`, `sched_ddl_enabled` (`/proc/oplus_scheduler/sched_assist/`); `async_ux_enable`, `set_last_async_ux`, `set_async_ux_after_pending`, `all_tasks_ux_sts`, `sched_debug`, `use_t_vendordata`, `unset_async_ux_inrestore`, `get_random_binder_task` (`/proc/oplus_binder/`); `heavy_task_info`, `rt_info`, `rt_num`, `cpu_min_freq`, `cpu_max_freq`, `disable_cpufreq_limit`, `fake_cpu7_cpuinfo_max_freq`, `skip_gameself_setaffinity` (`/proc/game_opt/`); `frame_boost_debug`, `input_boost_enabled`, `slide_boost_enabled`, `slide_min_util` (`/proc/sys/fbg/`).
+- Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
+- Ki-Settings v1.5.0: added opt-in Rust 80% charging limit (`ki-charge-limit`, bypass at 80%, resume at 75%) and component versions in WebUI.
+- NoMount upstream sync to v2.3.0 (`maxsteeel/nomount` dev `00e7c5d`): inode-based rules, pre-opened backing file cache, O(1) revalidate, UAF/OOB fixes, and rejection of rules whose backing path is virtual (#120).
+- Memory reclaim rebalance (kswapd stays on LITTLE cores 0-3 for power saving):
+  - Removed forced 6GB ZRAM disksize; the size requested by ROM/init is honored again.
+  - ZRAM default compressor switched from ZSTD to LZ4 and legacy lzo/lzo-rle requests now upgrade to LZ4, so LITTLE-core kswapd can keep up and foreground apps avoid direct reclaim stalls. Explicit zstd requests are still honored.
+  - Performance profile `watermark_scale_factor` aligned from 25 to 20 to match the sysctl clamp.
+- Fixed TWRP/OrangeFox UI lag (regression from the schedutil boot default): `ki_profile` detects recovery boot on A/B devices (no `androidboot.force_normal_boot=1`) and pins every CPU cluster at its Balanced max, so the single-threaded recovery UI no longer stalls on a LITTLE core. Android boots are unaffected.
+- MGLRU control hardening: `/proc/mglru` and `/sys/kernel/mm/lru_gen/*` are now root-writable only (0644, still world-readable). Previously any app could toggle MGLRU (a global, lock-heavy page migration) or set `min_ttl_ms`, which can trigger kernel OOM kills. Ki-Settings is unaffected since it writes as root.
+
+## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
+- Qualcomm DSPP PCC Anti-Flicker DC Dimming & Display SOD Hardening:
+  - DSPP PCC Exposure Adjustment Integration: implemented Qualcomm DSPP PCC anti-flicker DC dimming (`techpack/display/msm/dsi/exposure_adjustment.c`) for brightness levels below `ELVSS_OFF_THRESHOLD` (500), maintaining stable panel emission while scaling pixel luminance smoothly down to minimum brightness.
+  - Fixed Bright Fallback When Disabling DC Dimming (ON → OFF): unified EA mode handling inside `__dsi_display_set_disp_param()` (`techpack/display/msm/dsi/dsi_display_mi.c`) and removed premature calls in `sysfs_disp_param_write()` / `sysfs_dimming_write()` (`techpack/display/msm/dsi/dsi_display.c`) so `dsi_panel_set_disp_param()` clears `mi_cfg->dc_enable` *before* `ea_panel_mode_ctrl(false)` and refreshes `panel->bl_config.bl_level` via `dsi_display_set_backlight()`. Prevents `dc_skip_set_backlight()` (`dc_type = 1`) from discarding low-brightness updates (`< 440`) and leaving physical backlight stuck at 500 at 100% PCC gain.
+  - Eliminated Random Brightness Flares During Scrolling: replaced out-of-commit `sde_cp_crtc_set_property()` hijacking of `SDE_DSPP_PCC_V4` with a spinlock-protected DSPP post-modifier (`ea_panel_modify_pcc()`) inside `set_dspp_pcc_feature()` (`techpack/display/msm/sde/sde_color_processing.c`) and `sde_kcal_apply()` (`techpack/display/msm/sde/sde_kcal.c`). Composes `userspace PCC * KCAL * EA` in stack-local PCC buffers without mutating userspace property blobs, triggers `ctl->ops.update_bitmask_dspp` flushes even when CP lists are empty, and restores EA attenuation via `ea_dirty` across idle power collapse (`sde_cp_crtc_suspend`), `sde_crtc_enable()`, and FOD HBM overlay transitions.
+  - Eliminated Display-Side SOD Races in EA: removed unlocked `dsi_panel_set_backlight()` and out-of-commit `sde_cp_crtc_set_property()` / `drm_property_blob_put()` calls from `exposure_adjustment.c`, guarding sysfs-triggered backlight refreshes with `sde_kms_is_suspend_blocked()`, `panel->panel_lock`, and `DSI_CORE_CLK`.
+- Pure Hardware DC Dimming & Backlight Stability Resolution (Elimination of Grey Notifications & Sudden Brightness Spikes):
+  - Elimination of Grey/Washed-Out Notifications: disabled `CONFIG_DRM_SDE_EXPO` in `konadisp.conf`, `konadispconf.h`, and `munch_defconfig`. Previously, the re404 SDE exposure dim layer driver injected a software black alpha layer (`color_fill = {0,0,0,alpha}`) at the highest mixer stage (`zpos++`). On Android 14–17 AOSP, translucent notification cards and heads-up banners suffered severe alpha interference, making notifications appear washed out and grey.
+  - Eradication of Random Brightness Flare-ups ("terang sendiri kadang"): removing `CONFIG_DRM_SDE_EXPO` eliminates the artificial hardware backlight clamp to 440 (`DIM_THRES_LEVEL`). Previously, whenever multi-layer composition (notifications, shade, dialogs) exceeded `maxblendstages` or caused atomic check fallback, the software darkening layer vanished while the physical LEDs were still forced to 440, causing abrupt flashes of high brightness.
+  - Autonomous Hardware Panel DC Dimming on AOSP: added `mi,mdss-dsi-panel-dc-type = <0>;` alongside `mi,mdss-dsi-dc-on-command` and `mi,mdss-dsi-dc-off-command` (`0x53 0x28` / `0x53 0x20`) across all display timings (`timing@0`, `timing@1`, `timing@2`) in `dsi-panel-l11r-38-08-0a-dsc-cmd.dtsi`, matching `k11a` (Redmi K40 / POCO F3). With `dc_type = 0`, the DDIC handles DC dimming autonomously, `dc_skip_set_backlight` no longer skips backlight levels below 440, and the slider operates smoothly down to true minimum level 1.
+  - Backlight Clamping Alignment: restored `sde_connector.c` comparison to `brightness_max_level` matching stock Qualcomm/LineageOS, ensuring linear and monotonic scaling without slider clipping regardless of userspace scale.
+  - Seamless Sysfs Integration: maintained `dimlayer_exposure`, `dimming`, `dc_dimming`, and `disp_param` sysfs nodes wired directly to hardware DCS dimming commands, ensuring complete out-of-the-box compatibility with AOSP LiveDisplay, crDroid display settings, and custom scripts.
+- Upstream BPF Security & Stability Hardening: backported 15 official upstream Linux stable bugfixes for the eBPF subsystem. Eliminates 3 Use-After-Free vulnerabilities (`bpf_netns_link_update_prog`, `tcp_bpf_sendmsg`, offload info), prevents 4 integer overflow conditions in `bpf_msg_push_data`/`pop_data` and array map element indexing, eliminates `metadata_dst` route leaks on IPv4/IPv6 BPF redirection, resolves race conditions in `bpf_get_btf_vmlinux`, and hardens verifier precision tracking. Provides rock-solid networking and tethering offload reliability across Android 14–17.
+- Laptop 15W C-to-C & Maximum Charging Wattage Unthrottling:
+  - Policy Engine Munch: fixed fatal PDO negotiation bug in `drivers/usb/pd/policy_engine_munch.c` where laptops/chargers lacking a 9V fixed PDO caused `usbpd_fixed_pdo_workfunc` to force an invalid PDO index 2, resulting in request rejection and fallback to 500mA. The driver now cleanly retains the negotiated 5V/3A (15W) contract.
+  - Type-C Rp & USB Current Resolution: updated `smb5-lib-munch.c` to parse `typec_mode` (`POWER_SUPPLY_TYPEC_SOURCE_HIGH` = 3.0A, `SOURCE_MEDIUM` = 1.5A) in both `update_sw_icl_max` and `smblib_handle_usb_current`. USB gadget enumeration no longer truncates Type-C input current down to 500mA SDP, ensuring full 15W draw from laptop C-to-C ports.
+    - Progressive Thermal Stepping & Overdrive: restored smart progressive thermal stepping in `smblib_get_screen_on_clamped_level` with default `force_fast_charge = 1` and `screen_on_fast_charge = 1` in `smblib_init` and `ki_optimizer.conf`. Re-enabled peak 40W QC/HVDCP target and unthrottled non-PPS PD charging by raising `NON_PPS_PD_FCC_LIMIT` to 6.0A in `pd_policy_manager_munch.h`.
+- BakaSU Upstream Sync: rebased KernelSU BakaSU implementation onto official upstream main branch (`548d1dda`) and regenerated CI patch while preserving custom multi-manager support (OriginSU 4096-bit cert, FinaSU, MidoriSU, KowSU, KSUN, RKSU, MKSU, YukiSU) and SuSFS v2.4.0 integration.
+- Upstream SuSFS v2.4.0: upgraded kernel SuSFS inline hooks and headers to official v2.4.0 (`simonpunk/susfs4ksu`). Added `CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER` with fast `packages.list` parser (`O_NOATIME`), ratelimited SELinux rule & type logging (`pr_info_ratelimited`), robust `susfs_av_rule_hash` full-tuple verification, and `DEFAULT_KSU_MNT_MINOR_DEV` support for seamless detection evasion.
+- ZRAM 6GB & ZSTD Compression Integration: enforced 6GB (6144 MB) ZRAM disksize in `drivers/block/zram/zram_drv.c` for optimal multitasking across all ROMs. Enabled `CONFIG_CRYPTO_ZSTD=y`, `CONFIG_ZSTD_COMPRESS=y`, `CONFIG_ZSTD_DECOMPRESS=y`, and configured `CONFIG_ZRAM_DEF_COMP_ZSTD=y` (`CONFIG_ZRAM_DEF_COMP="zstd"`) across `munch_defconfig` and `munch_stock-defconfig`. Removed legacy forced override to LZ4, allowing native ZSTD compression for superior ~2.5x-3x memory compression ratio while auto-upgrading legacy LZO/LZO-RLE requests.
+- Anti-Cheat Module Security Hardening: enabled `CONFIG_MODVERSIONS=y`, `CONFIG_MODULE_SIG=y`, `CONFIG_MODULE_SIG_SHA512=y`, and disabled `CONFIG_MODULE_FORCE_LOAD` across `munch_defconfig` and `munch_stock-defconfig`. Modules are cryptographically verified with SHA-512, eliminating untrusted force-load vectors and passing Tencent ACE / mobile anti-cheat kernel integrity audits without game account bans.
+- Stock MIUI / HyperOS Vendor Module Loader & Boot Synchronization:
+  - Dynamic Stock ROM Module Loading: enabled `CONFIG_MODULE_FORCE_LOAD=y`, disabled `CONFIG_MODVERSIONS`, and disabled `CONFIG_MODULE_SIG` dynamically in `build.sh` for MIUI / HyperOS target and in `munch_stock-defconfig`. Resolves fatal `disagrees about version of symbol module_layout` errors on Stock MIUI/HyperOS where proprietary Xiaomi vendor modules (`wlan.ko`, `cs35l41_dlkm.ko`, `q6_pdr_dlkm.ko`, `fpc1540.ko`, `rmnet_perf.ko`) were rejected on boot. AOSP retains module signature verification and CRC checking for game anti-cheat safety.
+  - Daemon Uname Synchronization: updated early-boot uname spoofing in `kernel/sys.c` to check `current_uid().val <= 1000`, covering both `AID_ROOT` (UID 0, for `netd` & `bpfloader`) and `AID_SYSTEM` (UID 1000, for `netbpfload` & `uprobestats`) without artificial time limits. Eliminates `libnetd_updatable_init` BPF map retrieval aborts, prevents boot delays, stops Zygisk Next failsafe shutdowns, and ensures 100% seamless boot across both Stock MIUI/HyperOS (Android 14) and AOSP (Android 15–17). Unprivileged user apps and games (`UID >= 10000`) continue to receive authentic `4.19` uname info to prevent anti-cheat bans.
+- Aftermarket Battery Shutdown & Charge Cutoff Fix: ported battery gauge stability fixes from upstream e404 (`37da736cf32c` by Muhammad Guntur). Guarded negative initial sentinel values (`batt_volt`, `batt_curr`, `batt_soc`) in `drivers/power/supply/qcom/bq27z561_fg_munch.c`, rejected fake temperature placeholders on persistent I2C bus read errors (`i2c_error_cnt >= 3`), guarded against division by zero on `fcc <= 0`, and eliminated aggressive USB charge suspension (`input_suspend`) in `drivers/power/supply/qcom/smb5-lib-munch.c` to prevent abrupt power-offs and charging failures on non-genuine replacement batteries.
+- Stock MIUI / HyperOS Sleep-of-Death (SOD) Elimination:
+  - HyperOS DozeSuspend (LP2) ESD Handling: updated `esd_err_irq_handle()` in `techpack/display/msm-miui/sde/sde_connector.c` and `techpack/display/msm/sde/sde_connector.c` to recognize `SDE_MODE_DPMS_LP2` (HyperOS AOD DozeSuspend). Prevents spurious interrupts from erroneously marking `panel_dead = true` and permanently locking the display in sleep.
+  - Schedutil Default Governor Settlement: enforced `CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y` across `munch_stock-defconfig` and `build.sh`. Eliminates boot-time `performance` governor lock that caused `ki_profile` sugov rate limit configuration to fail (`-19 / -ENODEV`) and time out.
+  - Safe Default DTB Packaging: updated `build.sh` and `anykernel.sh` to default to `dtb_stock` (670 MHz safe voltage curve). Prevents accidental flashing of 1 uV extreme undervolting (`dtb_oc`) during recovery timeouts or app installations that caused low-power GPU sleep lockups.
+  - LHBM White Read Guard: resolved `-EAGAIN` (`-11`) display enable kickoff errors across both AOSP (`techpack/display/msm/dsi/dsi_panel_mi.c`) and MIUI (`techpack/display/msm-miui/dsi/dsi_panel_mi.c`) by verifying `fod_lhbm_white_update_flag` and command counts before executing DCS commands. Munch panels with physical side-mounted fingerprint sensors no longer hang trying to read optical under-display fingerprint registers.
+  - Synchronous ESD Teardown & Inactive IRQ Filter: guarded `esd_err_irq_handle()` in `techpack/display/msm-miui/sde/sde_connector.c` and `techpack/display/msm/sde/sde_connector.c` to drop spurious ESD interrupts received while the display is uninitialized or powered off (`power_mode != ON/LP1`), preventing false `panel_dead = true` lockups during screen-off. Added `synchronize_irq()` to `dsi_panel_esd_irq_ctrl()` to guarantee in-flight ESD handlers terminate completely before panel power rails are cut.
+  - Qualcomm RPMH Integrity: restored standard CAF blocking transaction loops in `rpmh_rsc_send_data()` (`drivers/soc/qcom/rpmh-rsc.c`) and `rpmh_flush()` (`drivers/soc/qcom/rpmh.c`). Eliminates artificial timeout bails that previously aborted pending power rail writes (`-EBUSY`) and dropped in-flight bus votes during Wi-Fi/PCIe runtime sleep transitions, preventing system freezes.
+  - Rotator Kickoff Panic Disabler: set `SDE_EVTLOG_DEFAULT_PANIC = 0` in `techpack/display/rotator/sde_rotator_debug.c`, matching SDE debug panic disabler.
+- Fatal Sleep-of-Death (SOD) & Screen Wake Freeze Resolution: restored upstream `needs_force_resume` sanitization in `drivers/base/power/runtime.c` and `include/linux/pm.h`. Previously, waking from wakelocks or deep sleep evaluated `pm_runtime_need_not_resume(dev)` as `true` on the Qualcomm Adreno 650 GPU (`adreno_device.c`), skipping its `runtime_resume` callback. The GPU remained in `RPM_SUSPENDED` while the panel backlight was powered, causing SurfaceFlinger/WindowManager display fence deadlocks, UI freeze, and triggering 60-second Android Framework Watchdog soft-reboots.
+- Display SDE Kickoff Panic Disabler: set `DEFAULT_PANIC = 0` in `techpack/display/msm/sde_dbg.c` and `msm-miui/sde_dbg.c`. Frame kickoff timeouts and debug dump delays during display wake transitions no longer panic or crash the phone, delegating recovery smoothly to hardware CTL reset. Fixed DMA buffer memory leak and NULL pointer dereference in SDE register dump routines.
+- Cpufreq Sugov Mutex Locking: protected cpufreq governor policy tuning with `down_read_trylock(&policy->rwsem)` in `drivers/misc/ki_profile.c` and retried gracefully when busy. Prevents kernel race conditions and use-after-free faults when switching profiles while secondary cores or the Prime core (CPU7) enter deep sleep/offline.
+- Ordered Workqueue for CPU Boost: migrated `input_boost_work` in `drivers/cpufreq/cpu-boost.c` to an ordered single-threaded workqueue (`cpu_boost_wq`) to prevent touch and powerkey boost races across multiple CPU clusters.
+- Balanced Profile Efficiency & Temperature Safeguard: disabled touch scheduler boost (`.touch_sched_boost = 0, .touch_boost_ms = 0`) in Balanced mode. Completely eliminates the aggressive 1-second full-throttle scheduler lock during scrolling, keeping device temperatures cool and restoring maximum battery efficiency for daily use.
+- Dedicated Performance / Gaming Turbo Boost: touch scheduler boost (`.touch_sched_boost = 1, .touch_boost_ms = 150`) is now strictly exclusive to Performance mode, holding instant 150ms task migration to big cores for competitive zero-latency gaming.
+- Unlocked Swappiness Control: removed hardcoded `vm_swappiness` override from `ki_profile.c`. Memory swappiness is now 100% user-customizable via WebUI `ki_optimizer`, init scripts, or `/proc/sys/vm/swappiness` without being overridden by kernel profile switching.
+- Dynamic Fsync Safety & SQLite Protection: set `dyn_fsync_active` default to `false` in `drivers/misc/dyn_fsync.c`. Eliminates the risk of SQLite database and WhatsApp chat corruption caused by deferred writes during unexpected shutdowns or force reboots, while keeping it opt-in via sysfs.
+- AnyKernel3 HyperOS / MIUI Flashing Fix: restricted live `getprop` ROM inspection to `BOOTMODE=true` in `anykernel.sh` and `anykernel_template/anykernel.sh` to prevent inheriting recovery properties during TWRP/OrangeFox flashing. Removed the generic `ro.product.system.name` fallback that caused HyperOS ports to be misidentified as AOSP, added regex support for Android 14/15/16 HyperOS incremental version strings (`^([0-9]+)?OS[0-9]`), and added inspection for `/system_ext/priv-app/MiuiSystemUI`.
+- Multi-Manager & Signature Verification Expansion: added OriginSU signature support and raised X.509 certificate limits to 2048 bytes in `KernelSU/kernel/manager/apk_sign.c` for full RSA 4096-bit compatibility across modern custom managers.
+- Module Startup Settlement Optimization: relaxed post-boot settlement sleep from 4s to 12s in `ki_optimizer_module/service.sh` to prevent CPU governor initialization from colliding with early post-boot screen-off transitions.
 
 ## Ki-kernel v1.6.4 (Fatal Sleep Lockup Fix & In-Kernel Non-Root Hotspot Engine) :
 - Fatal Screen-off Sleep Lockup & Black Screen Fix: reverted problematic PM runtime commit `d0b4c0a390fb` (`PM: runtime: Drop pm_runtime_force_suspend/resume()`) in `drivers/base/power/runtime.c` and `include/linux/pm.h`. This commit erroneously omitted `needs_force_resume = 1` for devices that were already runtime-suspended before system sleep (notably the Adreno GPU / KGSL). On wake, `pm_runtime_force_resume()` evaluated `!dev->power.needs_force_resume` and skipped powering back on the Adreno GPU and GDSC rails, causing SurfaceFlinger/InputDispatcher display fence deadlocks, system freezes, and Black Screen of Death.

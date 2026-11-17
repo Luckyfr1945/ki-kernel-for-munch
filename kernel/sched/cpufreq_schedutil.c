@@ -1566,36 +1566,54 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 }
 #endif
 
-static struct sugov_policy *sugov_get_valid_policy(unsigned int cpu)
+/*
+ * Return the schedutil policy of @cpu's cluster with policy->rwsem read-held.
+ * sugov_exit() runs under the write side and frees sg_policy, so holding it
+ * keeps sg_policy and its tunables alive; the per-cpu sg_cpu->sg_policy is
+ * not cleared when a whole cluster goes offline and must not be used here.
+ * Trylock so Ki-Profile never waits on CPU hotplug. Release with
+ * sugov_put_valid_policy().
+ */
+static struct sugov_policy *sugov_get_valid_policy(unsigned int cpu,
+						   struct cpufreq_policy **out)
 {
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
-	struct sugov_cpu *sg_cpu;
+	struct sugov_policy *sg_policy;
 
 	if (!policy)
-		return NULL;
+		return ERR_PTR(-ENODEV);
 
-	if (policy->governor != &schedutil_gov) {
+	if (!down_read_trylock(&policy->rwsem)) {
 		cpufreq_cpu_put(policy);
-		return NULL;
+		return ERR_PTR(-EBUSY);
 	}
 
-	sg_cpu = &per_cpu(sugov_cpu, cpu);
-	if (!sg_cpu || !sg_cpu->sg_policy || !sg_cpu->sg_policy->tunables) {
+	sg_policy = policy->governor_data;
+	if (policy->governor != &schedutil_gov || !sg_policy ||
+	    !sg_policy->tunables) {
+		up_read(&policy->rwsem);
 		cpufreq_cpu_put(policy);
-		return NULL;
+		return ERR_PTR(-ENODEV);
 	}
 
+	*out = policy;
+	return sg_policy;
+}
+
+static void sugov_put_valid_policy(struct cpufreq_policy *policy)
+{
+	up_read(&policy->rwsem);
 	cpufreq_cpu_put(policy);
-	return sg_cpu->sg_policy;
 }
 
 int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned int down_us)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 
@@ -1606,6 +1624,7 @@ int sugov_set_cluster_rate_limits(unsigned int cpu, unsigned int up_us, unsigned
 	sg_policy->down_rate_delay_ns = (u64)down_us * NSEC_PER_USEC;
 	update_min_rate_limit_ns(sg_policy);
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_rate_limits);
@@ -1621,12 +1640,13 @@ EXPORT_SYMBOL_GPL(sugov_set_cluster_rate_limits);
  */
 int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 	unsigned long util;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 
@@ -1634,6 +1654,7 @@ int sugov_set_cluster_rtg_boost(unsigned int cpu, unsigned int freq_hz)
 	util = target_util(sg_policy, freq_hz);
 	sg_policy->rtg_boost_util = util;
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_rtg_boost);
@@ -1649,12 +1670,13 @@ EXPORT_SYMBOL_GPL(sugov_set_cluster_rtg_boost);
  */
 int sugov_set_cluster_hispeed(unsigned int cpu, unsigned int freq_hz, unsigned int load)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 	unsigned long util;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 
@@ -1663,6 +1685,7 @@ int sugov_set_cluster_hispeed(unsigned int cpu, unsigned int freq_hz, unsigned i
 	util = target_util(sg_policy, freq_hz);
 	sg_policy->hispeed_util = util;
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_hispeed);
@@ -1677,13 +1700,14 @@ EXPORT_SYMBOL_GPL(sugov_set_cluster_hispeed);
  */
 int sugov_set_cluster_floor(unsigned int cpu, unsigned int freq_hz)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 	unsigned long util;
 	unsigned long flags;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 
@@ -1695,6 +1719,7 @@ int sugov_set_cluster_floor(unsigned int cpu, unsigned int freq_hz)
 		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_floor);
@@ -1706,15 +1731,17 @@ EXPORT_SYMBOL_GPL(sugov_set_cluster_floor);
  */
 int sugov_set_cluster_pl(unsigned int cpu, bool enable)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 	tunables->pl = enable;
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_pl);
@@ -1726,15 +1753,17 @@ EXPORT_SYMBOL_GPL(sugov_set_cluster_pl);
  */
 int sugov_set_cluster_iowait_boost(unsigned int cpu, unsigned int max_pct)
 {
-	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu);
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy = sugov_get_valid_policy(cpu, &policy);
 	struct sugov_tunables *tunables;
 
-	if (!sg_policy || !sg_policy->tunables)
-		return -ENODEV;
+	if (IS_ERR(sg_policy))
+		return PTR_ERR(sg_policy);
 
 	tunables = sg_policy->tunables;
 	tunables->iowait_boost_max = min(100U, max_pct);
 
+	sugov_put_valid_policy(policy);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sugov_set_cluster_iowait_boost);

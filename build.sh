@@ -177,7 +177,8 @@ apply_ksu_config() {
                 -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -e KSU_SUSFS_OPEN_REDIRECT \
                 -e KSU_SUSFS_SUS_OVERLAYFS \
-                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+                -e KSU_SUSFS_PRIORITY_UID_FILTER
         else
             scripts/config --file out/.config \
                 -e KSU_MANUAL_HOOK \
@@ -198,7 +199,8 @@ apply_ksu_config() {
                 -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
                 -d KSU_SUSFS_OPEN_REDIRECT \
                 -d KSU_SUSFS_SUS_OVERLAYFS \
-                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+                -d KSU_SUSFS_PRIORITY_UID_FILTER
         fi
     else
         scripts/config --file out/.config \
@@ -220,13 +222,17 @@ apply_ksu_config() {
             -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             -d KSU_SUSFS_OPEN_REDIRECT \
             -d KSU_SUSFS_SUS_OVERLAYFS \
-            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
+            -d KSU_SUSFS_PRIORITY_UID_FILTER
     fi
 }
 
 apply_droidspaces_config() {
+    local config_file="${1:-out/.config}"
+
     echo "Enforcing Droidspaces & Containerization configs..."
-    scripts/config --file out/.config \
+    scripts/config --file "$config_file" \
+        -e SYSCTL \
         -e SYSVIPC \
         -e POSIX_MQUEUE \
         -e NAMESPACES \
@@ -270,14 +276,12 @@ apply_droidspaces_config() {
         -e NF_NAT \
         -e NF_TABLES \
         -e IP_NF_TARGET_MASQUERADE \
-        -e NETFILTER_XT_TARGET_MASQUERADE \
         -e NETFILTER_XT_TARGET_TCPMSS \
         -e NETFILTER_XT_MATCH_ADDRTYPE \
-        -e NF_CONNTRACK_NETLINK \
+        -e NF_CT_NETLINK \
         -e NF_NAT_REDIRECT \
         -e IP_ADVANCED_ROUTER \
         -e IP_MULTIPLE_TABLES \
-        -e NF_CONNTRACK_IPV4 \
         -e NF_NAT_IPV4 \
         -e IP_NF_NAT \
         -e IPV6 \
@@ -287,17 +291,15 @@ apply_droidspaces_config() {
         -e IP6_NF_MANGLE \
         -e IP6_NF_NAT \
         -e IP6_NF_TARGET_MASQUERADE \
-        -e NF_CONNTRACK_IPV6 \
         -e NF_NAT_IPV6 \
         -e NETFILTER_XT_MATCH_COMMENT \
         -e NETFILTER_XT_MATCH_STATE \
         -e NETFILTER_XT_MATCH_CONNTRACK \
         -e NETFILTER_XT_MATCH_MULTIPORT \
         -e NETFILTER_XT_MATCH_HL \
-        -e NETFILTER_XT_TARGET_REJECT \
         -e IP_NF_TARGET_REJECT \
+        -e IP6_NF_TARGET_REJECT \
         -e NETFILTER_XT_TARGET_LOG \
-        -e IP_NF_TARGET_ULOG \
         -e NETFILTER_XT_MATCH_RECENT \
         -e NETFILTER_XT_MATCH_LIMIT \
         -e NETFILTER_XT_MATCH_HASHLIMIT \
@@ -315,8 +317,7 @@ apply_droidspaces_config() {
         -e NETFILTER_XT_TARGET_CHECKSUM \
         -e USB_CONFIGFS_RNDIS \
         -e USB_CONFIGFS_ECM \
-        --set-val BLK_DEV_LOOP_MIN_COUNT 32 \
-        -d ANDROID_PARANOID_NETWORK
+        --set-val BLK_DEV_LOOP_MIN_COUNT 32
 }
 
 echo "Cleaning build directories..."
@@ -357,6 +358,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     apply_ksu_config
     apply_droidspaces_config
     make $MAKE_ARGS olddefconfig
+    bash scripts/check-droidspaces-config.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
@@ -383,7 +385,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     else
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/aosp/dtb_stock
     fi
-    cp build_artifacts/aosp/dtb_oc build_artifacts/aosp/dtb
+    cp build_artifacts/aosp/dtb_stock build_artifacts/aosp/dtb
     cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
@@ -431,14 +433,21 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -e LTO_NONE \
         -d LTO_CLANG \
         -d LOCALVERSION_AUTO \
+        -e MODULE_FORCE_LOAD \
+        -d MODVERSIONS \
+        -d MODULE_SIG \
+        -d MODULE_SIG_ALL \
         -d MODULE_SIG_SHA512 \
         -d MODULE_SIG_HASH \
+        -e CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+        -d CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
         -d CORESIGHT \
         -d IPC_LOGGING \
         -d SCHEDSTATS \
         -d DEBUG_INFO
 
     make $MAKE_ARGS olddefconfig
+    bash scripts/check-droidspaces-config.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
@@ -465,7 +474,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
     else
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/miui/dtb_stock
     fi
-    cp build_artifacts/miui/dtb_oc build_artifacts/miui/dtb
+    cp build_artifacts/miui/dtb_stock build_artifacts/miui/dtb
     cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
@@ -541,6 +550,7 @@ mkdir -p ../release
 cp -f "$ZIP_FILENAME" ../release/
 mkdir -p ../../release 2>/dev/null || true
 cp -f "$ZIP_FILENAME" ../../release/ 2>/dev/null || true
+cp -f "$ZIP_FILENAME" /home/kiki/Unduhan/ 2>/dev/null || true
 cp -f "$ZIP_FILENAME" /home/kiki/Downloads/ 2>/dev/null || true
 mv "$ZIP_FILENAME" ../
 cd ..

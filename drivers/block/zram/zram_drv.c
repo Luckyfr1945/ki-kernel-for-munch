@@ -1313,8 +1313,13 @@ static ssize_t comp_algorithm_store(struct device *dev,
 	if (sz > 0 && compressor[sz - 1] == '\n')
 		compressor[sz - 1] = 0x00;
 
-	/* Override zstd to lz4 if requested by ROM / init */
-	if (!strcmp(compressor, "zstd"))
+	/*
+	 * Upgrade legacy lzo/lzo-rle to lz4: kswapd is pinned to the LITTLE
+	 * cluster, so a cheap compressor keeps background reclaim ahead of
+	 * allocations. An explicit zstd request is still honored.
+	 */
+	if ((!strcmp(compressor, "lzo") || !strcmp(compressor, "lzo-rle")) &&
+	    zcomp_available_algorithm("lz4"))
 		strlcpy(compressor, "lz4", sizeof(compressor));
 
 	if (!zcomp_available_algorithm(compressor))

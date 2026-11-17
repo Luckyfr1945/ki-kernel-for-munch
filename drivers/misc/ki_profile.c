@@ -70,7 +70,7 @@ extern int sysctl_compact_unevictable_allowed;
 extern int sysctl_vfs_cache_pressure;
 
 /*
- * Thermal Auto-Guard (Performance mode only, active while screen is on):
+ * Thermal Auto-Guard (whenever throttling is bypassed, while screen is on):
  * Thermal bypass stays active for max FPS, but throttling is re-armed when
  * CPU/GPU die >= 85C, body (quiet_therm) >= 47C, or battery >= 45C.
  * Released again once die <= 75C, body <= 43C, and battery <= 41C.
@@ -169,10 +169,13 @@ static void ki_guard_log_missing_zones(void)
 /* Caller holds ki_guard_lock; returns true if worker must stop */
 static bool ki_guard_should_stop_locked(void)
 {
-	if (READ_ONCE(ki_active_mode) != KI_PROFILE_PERFORMANCE) {
-		ki_guard_tripped = false;
+	/*
+	 * Nothing to watch while throttling is on, unless the guard itself armed
+	 * it and must release it. Keyed on the throttle state, not the profile:
+	 * the thermal_throttle node can bypass throttling in any profile.
+	 */
+	if (READ_ONCE(ki_thermal_throttle_enabled) && !ki_guard_tripped)
 		return true;
-	}
 	if (!READ_ONCE(ki_screen_on)) {
 		ki_guard_tripped = false;
 		ki_guard_parked = true;
@@ -280,6 +283,8 @@ struct ki_profile_tune {
 	bool gpu_perf;			/* kgsl performance mode */
 	bool thermal_throttle;
 	int sched_boost;
+	unsigned int touch_sched_boost;	/* sched boost type while touching, 0 = off */
+	unsigned int touch_boost_ms;	/* hold after the last touch event */
 	unsigned int up_migrate, down_migrate;
 	unsigned int grp_up_migrate, grp_down_migrate;
 	unsigned int window_stats_policy; /* 1 = MAX, 2 = MAX_RECENT_AVG */
@@ -337,7 +342,8 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
 	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
 	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
-	 * Swappiness 50 balances memory pressure and zRAM compression load efficiently.
+	 * Touch sched boost is kept off in Balanced (same as stock/v1.3) to maximize battery life.
+	 * Swappiness is not hardcoded here to allow user / ROM customization via /proc/sys/vm/swappiness.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
@@ -345,11 +351,13 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
 			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
 		},
+		.touch_sched_boost = 0,
+		.touch_boost_ms = 0,
 		.thermal_throttle = true,
 		.up_migrate = 95, .down_migrate = 85,
 		.grp_up_migrate = 95, .grp_down_migrate = 85,
 		.window_stats_policy = 2,
-		.swappiness = 50, .wmark_scale = 12, .vfs_cache_pressure = 70,
+		.wmark_scale = 12, .vfs_cache_pressure = 70,
 	},
 	/*
 	 * Performance / Gaming Turbo (Zero Frame Drop & Rock-Solid FPS):
@@ -364,11 +372,12 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * Sched boost enabled (.sched_boost = 1 / FULL_THROTTLE_BOOST): activates
 	 * core_ctl un-isolation, enables WALT frequency aggregation, and forces
 	 * placement policy to SCHED_BOOST_ON_BIG so render/audio threads are prioritized on Big cores.
+	 * Touch sched boost enabled (150ms hold) for ultra-responsive gaming input.
 	 * Window stats policy = 1 (WINDOW_STATS_MAX): responds immediately to peak load
 	 * bursts without latency from averaging.
 	 * Eager game thread promotion (up_migrate 55/40, grp 65/50) locks render pipelines to Big cores.
 	 * Uncapped hardware burst maximums (Silver 1.80GHz, Gold 2.42GHz, Prime 3.19GHz).
-	 * Memory tuning: swappiness 20 (avoids mid-game zRAM swap), watermark_scale 25 (prevents direct reclaim allocstall pauses),
+	 * Memory tuning: watermark_scale 20 (sysctl max; prevents direct reclaim allocstall pauses),
 	 * and vfs_cache_pressure 50 (keeps game asset textures cached in RAM).
 	 * Thermal bypass active with Thermal Auto-Guard watching at 47°C skin / 45°C batt / 85°C die.
 	 */
@@ -382,10 +391,12 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 		.gpu_perf = true,
 		.thermal_throttle = false,
 		.sched_boost = 1,
+		.touch_sched_boost = 1,
+		.touch_boost_ms = 150,
 		.up_migrate = 55, .down_migrate = 40,
 		.grp_up_migrate = 65, .grp_down_migrate = 50,
 		.window_stats_policy = 1,
-		.swappiness = 20, .wmark_scale = 25, .vfs_cache_pressure = 50,
+		.wmark_scale = 20, .vfs_cache_pressure = 50,
 	},
 };
 
@@ -416,6 +427,7 @@ static int apply_ki_profile(int mode, bool force)
 	int i, ret, err = 0;
 	unsigned long flags;
 	bool screen_on;
+	bool busy = false;	/* a policy lock was contended, retry the whole apply */
 	bool enable_gpu_perf;
 	bool enable_thermal_throttle;
 
@@ -438,20 +450,26 @@ static int apply_ki_profile(int mode, bool force)
 		unsigned int target_max;
 
 		ret = sugov_set_cluster_rate_limits(cpu, c->up_us, c->down_us);
+		if (ret == -EBUSY) {
+			busy = true;
+			continue;
+		}
 		if (ret) {
 			pr_warn("ki_profile: cpu%u sugov not ready (%d), cpufreq limits skipped\n",
 				cpu, ret);
 			err |= BIT(i);
 			continue;
 		}
-		sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq);
-		sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load);
-		sugov_set_cluster_floor(cpu, c->floor_freq);
-		sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max);
-		sugov_set_cluster_pl(cpu, t->pl);
+		if (sugov_set_cluster_rtg_boost(cpu, c->rtg_boost_freq) ||
+		    sugov_set_cluster_hispeed(cpu, c->hispeed_freq, c->hispeed_load) ||
+		    sugov_set_cluster_floor(cpu, c->floor_freq) ||
+		    sugov_set_cluster_iowait_boost(cpu, c->iowait_boost_max) ||
+		    sugov_set_cluster_pl(cpu, t->pl))
+			busy = true;
 
 		target_max = ki_target_max(i, mode);
-		ki_cpufreq_set_limits(cpu, 0, target_max);
+		if (ki_cpufreq_set_limits(cpu, 0, target_max) == -EBUSY)
+			busy = true;
 	}
 
 	screen_on = READ_ONCE(ki_screen_on);
@@ -463,6 +481,7 @@ static int apply_ki_profile(int mode, bool force)
 	sched_set_updown_migrate(t->up_migrate, t->down_migrate);
 	sched_set_group_updown_migrate(t->grp_up_migrate, t->grp_down_migrate);
 	sched_set_boost(t->sched_boost);
+	cpu_boost_set_input_sched_boost(t->touch_sched_boost, t->touch_boost_ms);
 
 	sysctl_sched_window_stats_policy = t->window_stats_policy;
 
@@ -503,8 +522,9 @@ static int apply_ki_profile(int mode, bool force)
 			user_mode = KI_PROFILE_BALANCED;
 		ut = &ki_tunes[user_mode];
 
-		ki_cpufreq_reset_idle_floors(user_mode);
-		vm_swappiness = ut->swappiness;
+		if (ki_cpufreq_reset_idle_floors(user_mode))
+			busy = true;
+		/* vm_swappiness is left untouched so user/ROM/modules can freely tune /proc/sys/vm/swappiness */
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
@@ -513,7 +533,8 @@ static int apply_ki_profile(int mode, bool force)
 	}
 
 	pr_info("ki_profile: %s profile active\n", profile_names[mode]);
-	return err;
+	/* -EBUSY makes every caller retry; err only reports clusters without schedutil */
+	return busy ? -EBUSY : err;
 }
 
 /* Profile that should be applied given user choice, screen state, and power supply */
@@ -843,6 +864,7 @@ static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribut
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 {
 	unsigned int val;
+	int ret;
 
 	if (kstrtouint(buf, 10, &val))
 		return -EINVAL;
@@ -852,10 +874,11 @@ static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 
 	mutex_lock(&ki_profile_mutex);
 	WRITE_ONCE(ki_user_max_freq[i], val);
-	ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
-			      ki_target_max(i, ki_effective_mode()));
+	ret = ki_cpufreq_set_limits(ki_cluster_cpu[i], 0,
+				    ki_target_max(i, ki_effective_mode()));
 	mutex_unlock(&ki_profile_mutex);
-	return count;
+	/* value is stored either way; -EBUSY tells the writer it is not live yet */
+	return ret == -EBUSY ? ret : (ssize_t)count;
 }
 
 static ssize_t max_freq_silver_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -1006,6 +1029,43 @@ static struct kobject *ki_profile_kobj;
 static struct delayed_work ki_profile_delayed_work;
 static int boot_settle_retries;
 
+/*
+ * TWRP/OrangeFox have no PowerHAL or top-app boost, so their single-threaded
+ * UI stays on a LITTLE core under schedutil and lags. A/B bootloaders pass
+ * androidboot.force_normal_boot=1 only when booting Android, so its absence
+ * on an A/B device means recovery: pin each cluster at its Balanced max.
+ */
+static struct delayed_work ki_recovery_work;
+static int ki_recovery_retries;
+
+static void ki_recovery_work_fn(struct work_struct *work)
+{
+	int i, err = 0;
+
+	for (i = 0; i < KI_NR_CLUSTERS; i++) {
+		unsigned int cpu = ki_cluster_cpu[i];
+		unsigned int freq = ki_tunes[KI_PROFILE_BALANCED].cl[i].max_freq;
+
+		if (!freq)
+			freq = ki_cpufreq_get_max(cpu);
+		if (freq && ki_cpufreq_set_limits(cpu, freq, freq) == -EBUSY)
+			err = -EBUSY;
+	}
+
+	if (err && ki_recovery_retries++ < 10) {
+		schedule_delayed_work(&ki_recovery_work, msecs_to_jiffies(500));
+		return;
+	}
+	pr_info("ki_profile: recovery boot, clusters pinned at Balanced max%s\n",
+		err ? " (partial)" : "");
+}
+
+static bool __init ki_is_recovery_boot(void)
+{
+	return strstr(saved_command_line, "androidboot.slot_suffix=") &&
+	       !strstr(saved_command_line, "androidboot.force_normal_boot=1");
+}
+
 static void ki_profile_delayed_work_fn(struct work_struct *work)
 {
 	int err;
@@ -1061,6 +1121,13 @@ static int __init ki_profile_init(void)
 	/* Control interface via /proc/ki_profile (0644: root RW, user RO) */
 	if (!proc_create("ki_profile", 0644, NULL, &ki_profile_proc_fops))
 		pr_warn("ki_profile: Failed to create /proc/ki_profile entry\n");
+
+	/* Recovery: skip profiles and notifiers, just keep the UI fast */
+	if (ki_is_recovery_boot()) {
+		INIT_DELAYED_WORK(&ki_recovery_work, ki_recovery_work_fn);
+		schedule_delayed_work(&ki_recovery_work, 0);
+		return 0;
+	}
 
 	/* 3. Apply default profile */
 	mutex_lock(&ki_profile_mutex);

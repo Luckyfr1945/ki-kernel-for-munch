@@ -19,7 +19,13 @@
 
 #define DYN_FSYNC_VERSION "2.2"
 
-bool dyn_fsync_active = true;
+/*
+ * Off by default: while active, every fsync() and O_SYNC write returns before
+ * reaching storage whenever the screen is on, so a panic or forced reboot then
+ * loses data apps believe is durable (SQLite/WhatsApp databases corrupt).
+ * Opt in through /sys/kernel/dyn_fsync/Dyn_fsync_active.
+ */
+bool dyn_fsync_active;
 EXPORT_SYMBOL(dyn_fsync_active);
 
 static bool screen_is_on = true;

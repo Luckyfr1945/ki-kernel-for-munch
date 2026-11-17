@@ -1281,13 +1281,20 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	if (static_branch_likely(&susfs_is_uname_spoof_buffer_set))
 		susfs_spoof_uname(&tmp);
 #endif
-	if (!strncasecmp(current->comm, "bpfloader", 9) ||
-		!strncasecmp(current->comm, "netbpfload", 10) ||
-		!strncasecmp(current->comm, "uprobestats", 11) ||
-		!strncasecmp(current->comm, "netd", 4)) {
-		strcpy(tmp.release, "5.15.404");
-		pr_info("fake uname: %s/%d release=%s\n",
-			 current->comm, current->pid, tmp.release);
+	/*
+	 * Only allow fake uname for actual system/root daemons (UID <= 1000, e.g.
+	 * AID_ROOT = 0 for netd/bpfloader, AID_SYSTEM = 1000 for netbpfload/uprobestats)
+	 * to satisfy Android 16/17 and Tethering APEX NetBpfLoad kernel checks.
+	 * Regular user apps (UID >= 10000, Native Detector, games) calling
+	 * prctl(PR_SET_NAME) will NOT trigger this, preventing detection and bans.
+	 */
+	if (unlikely(current_uid().val <= 1000)) {
+		if (!strncmp(current->comm, "bpfloader", 9) ||
+		    !strncmp(current->comm, "netbpfload", 10) ||
+		    !strncmp(current->comm, "uprobestats", 11) ||
+		    !strncmp(current->comm, "netd", 4)) {
+			strcpy(tmp.release, "5.15.404");
+		}
 	}
 	up_read(&uts_sem);
 #ifdef CONFIG_SPOOF_KERNEL_VERSION

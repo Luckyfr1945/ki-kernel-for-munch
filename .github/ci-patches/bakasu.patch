@@ -23,10 +23,10 @@ index 666dcde2..70af175d 100644
  
  KERNEL_VERSION := $(VERSION).$(PATCHLEVEL)
 diff --git a/kernel/Kconfig b/kernel/Kconfig
-index 79bc79ee..03c5b4be 100644
+index 79bc79ee..ce3d0629 100644
 --- a/kernel/Kconfig
 +++ b/kernel/Kconfig
-@@ -244,6 +244,14 @@ config KSU_SUSFS_SUS_MAP
+@@ -244,6 +244,22 @@ config KSU_SUSFS_SUS_MAP
          - It may not be able to evade detections by apps that implement a good injection detection.
          - Effective only on zygote spawned umounted user app process >= 10000.
  
@@ -37,6 +37,14 @@ index 79bc79ee..03c5b4be 100644
 +    help
 +        - Spoof avc log for suspicious domains.
 +        - Effective on all processes.
++
++config KSU_SUSFS_PRIORITY_UID_FILTER
++    bool "Enable priority uid filter"
++    depends on KSU_SUSFS
++    default y
++    help
++        - Filter uids from being queried via getpriority.
++        - Effective on user app processes.
 +
  endmenu
  
@@ -2100,7 +2108,7 @@ index 6d61650b..c3f2fa89 100644
  
  // Features forced by boot config. Written only while parsing module params
 diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
-index c23a7cb4..01ded875 100644
+index c23a7cb4..86ede80a 100644
 --- a/kernel/supercall/dispatch.c
 +++ b/kernel/supercall/dispatch.c
 @@ -10,6 +10,7 @@
@@ -2229,18 +2237,20 @@ index c23a7cb4..01ded875 100644
  // 100. GET_FULL_VERSION - Get full version string
  static int do_get_full_version(void __user *arg)
  {
-@@ -1168,6 +1273,10 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+@@ -1168,6 +1273,12 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
          return 0;
      }
  #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 +    case CMD_SUSFS_SET_PRIORITY_UID_FILTER: {
 +        susfs_set_priority_uid_filter(arg);
 +        return 0;
 +    }
++#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
      case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING: {
          susfs_set_avc_log_spoofing(arg);
          return 0;
-@@ -1463,6 +1572,42 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+@@ -1463,6 +1574,42 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
          .handler = do_lookup_symbols,
          .perm_check = only_root
      },
@@ -2283,7 +2293,7 @@ index c23a7cb4..01ded875 100644
      // downstream begin
      { 
          .cmd = KSU_IOCTL_GET_FULL_VERSION,
-@@ -1482,12 +1627,66 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+@@ -1482,12 +1629,66 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
          .handler = do_dynamic_manager,
          .perm_check = only_root 
      },
