@@ -378,33 +378,6 @@ static inline int is_packetized(struct file *file)
 	return (file->f_flags & O_DIRECT) != 0;
 }
 
-static inline bool is_netd_proc(struct task_struct *task)
-{
-	struct file *exe;
-	bool is_netd = false;
-
-	if (!task)
-		return false;
-
-	if (!strcmp(task->comm, "netd"))
-		return true;
-
-	if (task->group_leader && !strcmp(task->group_leader->comm, "netd"))
-		return true;
-
-	exe = get_task_exe_file(task);
-	if (!exe && task->group_leader)
-		exe = get_task_exe_file(task->group_leader);
-
-	if (exe) {
-		if (exe->f_path.dentry && !strcmp((const char *)exe->f_path.dentry->d_name.name, "netd"))
-			is_netd = true;
-		fput(exe);
-	}
-
-	return is_netd;
-}
-
 static ssize_t
 pipe_write(struct kiocb *iocb, struct iov_iter *from)
 {
@@ -422,11 +395,6 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 	__pipe_lock(pipe);
 
 	if (!pipe->readers) {
-		if (unlikely(is_netd_proc(current))) {
-			iov_iter_advance(from, total_len);
-			ret = total_len;
-			goto out;
-		}
 		send_sig(SIGPIPE, current, 0);
 		ret = -EPIPE;
 		goto out;
@@ -461,13 +429,6 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 		int bufs;
 
 		if (!pipe->readers) {
-			if (unlikely(is_netd_proc(current))) {
-				if (!ret) {
-					iov_iter_advance(from, iov_iter_count(from));
-					ret = total_len;
-				}
-				break;
-			}
 			send_sig(SIGPIPE, current, 0);
 			if (!ret)
 				ret = -EPIPE;
