@@ -7,7 +7,130 @@
 
 ---
 
+<details>
+<summary><b>Full Feature List</b></summary>
+
+### Build & Base
+- Based on LineageOS 22.2 SM8250 kernel (MIUI features and some drivers from UtsavBalar1231)
+- Clang LTO + ThinLTO, `-O3`, ARMv8.2-A Kryo 585 tuning
+- Variants: KSU+SuSFS, KSU only, No-KSU — targets AOSP, MIUI/HyperOS, ColorOS/OxygenOS/RealmeUI, or Universal zip
+- `/proc/config.gz` reflects the real build config
+- Defconfigs for other SM8250 devices (alioth, apollo, lmi, umi, cmi, cas, thyme, pipa, elish, enuma, dagu, psyche) with parallel CI builds
+
+### Root & Hiding
+- KernelSU (BakaSU, UAPI v6) with LSM hooks and 32-bit userspace support
+- Multi-manager: BakaSU, ReSukiSU, OriginSU (RSA 4096-bit), FinaSU, MidoriSU, KowSU, KSUN, RKSU, MKSU, YukiSU
+- SuSFS v2.4.0: sus_path, sus_map, sus_netlink, sus_su, sus_mount, sus_kstat, sus_overlayfs, open_redirect, cmdline/bootconfig spoof, symbol hiding, AVC log spoofing, priority UID filter (multi-user & dual apps)
+- NoMount v2.3.0 kernel integration (inode-based rules, pre-opened backing file cache)
+- Baseband-guard LSM
+- Built-in fgetpriority UID priority hiding (defeats Applist Detector/Momo)
+- Per-UID SELinux enforcing spoof for OPlus ports
+- uname handling for Android 16/17 BPF loaders
+
+### Ki-Profile (In-Kernel Performance Profiles)
+- Battery / Balanced / Performance via `/sys/kernel/ki_profile/` and `/proc/ki_profile` (non-root)
+- Nodes: `mode`, `current_profile`, `active_profile`, `available_modes`, `screen_state`, `screen_off_battery`, `thermal_throttle`, `max_freq_silver/gold/prime`, `reapply`
+- Per-cluster schedutil tuning (rate limits, hispeed, iowait boost), WALT/migration tuning, per-zone VM watermarks
+- Touch sched boost (Performance only), Thermal Guard with temperature auto-guard, auto Battery on screen-off
+
+### CPU, Scheduler & Core
+- Schedutil default, 300 MHz idle floor, ordered-workqueue CPU input boost
+- PELT u64 fix, reduced newidle balance cost, 120Hz scroll tuning
+- rwsem/osq spinning optimizations, correct RT timerslack
+- Backported syscalls: futex_waitv (449), epoll_pwait2 (441), clone3 set PID
+- NTSYNC driver (Windows NT sync for Wine/emulators)
+- 16-byte aligned `clear_page()`, faster `sync_file` ioctl, lockless per-CPU Blake2s RNG
+- PREEMPT, HZ_250, PSI, WALT, SchedTune, Core Control
+
+### Memory
+- Multi-Gen LRU (MGLRU) with `/proc/mglru` control (3 modes, root write)
+- ZRAM with LZ4 default (ZSTD, LZ4HC, LZ4KD, LZO available), ROM-defined size, writeback & readahead
+- kswapd bound to LITTLE cluster, watermark boost disabled, user-controlled swappiness
+- OPlus NANDswap
+
+### Storage & Filesystems
+- I/O schedulers: Maple (default), ADIOS v3.3.0, BFQ, Kyber
+- Dynamic Fsync v2.0 (`/sys/kernel/dyn_fsync/`, off by default)
+- F2FS (compression, tuned GC), EROFS (zip/xattr/security), exFAT, NTFS, OverlayFS, FUSE, USB UAS
+- DM_BOW (Virtual A/B), dm-user, dm-snapshot, verity FEC, default-key
+- Ramdisk decompressors: GZIP, BZIP2, LZMA, XZ, LZO, LZ4
+
+### Networking
+- TCP: BBR (default), Westwood, westwood-sub, CUBIC — Qdisc: FQ (default), CAKE, FQ_CODEL, HTB, netem
+- In-kernel hotspot engine (root & non-root): DNS DNAT, tether BPF ingress bypass, TTL/HopLimit decrement bypass
+- Protocol-specific USB tether names (`ncm%d`, `rndis%d`, `ecm%d`)
+- Full netfilter/iptables incl. IPv6 NAT/NPT, TPROXY, quota2, TTL/HL, CHECKSUM
+- Modern eBPF backport for Android 16/17, XDP sockets, upstream BPF security fixes
+- WireGuard, TUN, VETH, Bridge, MACVLAN, IPVLAN, kernel-side per-app network isolation
+
+### Containers
+- Droidspaces / LXC / Docker: all namespaces, cgroups (memcg+swap, freezer, device, pids, BPF), seccomp, POSIX MQ, devtmpfs, nftables
+- BINFMT_MISC binary emulation
+
+### Display
+- KCAL hardware color calibration (`kcal`, `kcal_enable`, `kcal_min`, `kcal_sat`, `kcal_val`, `kcal_cont`, `kcal_hue`, `kcal_invert`), Night Light & LiveDisplay compatible
+- Hardware DC Dimming + Qualcomm DSPP PCC exposure adjustment (`dimlayer_exposure`, `dimming`, `dc_dimming`, `disp_param`, `hbm`)
+- KTZ8866 11-bit backlight calibration, `bl-min-level=1`
+- SOD hardening: HyperOS DozeSuspend ESD handling, FOD LHBM white read guard, SDE/rotator debug panic disabled, protected OLED power rails
+
+### GPU (Adreno 650)
+- Selectable DTB: 683 MHz OC + Extreme UV, or Stock 670 MHz (default) — volume key or `/sdcard/oc` trigger
+- POPP removed, idle frequency reporting, KGSL hardening
+
+### Charging & Battery
+- Bypass charging (True Bypass, 3A ICL) via `/proc/bypass_charging` (non-root)
+- Force Fast Charge & Screen-On Fast Charge with progressive thermal stepping
+- 67W PPS and 15W laptop USB-C to USB-C charging
+- Nodes: `charging_limit_current`, `battery_health`, `battery_cycle_count`, `thermal_fcc_override`, `weak_chg_icl_ua`, `pd_disabled`
+- Aftermarket battery gauge fixes
+
+### Power Management
+- Boeffla Wakelock Blocker (`/sys/kernel/wakelock_blocker/`)
+- qcacld Wi-Fi wakelocks removed
+- Linux 5.4 PM runtime/sleep backports, CAF RPMH transaction loops
+- Reduced debug/logging in cnss2, xhci, iommu, lmh, tsens, synx, npu, clk
+
+### ColorOS / OxygenOS Port Support (OPlus)
+- OPlus subsystem: project, nwpower, wakelock profiler, sleep monitor, IPv6 RTO, oemports10t
+- Stub nodes: `oplus_display`, Frame Boost, SchedAssist v2/v3, UX task, HANS, Horae, SuperVOOC, `oplus_charger`, devinfo, Theia, GameOpt, oplus_mem/storage, opbootfrom
+
+### Other Drivers
+- Hybrid IR blaster (ir-spi + LIRC) for AOSP & MIUI
+- PS5 DualSense (`HID_PLAYSTATION`) and Sony HID
+- Focaltech touch and aw86927 haptic optimizations
+- `n0kz_attributes` for NKM compatibility
+- USB gadget: RNDIS, ECM, NCM, MIDI, UVC, UAC1/2, HID
+- Binder Freeze API + Frozen Notification (Android 17), TF_CLEAR_BUF
+- pstore/ramoops (v5.4 backport, 4MB)
+
+### Module Security
+- AOSP: MODVERSIONS + SHA-512 module signing (anti-cheat safe)
+- MIUI/HyperOS: force load enabled for stock vendor modules
+
+### AnyKernel3 Installer
+- Auto ROM detection (AOSP / MIUI / HyperOS / ColorOS) with system_ext, vendor and region inspection
+- Native aarch64 keycheck volume key selector
+- Hardened split_boot / vendor_boot and A/B slot handling, TWRP/OrangeFox and EROFS ColorOS support
+
+### Userspace Companions
+- Ki-Settings (ki_optimizer) v1.5.0 WebUI: profiles, MGLRU, bypass charging, fast charge, Screen-Off Battery, Thermal Guard, wakelock blocker, dynamic fsync, TCP congestion, VFS cache pressure, I/O scheduler, component versions
+- `ki-charge-limit` (Rust): opt-in 80% charging limit — pauses via kernel bypass at 80%, resumes at 75%, persists across reboot
+- Ki-Daemon (Rust): Auto Game Turbo — switches to Performance + bypass charging while gaming and restores after
+- On-device test scripts: crash logger, jank, SOD and reboot stress tests
+
+</details>
+
+---
+
 - Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
+- Ki-Settings v1.5.0: added opt-in Rust 80% charging limit (`ki-charge-limit`, bypass at 80%, resume at 75%) and component versions in WebUI.
+- NoMount upstream sync to v2.3.0 (`maxsteeel/nomount` dev `00e7c5d`): inode-based rules, pre-opened backing file cache, O(1) revalidate, UAF/OOB fixes, and rejection of rules whose backing path is virtual (#120).
+- Memory reclaim rebalance (kswapd stays on LITTLE cores 0-3 for power saving):
+  - Removed forced 6GB ZRAM disksize; the size requested by ROM/init is honored again.
+  - ZRAM default compressor switched from ZSTD to LZ4 and legacy lzo/lzo-rle requests now upgrade to LZ4, so LITTLE-core kswapd can keep up and foreground apps avoid direct reclaim stalls. Explicit zstd requests are still honored.
+  - Performance profile `watermark_scale_factor` aligned from 25 to 20 to match the sysctl clamp.
+- Fixed TWRP/OrangeFox UI lag (regression from the schedutil boot default): `ki_profile` detects recovery boot on A/B devices (no `androidboot.force_normal_boot=1`) and pins every CPU cluster at its Balanced max, so the single-threaded recovery UI no longer stalls on a LITTLE core. Android boots are unaffected.
+- MGLRU control hardening: `/proc/mglru` and `/sys/kernel/mm/lru_gen/*` are now root-writable only (0644, still world-readable). Previously any app could toggle MGLRU (a global, lock-heavy page migration) or set `min_ttl_ms`, which can trigger kernel OOM kills. Ki-Settings is unaffected since it writes as root.
 
 ## Ki-kernel v1.6.5 (Sleep-of-Death & Framework Watchdog Resolution, AnyKernel3 HyperOS Fix & Safe Storage) :
 - Qualcomm DSPP PCC Anti-Flicker DC Dimming & Display SOD Hardening:
