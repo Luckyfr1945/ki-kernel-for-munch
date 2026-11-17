@@ -15,6 +15,8 @@
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/fdtable.h>
+#include <linux/bitmap.h>
+#include <uapi/linux/close_range.h>
 #include <linux/bitops.h>
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -643,6 +645,44 @@ out_unlock:
 	return -EBADF;
 }
 EXPORT_SYMBOL(__close_fd); /* for ksys_close() */
+
+/*
+ * Backport of close_range() (Linux 5.9, CLOSE_RANGE_CLOEXEC from 5.11).
+ * Android 17 bionic posix_spawn(POSIX_SPAWN_CLOEXEC_DEFAULT) calls it
+ * without a fallback and fails with exit 127 on ENOSYS, which kept netd
+ * from starting dnsmasq for tethering. CLOSE_RANGE_UNSHARE is not
+ * supported and is rejected with -EINVAL.
+ */
+int __close_range(unsigned int fd, unsigned int max_fd, unsigned int flags)
+{
+	struct files_struct *files = current->files;
+	struct fdtable *fdt;
+
+	if (flags & ~CLOSE_RANGE_CLOEXEC)
+		return -EINVAL;
+	if (fd > max_fd)
+		return -EINVAL;
+
+	if (flags & CLOSE_RANGE_CLOEXEC) {
+		spin_lock(&files->file_lock);
+		fdt = files_fdtable(files);
+		max_fd = min(max_fd, fdt->max_fds - 1);
+		if (fd <= max_fd)
+			bitmap_set(fdt->close_on_exec, fd, max_fd - fd + 1);
+		spin_unlock(&files->file_lock);
+		return 0;
+	}
+
+	rcu_read_lock();
+	max_fd = min(max_fd, files_fdtable(files)->max_fds - 1);
+	rcu_read_unlock();
+
+	for (; fd <= max_fd; fd++) {
+		__close_fd(files, fd);
+		cond_resched();
+	}
+	return 0;
+}
 
 void do_close_on_exec(struct files_struct *files)
 {

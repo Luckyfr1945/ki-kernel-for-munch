@@ -122,6 +122,7 @@
 
 ---
 
+- Backported the `close_range` syscall (436, with `CLOSE_RANGE_CLOEXEC`). Android 17 bionic `posix_spawn(POSIX_SPAWN_CLOEXEC_DEFAULT)` calls it without a fallback, so on this 4.19 kernel netd's dnsmasq spawn died with exit 127 before exec. That left nothing answering DNS on the hotspot gateway — the real cause of "hotspot connected, no internet" on every ROM.
 - Hotspot TTL fix: forwarded packets decrement TTL/hop limit again and the `ttl <= 1` check (ICMP time exceeded) is restored, so routing loops through tethered clients end instead of circulating forever. Only traffic from a tethered client to the carrier upstream keeps its original TTL, so carrier tethering detection stays bypassed.
 - TCP default switched from `bbr` to CUBIC. `bbr` and `bbr3` both run the same incomplete BBRv3 port (loss notification only on the RACK/RTO path, wrong in-flight accounting for new segments); it stays selectable but is now labelled experimental in Ki-Settings, which also defaults to `cubic`.
 - ColorOS 16/17 port components synced with OPlus SM8550 vendor sources (`vendor/oplus/kernel`, OnePlus 12R 16.0.0):

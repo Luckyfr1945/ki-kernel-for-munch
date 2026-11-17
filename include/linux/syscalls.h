@@ -791,6 +791,8 @@ asmlinkage long sys_clone(unsigned long, unsigned long, int __user *,
 #endif
 
 asmlinkage long sys_clone3(struct clone_args __user *uargs, size_t size);
+asmlinkage long sys_close_range(unsigned int fd, unsigned int max_fd,
+				unsigned int flags);
 
 asmlinkage long sys_execve(const char __user *filename,
 		const char __user *const __user *argv,
