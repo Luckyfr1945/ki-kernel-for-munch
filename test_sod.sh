@@ -32,7 +32,7 @@ root() { printf '%s\n' "$*" | timeout 20 adb shell su 2>/dev/null | tr -d '\r'; 
 shell() { timeout 20 adb shell "$@" 2>/dev/null | tr -d '\r'; }
 
 boot_id() { shell cat /proc/sys/kernel/random/boot_id; }
-suspend_ok() { shell cat /sys/power/suspend_stats/success; }
+suspend_ok() { root cat /sys/power/suspend_stats/success; }  # root-only on HyperOS
 kernel_ts() { root "dmesg | tail -n 1" | sed -n 's/^\[ *\([0-9.]*\)\].*/\1/p'; }
 touch_irqs() { root "grep fts_ts /proc/interrupts" | awk '{s=0; for (i = 2; i <= 9; i++) s += $i; print s + 0}'; }
 display_on() { shell dumpsys power | grep -q 'mWakefulness=Awake'; }
@@ -97,10 +97,17 @@ for i in $(seq 1 "$CYCLES"); do
 	root cmd input keyevent KEYCODE_WAKEUP
 	shell dumpsys deviceidle unforce >/dev/null
 	wake_ms=-1
+	retried=0
 	while [ $(( $(date +%s%3N) - start_ms )) -lt $((WAKE_TIMEOUT_SEC * 1000)) ]; do
 		if display_on; then
 			wake_ms=$(( $(date +%s%3N) - start_ms ))
 			break
+		fi
+		# The notification can start an AOD pulse that swallows the first
+		# wake key; resend once like a second power-button press would.
+		if [ "$retried" = 0 ] && [ $(( $(date +%s%3N) - start_ms )) -gt 1500 ]; then
+			root cmd input keyevent KEYCODE_WAKEUP
+			retried=1
 		fi
 		sleep 0.2
 	done
