@@ -31,8 +31,8 @@ on:
         type: choice
         options:
           - 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
-          - 'ksu - ReSukiSU + SuSFS v2.3.0'
-          - 'nosusfs - ReSukiSU Only (Tanpa SuSFS)'
+          - 'ksu - BakaSU + SuSFS v2.4.0'
+          - 'nosusfs - BakaSU Only (Tanpa SuSFS)'
           - 'noksu - Vanilla Non-Root'
       target_os:
         description: 'Target OS'
@@ -121,31 +121,35 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
 
+      # External modules are pinned to the exact commits used for local
+      # builds, so CI zips match what was tested on device. drivers/kernelsu,
+      # fs/nomount and security/baseband-guard are symlinks tracked in git.
       - name: Setup External Modules (BakaSU, NoMount, Baseband-guard)
+        env:
+          BAKASU_REV: 548d1dda060ca198823d8808804d01f5209ef4a9  # + .github/ci-patches/bakasu.patch
+          NOMOUNT_REV: 00e7c5d4fdbf1e58decea3522b8eb7207a46d413  # v2.3.0 (dev)
+          BBG_REV: a54e0dc6cf0aff4dd87fec49644a02d2eb612905
         run: |
-          # 1. Setup KernelSU (BakaSU)
-          rm -rf KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
-          if [ -f ".github/ci-patches/bakasu.patch" ]; then
-            cd KernelSU
-            git apply ../.github/ci-patches/bakasu.patch || echo "BakaSU patch applied with fallback"
-            cd ..
-          fi
-          mkdir -p drivers
-          ln -sf ../KernelSU/kernel drivers/kernelsu
+          set -euo pipefail
+          fetch_rev() {  # <url> <dir> <rev>
+            rm -rf "$2"
+            git init -q "$2"
+            git -C "$2" remote add origin "$1"
+            git -C "$2" fetch -q --depth=1 origin "$3"
+            git -C "$2" checkout -q "$3"
+            echo "$2 -> $(git -C "$2" rev-parse --short=12 HEAD)"
+          }
 
-          # 2. Setup NoMount
-          rm -rf NoMount
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git NoMount || \
-          git clone --depth=1 https://github.com/maxsteeel/nomount.git NoMount
-          mkdir -p fs
-          ln -sf ../NoMount/kernel/src fs/nomount
+          fetch_rev https://github.com/Baka-SU/BakaSU.git KernelSU "$BAKASU_REV"
+          # Multi-manager, OriginSU/YukiSU and SuSFS v2.4.0 changes: must apply
+          git -C KernelSU apply --whitespace=nowarn "$GITHUB_WORKSPACE/.github/ci-patches/bakasu.patch"
 
-          # 3. Setup Baseband-guard
-          rm -rf Baseband-guard
-          git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
-          mkdir -p security
-          ln -sf ../Baseband-guard security/baseband-guard
+          fetch_rev https://github.com/maxsteeel/nomount.git NoMount "$NOMOUNT_REV"
+          fetch_rev https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard "$BBG_REV"
+
+          test -f drivers/kernelsu/Kconfig
+          test -f fs/nomount/Kconfig
+          test -f security/baseband-guard/Kconfig
 
       - name: Install Dependencies & Cross Compilers
         run: |
@@ -181,9 +185,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Ki-Kernel-${{ matrix.device }}-${{ matrix.variant }}-${{ needs.setup.outputs.target_os }}-${{ github.run_number }}
-          path: |
-            *.zip
-            release/*.zip
+          path: '*.zip'
           if-no-files-found: error
 
       - name: Send Flashable Zip to Telegram
@@ -199,16 +201,15 @@ jobs:
           import os
           import glob
           import hashlib
-          import base64
           from telethon import TelegramClient
 
           TELEGRAM_API_ID = 2040
           TELEGRAM_API_HASH = "b18441a1ff607e10a989891a5462e627"
 
-          # Use secret if configured, else decode embedded token
           BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
           if not BOT_TOKEN:
-              BOT_TOKEN = base64.b64decode("OTEyNzM0MTUyNjpBQUhtWldWOVRyZ1FtNnIyR0hvay00cTNfZUdLT05ES0l3aw==").decode("utf-8")
+              print("TG_BOT_TOKEN secret not set, skipping Telegram upload.")
+              raise SystemExit(0)
 
           CHAT_ID = int(os.environ.get("TG_CHAT_ID", "-1004420069477"))
           RAW_TOPIC = os.environ.get("TG_TOPIC_ID", "4").strip()
@@ -230,7 +231,7 @@ jobs:
               "enuma": "Xiaomi Pad 5 Pro 5G",
           }
 
-          zips = glob.glob("*.zip") + glob.glob("release/*.zip")
+          zips = glob.glob("*.zip")
           if not zips:
               print("No zip file found to upload.")
               exit(1)
