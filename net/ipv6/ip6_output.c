@@ -58,6 +58,7 @@
 #include <linux/mroute6.h>
 #include <net/l3mdev.h>
 #include <net/lwtunnel.h>
+#include <net/ki_tether.h>
 
 static int ip6_finish_output2(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
@@ -500,7 +501,6 @@ int ip6_forward(struct sk_buff *skb)
 			return 0;
 	}
 
-#if 0
 	/*
 	 *	check and decrement ttl
 	 */
@@ -513,7 +513,6 @@ int ip6_forward(struct sk_buff *skb)
 		kfree_skb(skb);
 		return -ETIMEDOUT;
 	}
-#endif
 
 	/* XXX: idev->cnf.proxy_ndp? */
 	if (net->ipv6.devconf_all->proxy_ndp &&
@@ -602,9 +601,9 @@ int ip6_forward(struct sk_buff *skb)
 
 	/* Mangling hops number delayed to point after skb COW */
 
-#if 0
-	hdr->hop_limit--;
-#endif
+	/* Keep the client's hop limit toward the carrier, see ip_forward() */
+	if (ki_is_tether_dev(dst->dev) || !ki_is_tether_dev(skb->dev))
+		hdr->hop_limit--;
 
 	return NF_HOOK(NFPROTO_IPV6, NF_INET_FORWARD,
 		       net, NULL, skb, skb->dev, dst->dev,

@@ -39,6 +39,7 @@
 #include <linux/route.h>
 #include <net/route.h>
 #include <net/xfrm.h>
+#include <net/ki_tether.h>
 
 static bool ip_exceeds_mtu(const struct sk_buff *skb, unsigned int mtu)
 {
@@ -103,7 +104,6 @@ int ip_forward(struct sk_buff *skb)
 	skb_forward_csum(skb);
 	net = dev_net(skb->dev);
 
-#if 0
 	/*
 	 *	According to the RFC, we must first decrease the TTL field. If
 	 *	that reaches zero, we must reply an ICMP control message telling
@@ -111,7 +111,6 @@ int ip_forward(struct sk_buff *skb)
 	 */
 	if (ip_hdr(skb)->ttl <= 1)
 		goto too_many_hops;
-#endif
 
 	if (!xfrm4_route_forward(skb))
 		goto drop;
@@ -135,10 +134,13 @@ int ip_forward(struct sk_buff *skb)
 		goto drop;
 	iph = ip_hdr(skb);
 
-#if 0
-	/* Decrease ttl after skb cow done */
-	ip_decrease_ttl(iph);
-#endif
+	/*
+	 * Decrease ttl after skb cow done. Tethered traffic leaving through
+	 * the carrier upstream keeps the client's TTL so carrier DPI does not
+	 * see a forwarded hop; the ttl <= 1 check above still ends loops.
+	 */
+	if (ki_is_tether_dev(rt->dst.dev) || !ki_is_tether_dev(skb->dev))
+		ip_decrease_ttl(iph);
 
 	/*
 	 *	We now generate an ICMP HOST REDIRECT giving the route
@@ -162,12 +164,10 @@ sr_failed:
 	 icmp_send(skb, ICMP_DEST_UNREACH, ICMP_SR_FAILED, 0);
 	 goto drop;
 
-#if 0
 too_many_hops:
 	/* Tell the sender its packet died... */
 	__IP_INC_STATS(net, IPSTATS_MIB_INHDRERRORS);
 	icmp_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0);
-#endif
 drop:
 	kfree_skb(skb);
 	return NET_RX_DROP;
