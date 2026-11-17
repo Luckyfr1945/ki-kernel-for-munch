@@ -5,7 +5,7 @@ SKIPUNZIP=0
 
 KERNEL_VER="$(uname -r)"
 
-ui_print "  Ki-Kernel Settings v1.4.0"
+ui_print "  Ki-Kernel Settings v1.5.0"
 
 # Strict Ki-Kernel Verification
 is_ki_kernel=0
@@ -46,6 +46,7 @@ fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/bin/ki" 0 0 0755
+set_perm "$MODPATH/bin/ki-charge-limit" 0 0 0755
 set_perm_recursive "$MODPATH/webroot" 0 0 0755 0644
 
 # Link ki CLI directly to root PATH without touching /system

@@ -33,9 +33,9 @@ fi
 
 # Ensure user tweak nodes have correct read/write permissions
 # Note: ki_profile maintains secure 0644/0200 root permissions; root apps access directly.
-chmod 666 /proc/mglru 2>/dev/null
+chmod 644 /proc/mglru 2>/dev/null
 chmod 666 /proc/bypass_charging 2>/dev/null
-chmod 666 /sys/kernel/mm/lru_gen/* 2>/dev/null
+chmod 644 /sys/kernel/mm/lru_gen/* 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/* 2>/dev/null
 chmod 666 /sys/kernel/dyn_fsync/* 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/bypass_charging 2>/dev/null
@@ -47,4 +47,9 @@ chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 # Apply configured tweaks
 if [ -x "$MODDIR/bin/ki" ]; then
     "$MODDIR/bin/ki" reload >/dev/null 2>&1
+fi
+
+# Resume the opt-in Rust charging monitor after boot.
+if [ -f /data/adb/ki-charge-limit/enabled ] && [ -x "$MODDIR/bin/ki-charge-limit" ]; then
+    "$MODDIR/bin/ki-charge-limit" on >/dev/null 2>&1
 fi
