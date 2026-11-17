@@ -56,8 +56,8 @@
 - Ramdisk decompressors: GZIP, BZIP2, LZMA, XZ, LZO, LZ4
 
 ### Networking
-- TCP: BBR (default), Westwood, westwood-sub, CUBIC — Qdisc: FQ (default), CAKE, FQ_CODEL, HTB, netem
-- In-kernel hotspot engine (root & non-root): DNS DNAT, tether BPF ingress bypass, TTL/HopLimit decrement bypass
+- TCP: CUBIC (default), BBRv3 port (`bbr`/`bbr3`, experimental), Westwood-sub port (`westwood`/`westwood-sub`, experimental) — Qdisc: FQ (default), CAKE, FQ_CODEL, HTB, netem
+- Hotspot: `close_range` syscall backport so Android 17 netd can start dnsmasq (DNS on the hotspot gateway), Android BPF tethering offload active, TTL/HopLimit kept toward the carrier with loop protection
 - Protocol-specific USB tether names (`ncm%d`, `rndis%d`, `ecm%d`)
 - Full netfilter/iptables incl. IPv6 NAT/NPT, TPROXY, quota2, TTL/HL, CHECKSUM
 - Modern eBPF backport for Android 16/17, XDP sockets, upstream BPF security fixes
@@ -123,6 +123,7 @@
 ---
 
 - Backported the `close_range` syscall (436, with `CLOSE_RANGE_CLOEXEC`). Android 17 bionic `posix_spawn(POSIX_SPAWN_CLOEXEC_DEFAULT)` calls it without a fallback, so on this 4.19 kernel netd's dnsmasq spawn died with exit 127 before exec. That left nothing answering DNS on the hotspot gateway — the real cause of "hotspot connected, no internet" on every ROM.
+- Removed the hotspot workarounds that masked the dnsmasq failure: the forced DNS DNAT to 1.1.1.1 (overrode client DNS, leaked around VPN/Private DNS, skipped nat-table rules), the tc ingress bypass on tethering interfaces (disabled Android BPF tethering offload), and the netd pipe EPIPE suppression. Verified on device: dnsmasq answers on the gateway and BPF offload forwards hotspot traffic with no errors.
 - Hotspot TTL fix: forwarded packets decrement TTL/hop limit again and the `ttl <= 1` check (ICMP time exceeded) is restored, so routing loops through tethered clients end instead of circulating forever. Only traffic from a tethered client to the carrier upstream keeps its original TTL, so carrier tethering detection stays bypassed.
 - TCP default switched from `bbr` to CUBIC. `bbr` and `bbr3` both run the same incomplete BBRv3 port (loss notification only on the RACK/RTO path, wrong in-flight accounting for new segments); it stays selectable but is now labelled experimental in Ki-Settings, which also defaults to `cubic`.
 - ColorOS 16/17 port components synced with OPlus SM8550 vendor sources (`vendor/oplus/kernel`, OnePlus 12R 16.0.0):
