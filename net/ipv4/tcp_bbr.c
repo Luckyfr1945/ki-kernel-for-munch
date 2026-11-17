@@ -1191,8 +1191,8 @@ static bool bbr_is_inflight_too_high(const struct sock *sk,
 {
 	const struct bbr *bbr = inet_csk_ca(sk);
 
-	if (rs->losses > 0 && rs->tx_in_flight) {
-		u64 loss_scaled = (u64)rs->losses << BBR_SCALE;
+	if (rs->lost > 0 && rs->tx_in_flight) {
+		u64 loss_scaled = (u64)rs->lost << BBR_SCALE;
 		u64 thresh_scaled = (u64)rs->tx_in_flight * bbr_param(sk, loss_thresh);
 
 		if (loss_scaled > thresh_scaled)
@@ -1239,7 +1239,7 @@ static u32 bbr_inflight_hi_from_lost_skb(const struct sock *sk,
 	}
 
 	/* How much inflight data was marked lost before this skb? */
-	lost_prev = rs->losses - pcount;
+	lost_prev = rs->lost - pcount;
 	if (lost_prev < 0)
 		lost_prev = 0;
 
@@ -2184,8 +2184,6 @@ static void bbr_skb_marked_lost(struct sock *sk,
 	struct tcp_skb_cb *scb = TCP_SKB_CB(skb);
 	struct rate_sample rs = {};
 
-	(void)tp;
-
 	bbr_note_loss(sk);
 
 	if (!bbr->bw_probe_samples)
@@ -2197,8 +2195,7 @@ static void bbr_skb_marked_lost(struct sock *sk,
 	 * then see if the loss rate went too high, and if so at which packet.
 	 */
 	rs.tx_in_flight = scb->tx.in_flight;
-	rs.losses = 1;
-	rs.prior_in_flight = scb->tx.in_flight;
+	rs.lost = tp->lost - scb->tx.lost;
 	rs.is_app_limited = scb->tx.is_app_limited;
 	if (bbr_is_inflight_too_high(sk, &rs)) {
 		rs.tx_in_flight = bbr_inflight_hi_from_lost_skb(sk, &rs, skb);
@@ -2220,8 +2217,8 @@ static void bbr_run_loss_probe_recovery(struct sock *sk)
 	 * estimates what happened in the flight leading up to this
 	 * loss, then see if the loss rate went too high.
 	 */
-	rs.losses = 1;	/* TLP probe repaired loss of a single segment */
-	rs.prior_in_flight = bbr->inflight_latest + rs.losses;
+	rs.lost = 1;	/* TLP probe repaired loss of a single segment */
+	rs.tx_in_flight = bbr->inflight_latest + rs.lost;
 	rs.is_app_limited = tp->app_limited ? 1 : 0;
 	if (bbr_is_inflight_too_high(sk, &rs))
 		bbr_handle_inflight_too_high(sk, &rs);

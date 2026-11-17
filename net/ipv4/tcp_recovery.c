@@ -6,6 +6,10 @@ void tcp_mark_skb_lost(struct sock *sk, struct sk_buff *skb)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
+	u8 sacked = TCP_SKB_CB(skb)->sacked;
+	/* First loss of this skb, or a retransmission lost again */
+	bool new_loss = !(sacked & TCPCB_SACKED_ACKED) &&
+			(!(sacked & TCPCB_LOST) || (sacked & TCPCB_SACKED_RETRANS));
 
 	tcp_skb_mark_lost_uncond_verify(tp, skb);
 	if (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_RETRANS) {
@@ -15,7 +19,7 @@ void tcp_mark_skb_lost(struct sock *sk, struct sk_buff *skb)
 		NET_ADD_STATS(sock_net(sk), LINUX_MIB_TCPLOSTRETRANSMIT,
 			      tcp_skb_pcount(skb));
 	}
-	if (icsk->icsk_ca_ops->skb_marked_lost)
+	if (new_loss && icsk->icsk_ca_ops->skb_marked_lost)
 		icsk->icsk_ca_ops->skb_marked_lost(sk, skb);
 }
 

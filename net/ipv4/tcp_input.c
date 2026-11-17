@@ -1015,14 +1015,18 @@ static void tcp_sum_lost(struct tcp_sock *tp, struct sk_buff *skb)
 		tp->lost += tcp_skb_pcount(skb);
 }
 
-static void tcp_skb_mark_lost(struct tcp_sock *tp, struct sk_buff *skb)
+static void tcp_skb_mark_lost(struct sock *sk, struct sk_buff *skb)
 {
+	struct tcp_sock *tp = tcp_sk(sk);
+
 	if (!(TCP_SKB_CB(skb)->sacked & (TCPCB_LOST|TCPCB_SACKED_ACKED))) {
 		tcp_verify_retransmit_hint(tp, skb);
 
 		tp->lost_out += tcp_skb_pcount(skb);
 		tcp_sum_lost(tp, skb);
 		TCP_SKB_CB(skb)->sacked |= TCPCB_LOST;
+		if (inet_csk(sk)->icsk_ca_ops->skb_marked_lost)
+			inet_csk(sk)->icsk_ca_ops->skb_marked_lost(sk, skb);
 	}
 }
 
@@ -2316,7 +2320,7 @@ static void tcp_mark_head_lost(struct sock *sk, int packets, int mark_head)
 		if (cnt > packets)
 			break;
 
-		tcp_skb_mark_lost(tp, skb);
+		tcp_skb_mark_lost(sk, skb);
 
 		if (mark_head)
 			break;
@@ -2707,13 +2711,8 @@ void tcp_simple_retransmit(struct sock *sk)
 
 	skb_rbtree_walk(skb, &sk->tcp_rtx_queue) {
 		if (tcp_skb_seglen(skb) > mss &&
-		    !(TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED)) {
-			if (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_RETRANS) {
-				TCP_SKB_CB(skb)->sacked &= ~TCPCB_SACKED_RETRANS;
-				tp->retrans_out -= tcp_skb_pcount(skb);
-			}
-			tcp_skb_mark_lost_uncond_verify(tp, skb);
-		}
+		    !(TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED))
+			tcp_mark_skb_lost(sk, skb);
 	}
 
 	tcp_clear_retrans_hints_partial(tp);
@@ -3294,8 +3293,8 @@ static int tcp_clean_rtx_queue(struct sock *sk, u32 prior_fack,
 		seq_rtt_us = tcp_stamp_us_delta(tp->tcp_mstamp, first_ackt);
 		ca_rtt_us = tcp_stamp_us_delta(tp->tcp_mstamp, last_ackt);
 
-		if (pkts_acked == 1 && last_in_flight < tp->mss_cache &&
-		    last_in_flight && !prior_sacked && fully_acked &&
+		if (pkts_acked == 1 && fully_acked && !prior_sacked &&
+		    (tp->snd_una - prior_snd_una) < tp->mss_cache &&
 		    sack->rate->prior_delivered + 1 == tp->delivered &&
 		    !(flag & (FLAG_CA_ALERT | FLAG_SYN_ACKED))) {
 			/* Conservatively mark a delayed ACK. It's typically
@@ -3353,7 +3352,8 @@ static int tcp_clean_rtx_queue(struct sock *sk, u32 prior_fack,
 	if (icsk->icsk_ca_ops->pkts_acked) {
 		struct ack_sample sample = { .pkts_acked = pkts_acked,
 					     .rtt_us = sack->rate->rtt_us,
-					     .in_flight = last_in_flight };
+					     .in_flight = last_in_flight *
+							  tp->mss_cache };
 
 		icsk->icsk_ca_ops->pkts_acked(sk, &sample);
 	}
