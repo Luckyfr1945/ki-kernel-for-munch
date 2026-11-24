@@ -7,8 +7,10 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/bitops.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
+#include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/string.h>
 #include <uapi/drm/msm_drm_pp.h>
@@ -55,13 +57,50 @@ static inline struct sde_kms *kcal_get_kms(struct drm_crtc *crtc)
 	return to_sde_kms(priv->kms);
 }
 
+static inline s32 kcal_decode_coeff(u32 val)
+{
+	if ((val & ~0x3FFFFU) == 0 && (val & 0x20000U))
+		return sign_extend32(val, 17);
+	return (s32)val;
+}
+
+static inline u32 kcal_encode_coeff(s64 val)
+{
+	val = clamp_t(s64, val, -131072, 131071);
+	return (u32)val & 0x3FFFFU;
+}
+
+/* Returns sin(2*pi * step / 1536) scaled by KCAL_UNITY_GAIN (32768) */
+static s32 kcal_sin_q15(u32 step)
+{
+	u32 a = step % 1536;
+	s32 sign = 1;
+	s64 p, num, den;
+
+	if (a >= 768) {
+		a -= 768;
+		sign = -1;
+	}
+	p = (s64)a * (768 - a);
+	num = (s64)KCAL_UNITY_GAIN * 4 * p;
+	den = 737280 - p;
+	return sign * (s32)div64_s64(num + (den >> 1), den);
+}
+
+static s32 kcal_cos_q15(u32 step)
+{
+	return kcal_sin_q15(step + 384);
+}
+
 static void kcal_recompute_pcc_locked(void)
 {
 	u32 scale_r, scale_g, scale_b;
 	s32 s, c_val, c_cont;
 	/* Rec. 709 luminance weights scaled by KCAL_UNITY_GAIN */
 	u32 pr = 9798, pg = 19235, pb = 3735;
-	s32 crr, crg, crb, cgr, cgg, cgb, cbr, cbg, cbb;
+	s32 m[3][3];
+	s32 h[3][3];
+	int i, j;
 
 	u32 r = clamp_t(u32, kcal_red, kcal_min, 256);
 	u32 g = clamp_t(u32, kcal_green, kcal_min, 256);
@@ -69,6 +108,7 @@ static void kcal_recompute_pcc_locked(void)
 	u32 sat = clamp_t(u32, kcal_sat, 128, 383);
 	u32 val = clamp_t(u32, kcal_val, 128, 383);
 	u32 cont = clamp_t(u32, kcal_cont, 128, 383);
+	u32 hue = kcal_hue % 1536;
 
 	memset(&kcal_pcc_cfg, 0, sizeof(kcal_pcc_cfg));
 
@@ -78,62 +118,94 @@ static void kcal_recompute_pcc_locked(void)
 	scale_b = (b * KCAL_UNITY_GAIN) / 256;
 
 	if (sat == 256) {
-		crr = KCAL_UNITY_GAIN; crg = 0; crb = 0;
-		cgr = 0; cgg = KCAL_UNITY_GAIN; cgb = 0;
-		cbr = 0; cbg = 0; cbb = KCAL_UNITY_GAIN;
+		m[0][0] = KCAL_UNITY_GAIN; m[0][1] = 0; m[0][2] = 0;
+		m[1][0] = 0; m[1][1] = KCAL_UNITY_GAIN; m[1][2] = 0;
+		m[2][0] = 0; m[2][1] = 0; m[2][2] = KCAL_UNITY_GAIN;
 	} else {
 		/* 128: Grayscale (0.0), 256: Normal (1.0), 383: Boost (~2.0) */
 		s = (s32)sat - 128;
-		crr = ((128 - s) * (s32)pr + s * (s32)KCAL_UNITY_GAIN) / 128;
-		crg = ((128 - s) * (s32)pg) / 128;
-		crb = ((128 - s) * (s32)pb) / 128;
+		m[0][0] = ((128 - s) * (s32)pr + s * (s32)KCAL_UNITY_GAIN) / 128;
+		m[0][1] = ((128 - s) * (s32)pg) / 128;
+		m[0][2] = ((128 - s) * (s32)pb) / 128;
 
-		cgr = ((128 - s) * (s32)pr) / 128;
-		cgg = ((128 - s) * (s32)pg + s * (s32)KCAL_UNITY_GAIN) / 128;
-		cgb = ((128 - s) * (s32)pb) / 128;
+		m[1][0] = ((128 - s) * (s32)pr) / 128;
+		m[1][1] = ((128 - s) * (s32)pg + s * (s32)KCAL_UNITY_GAIN) / 128;
+		m[1][2] = ((128 - s) * (s32)pb) / 128;
 
-		cbr = ((128 - s) * (s32)pr) / 128;
-		cbg = ((128 - s) * (s32)pg) / 128;
-		cbb = ((128 - s) * (s32)pb + s * (s32)KCAL_UNITY_GAIN) / 128;
+		m[2][0] = ((128 - s) * (s32)pr) / 128;
+		m[2][1] = ((128 - s) * (s32)pg) / 128;
+		m[2][2] = ((128 - s) * (s32)pb + s * (s32)KCAL_UNITY_GAIN) / 128;
 	}
 
-	/* Multiply color matrix with RGB scale */
-	kcal_pcc_cfg.r.r = clamp_val((crr * (s32)scale_r) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.r.g = clamp_val((crg * (s32)scale_r) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.r.b = clamp_val((crb * (s32)scale_r) / (s32)KCAL_UNITY_GAIN, 0, 65535);
+	if (hue != 0) {
+		s32 c = kcal_cos_q15(hue);
+		s32 sn = kcal_sin_q15(hue);
+		s32 one_minus_c_3 = (s32)div_s64((s64)KCAL_UNITY_GAIN - c, 3);
+		s32 s_sqrt3 = (s32)div_s64((s64)sn * 18919, KCAL_UNITY_GAIN);
+		s32 diag = c + one_minus_c_3;
+		s32 pos_off = one_minus_c_3 + s_sqrt3;
+		s32 neg_off = one_minus_c_3 - s_sqrt3;
+		s32 rot[3][3] = {
+			{ diag, neg_off, pos_off },
+			{ pos_off, diag, neg_off },
+			{ neg_off, pos_off, diag },
+		};
 
-	kcal_pcc_cfg.g.r = clamp_val((cgr * (s32)scale_g) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.g.g = clamp_val((cgg * (s32)scale_g) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.g.b = clamp_val((cgb * (s32)scale_g) / (s32)KCAL_UNITY_GAIN, 0, 65535);
+		for (i = 0; i < 3; i++) {
+			for (j = 0; j < 3; j++) {
+				h[i][j] = (s32)div_s64(
+					(s64)rot[i][0] * m[0][j] +
+					(s64)rot[i][1] * m[1][j] +
+					(s64)rot[i][2] * m[2][j],
+					KCAL_UNITY_GAIN);
+			}
+		}
+		memcpy(m, h, sizeof(m));
+	}
 
-	kcal_pcc_cfg.b.r = clamp_val((cbr * (s32)scale_b) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.b.g = clamp_val((cbg * (s32)scale_b) / (s32)KCAL_UNITY_GAIN, 0, 65535);
-	kcal_pcc_cfg.b.b = clamp_val((cbb * (s32)scale_b) / (s32)KCAL_UNITY_GAIN, 0, 65535);
+	/* Apply per-channel RGB gain and contrast */
+	c_cont = (s32)cont;
+	for (i = 0; i < 3; i++) {
+		s32 scale = (i == 0) ? (s32)scale_r : ((i == 1) ? (s32)scale_g : (s32)scale_b);
 
-	/* Contrast adjustment (128..383, 256 is 1.0) */
-	if (cont != 256) {
-		c_cont = (s32)cont;
-		kcal_pcc_cfg.r.r = clamp_val((kcal_pcc_cfg.r.r * c_cont) / 256, 0, 65535);
-		kcal_pcc_cfg.g.g = clamp_val((kcal_pcc_cfg.g.g * c_cont) / 256, 0, 65535);
-		kcal_pcc_cfg.b.b = clamp_val((kcal_pcc_cfg.b.b * c_cont) / 256, 0, 65535);
+		for (j = 0; j < 3; j++) {
+			s64 v = div_s64((s64)m[i][j] * scale, KCAL_UNITY_GAIN);
+
+			if (cont != 256)
+				v = div_s64(v * c_cont, 256);
+			h[i][j] = (s32)clamp_t(s64, v, -131072, 131071);
+		}
 	}
 
 	/* Value / Brightness offset (128..383, 256 is 0) */
+	c_val = 0;
 	if (val != 256) {
 		c_val = (((s32)val - 256) * (s32)KCAL_UNITY_GAIN) / 256;
-		kcal_pcc_cfg.r.c = (u32)clamp_val(c_val, -32768, 32767);
-		kcal_pcc_cfg.g.c = (u32)clamp_val(c_val, -32768, 32767);
-		kcal_pcc_cfg.b.c = (u32)clamp_val(c_val, -32768, 32767);
+		c_val = clamp_t(s32, c_val, -32768, 32767);
 	}
 
 	if (kcal_invert) {
-		kcal_pcc_cfg.r.r = 65535 - kcal_pcc_cfg.r.r;
-		kcal_pcc_cfg.g.g = 65535 - kcal_pcc_cfg.g.g;
-		kcal_pcc_cfg.b.b = 65535 - kcal_pcc_cfg.b.b;
-		kcal_pcc_cfg.r.c = (u32)clamp_val((s32)kcal_pcc_cfg.r.c + 32767, -32768, 32767);
-		kcal_pcc_cfg.g.c = (u32)clamp_val((s32)kcal_pcc_cfg.g.c + 32767, -32768, 32767);
-		kcal_pcc_cfg.b.c = (u32)clamp_val((s32)kcal_pcc_cfg.b.c + 32767, -32768, 32767);
+		for (i = 0; i < 3; i++)
+			for (j = 0; j < 3; j++)
+				h[i][j] = -h[i][j];
+		c_val = clamp_t(s32, c_val + 32767, -32768, 32767);
 	}
+
+	kcal_pcc_cfg.r.r = kcal_encode_coeff(h[0][0]);
+	kcal_pcc_cfg.r.g = kcal_encode_coeff(h[0][1]);
+	kcal_pcc_cfg.r.b = kcal_encode_coeff(h[0][2]);
+
+	kcal_pcc_cfg.g.r = kcal_encode_coeff(h[1][0]);
+	kcal_pcc_cfg.g.g = kcal_encode_coeff(h[1][1]);
+	kcal_pcc_cfg.g.b = kcal_encode_coeff(h[1][2]);
+
+	kcal_pcc_cfg.b.r = kcal_encode_coeff(h[2][0]);
+	kcal_pcc_cfg.b.g = kcal_encode_coeff(h[2][1]);
+	kcal_pcc_cfg.b.b = kcal_encode_coeff(h[2][2]);
+
+	kcal_pcc_cfg.r.c = kcal_encode_coeff(c_val);
+	kcal_pcc_cfg.g.c = kcal_encode_coeff(c_val);
+	kcal_pcc_cfg.b.c = kcal_encode_coeff(c_val);
 }
 
 void sde_kcal_notify_dirty(void)
@@ -162,14 +234,15 @@ void sde_kcal_apply(struct drm_crtc *crtc)
 	if (!sde_crtc || !sde_crtc->enabled)
 		return;
 
+	mutex_lock(&kcal_mutex);
+
 	/* Safety Guard 1: Never alter display while FOD fingerprint illumination is active */
 	if (sde_crtc->mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY) {
 		if (kcal_enabled)
 			kcal_dirty = true;
+		mutex_unlock(&kcal_mutex);
 		return;
 	}
-
-	mutex_lock(&kcal_mutex);
 
 	/* Safety Guard 2: If disabled, only restore identity once if needed, then skip */
 	if (!kcal_enabled) {
@@ -276,25 +349,44 @@ void sde_kcal_modify_pcc(struct sde_crtc *sde_crtc, struct sde_hw_cp_cfg *hw_cfg
 	 */
 	if (hw_cfg->payload) {
 		struct drm_msm_pcc in_pcc;
+		s32 kr0 = kcal_decode_coeff(kcal_pcc_cfg.r.r);
+		s32 kr1 = kcal_decode_coeff(kcal_pcc_cfg.r.g);
+		s32 kr2 = kcal_decode_coeff(kcal_pcc_cfg.r.b);
+		s32 kg0 = kcal_decode_coeff(kcal_pcc_cfg.g.r);
+		s32 kg1 = kcal_decode_coeff(kcal_pcc_cfg.g.g);
+		s32 kg2 = kcal_decode_coeff(kcal_pcc_cfg.g.b);
+		s32 kb0 = kcal_decode_coeff(kcal_pcc_cfg.b.r);
+		s32 kb1 = kcal_decode_coeff(kcal_pcc_cfg.b.g);
+		s32 kb2 = kcal_decode_coeff(kcal_pcc_cfg.b.b);
+		s32 ir0, ir1, ir2, ig0, ig1, ig2, ib0, ib1, ib2;
 
 		pcc = (struct drm_msm_pcc *)hw_cfg->payload;
 		in_pcc = *pcc;
+		ir0 = kcal_decode_coeff(in_pcc.r.r);
+		ir1 = kcal_decode_coeff(in_pcc.r.g);
+		ir2 = kcal_decode_coeff(in_pcc.r.b);
+		ig0 = kcal_decode_coeff(in_pcc.g.r);
+		ig1 = kcal_decode_coeff(in_pcc.g.g);
+		ig2 = kcal_decode_coeff(in_pcc.g.b);
+		ib0 = kcal_decode_coeff(in_pcc.b.r);
+		ib1 = kcal_decode_coeff(in_pcc.b.g);
+		ib2 = kcal_decode_coeff(in_pcc.b.b);
 
-		pcc->r.r = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.r + (s64)kcal_pcc_cfg.r.g * in_pcc.g.r + (s64)kcal_pcc_cfg.r.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->r.g = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.g + (s64)kcal_pcc_cfg.r.g * in_pcc.g.g + (s64)kcal_pcc_cfg.r.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->r.b = clamp_val(((s64)kcal_pcc_cfg.r.r * in_pcc.r.b + (s64)kcal_pcc_cfg.r.g * in_pcc.g.b + (s64)kcal_pcc_cfg.r.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->r.r = kcal_encode_coeff(div_s64((s64)kr0 * ir0 + (s64)kr1 * ig0 + (s64)kr2 * ib0, KCAL_UNITY_GAIN));
+		pcc->r.g = kcal_encode_coeff(div_s64((s64)kr0 * ir1 + (s64)kr1 * ig1 + (s64)kr2 * ib1, KCAL_UNITY_GAIN));
+		pcc->r.b = kcal_encode_coeff(div_s64((s64)kr0 * ir2 + (s64)kr1 * ig2 + (s64)kr2 * ib2, KCAL_UNITY_GAIN));
 
-		pcc->g.r = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.r + (s64)kcal_pcc_cfg.g.g * in_pcc.g.r + (s64)kcal_pcc_cfg.g.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->g.g = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.g + (s64)kcal_pcc_cfg.g.g * in_pcc.g.g + (s64)kcal_pcc_cfg.g.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->g.b = clamp_val(((s64)kcal_pcc_cfg.g.r * in_pcc.r.b + (s64)kcal_pcc_cfg.g.g * in_pcc.g.b + (s64)kcal_pcc_cfg.g.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->g.r = kcal_encode_coeff(div_s64((s64)kg0 * ir0 + (s64)kg1 * ig0 + (s64)kg2 * ib0, KCAL_UNITY_GAIN));
+		pcc->g.g = kcal_encode_coeff(div_s64((s64)kg0 * ir1 + (s64)kg1 * ig1 + (s64)kg2 * ib1, KCAL_UNITY_GAIN));
+		pcc->g.b = kcal_encode_coeff(div_s64((s64)kg0 * ir2 + (s64)kg1 * ig2 + (s64)kg2 * ib2, KCAL_UNITY_GAIN));
 
-		pcc->b.r = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.r + (s64)kcal_pcc_cfg.b.g * in_pcc.g.r + (s64)kcal_pcc_cfg.b.b * in_pcc.b.r) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->b.g = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.g + (s64)kcal_pcc_cfg.b.g * in_pcc.g.g + (s64)kcal_pcc_cfg.b.b * in_pcc.b.g) / KCAL_UNITY_GAIN, 0, 65535);
-		pcc->b.b = clamp_val(((s64)kcal_pcc_cfg.b.r * in_pcc.r.b + (s64)kcal_pcc_cfg.b.g * in_pcc.g.b + (s64)kcal_pcc_cfg.b.b * in_pcc.b.b) / KCAL_UNITY_GAIN, 0, 65535);
+		pcc->b.r = kcal_encode_coeff(div_s64((s64)kb0 * ir0 + (s64)kb1 * ig0 + (s64)kb2 * ib0, KCAL_UNITY_GAIN));
+		pcc->b.g = kcal_encode_coeff(div_s64((s64)kb0 * ir1 + (s64)kb1 * ig1 + (s64)kb2 * ib1, KCAL_UNITY_GAIN));
+		pcc->b.b = kcal_encode_coeff(div_s64((s64)kb0 * ir2 + (s64)kb1 * ig2 + (s64)kb2 * ib2, KCAL_UNITY_GAIN));
 
-		pcc->r.c = (u32)clamp_val((s64)(s32)in_pcc.r.c + (s32)kcal_pcc_cfg.r.c, -32768, 32767);
-		pcc->g.c = (u32)clamp_val((s64)(s32)in_pcc.g.c + (s32)kcal_pcc_cfg.g.c, -32768, 32767);
-		pcc->b.c = (u32)clamp_val((s64)(s32)in_pcc.b.c + (s32)kcal_pcc_cfg.b.c, -32768, 32767);
+		pcc->r.c = kcal_encode_coeff(clamp_t(s64, (s64)kcal_decode_coeff(in_pcc.r.c) + kcal_decode_coeff(kcal_pcc_cfg.r.c), -32768, 32767));
+		pcc->g.c = kcal_encode_coeff(clamp_t(s64, (s64)kcal_decode_coeff(in_pcc.g.c) + kcal_decode_coeff(kcal_pcc_cfg.g.c), -32768, 32767));
+		pcc->b.c = kcal_encode_coeff(clamp_t(s64, (s64)kcal_decode_coeff(in_pcc.b.c) + kcal_decode_coeff(kcal_pcc_cfg.b.c), -32768, 32767));
 	} else {
 		hw_cfg->payload = &kcal_pcc_cfg;
 		hw_cfg->len = sizeof(kcal_pcc_cfg);
@@ -378,6 +470,9 @@ static ssize_t kcal_min_store(struct device *dev, struct device_attribute *attr,
 
 	mutex_lock(&kcal_mutex);
 	kcal_min = clamp_t(u32, val, 0, 256);
+	kcal_recompute_pcc_locked();
+	if (kcal_enabled)
+		kcal_dirty = true;
 	mutex_unlock(&kcal_mutex);
 
 	return count;
@@ -470,6 +565,7 @@ static ssize_t kcal_hue_store(struct device *dev, struct device_attribute *attr,
 
 	mutex_lock(&kcal_mutex);
 	kcal_hue = clamp_t(u32, val, 0, 1536);
+	kcal_recompute_pcc_locked();
 	kcal_dirty = true;
 	kcal_enabled = true;
 	kcal_restored = false;
@@ -517,8 +613,6 @@ static struct attribute *kcal_attrs[] = {
 
 static umode_t kcal_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
-	if (attr == &dev_attr_kcal_min.attr)
-		return 0444;
 	return 0664;
 }
 
