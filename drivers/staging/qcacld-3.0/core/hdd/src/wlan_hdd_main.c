@@ -3608,6 +3608,8 @@ static int hdd_register_notifiers(struct hdd_context *hdd_ctx)
 	if (ret)
 		goto unregister_nud_notifier;
 
+	wlan_hdd_register_ki_wifi_ll(hdd_ctx);
+
 	return 0;
 
 unregister_nud_notifier:
@@ -3857,6 +3859,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 
 	hdd_ctx->driver_status = DRIVER_MODULES_ENABLED;
 	hdd_nofl_debug("Wlan transitioned (now ENABLED)");
+	wlan_hdd_kick_ki_wifi_ll(hdd_ctx);
 
 	ucfg_ipa_reg_rps_enable_cb(hdd_ctx->pdev,
 				   hdd_adapter_set_rps);
@@ -8655,6 +8658,7 @@ void hdd_set_disconnect_status(struct hdd_adapter *adapter, bool status)
  */
 void hdd_unregister_notifiers(struct hdd_context *hdd_ctx)
 {
+	wlan_hdd_unregister_ki_wifi_ll(hdd_ctx);
 	hdd_wlan_unregister_pm_qos_notifier(hdd_ctx);
 	hdd_nud_unregister_netevent_notifier(hdd_ctx);
 	hdd_wlan_unregister_ip6_notifier(hdd_ctx);

@@ -932,6 +932,7 @@ typedef enum {
 	RTPM_ID_DW_TX_HW_ENQUEUE   = 7,
 	RTPM_ID_HAL_REO_CMD        = 8,
 	RTPM_ID_DP_PRINT_RING_STATS  = 9,
+	RTPM_ID_KI_LOW_LATENCY     = 10,
 
 	RTPM_ID_MAX,
 } wlan_rtpm_dbgid;
@@ -956,6 +957,7 @@ static inline char *rtpm_string_from_dbgid(wlan_rtpm_dbgid id)
 					"RTPM_ID_DW_TX_HW_ENQUEUE",
 					"RTPM_ID_HAL_REO_CMD",
 					"RTPM_ID_DP_PRINT_RING_STATS",
+					"RTPM_ID_KI_LOW_LATENCY",
 					"RTPM_ID_MAX"};
 
 	return (char *)strings[id];

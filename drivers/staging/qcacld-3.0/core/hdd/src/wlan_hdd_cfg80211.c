@@ -48,6 +48,7 @@
 #include "wlan_hdd_softap_tx_rx.h"
 #include "wlan_hdd_main.h"
 #include "wlan_hdd_power.h"
+#include <linux/ki_profile.h>
 #include "wlan_hdd_trace.h"
 #include "wlan_hdd_tx_rx.h"
 #include "qdf_str.h"
@@ -8068,9 +8069,16 @@ static int hdd_config_latency_level(struct hdd_adapter *adapter,
 	 * 0 - normal, 1 - moderate, 2 - low, 3 - ultralow
 	 */
 	adapter->latency_level = latency_level - 1;
-	status = sme_set_wlm_latency_level(hdd_ctx->mac_handle,
-					   adapter->vdev_id,
-					   adapter->latency_level);
+	{
+		uint16_t eff_level = adapter->latency_level;
+
+		if (adapter->device_mode == QDF_STA_MODE &&
+		    ki_wifi_low_latency_enabled())
+			eff_level = 3;
+		status = sme_set_wlm_latency_level(hdd_ctx->mac_handle,
+						   adapter->vdev_id,
+						   eff_level);
+	}
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_err("set latency level failed, %u", status);
 

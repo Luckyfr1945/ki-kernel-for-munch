@@ -27,6 +27,8 @@
 #include <ani_global.h>
 #include "dot11f.h"
 #include "wlan_hdd_power.h"
+#include "wlan_hdd_tx_rx.h"
+#include <linux/ki_profile.h>
 #include "wlan_hdd_trace.h"
 #include <linux/ieee80211.h>
 #include <linux/wireless.h>
@@ -2905,9 +2907,15 @@ static int hdd_change_sta_state_authenticated(struct hdd_adapter *adapter,
 
 	if ((QDF_STA_MODE == adapter->device_mode) ||
 	    (QDF_P2P_CLIENT_MODE == adapter->device_mode)) {
-		sme_ps_enable_auto_ps_timer(hdd_ctx->mac_handle,
-					    adapter->vdev_id,
-					    timeout);
+		if (QDF_STA_MODE == adapter->device_mode &&
+		    ki_wifi_low_latency_enabled()) {
+			hdd_apply_ki_wifi_low_latency(hdd_ctx, adapter, true);
+			wlan_hdd_kick_ki_wifi_ll(hdd_ctx);
+		} else {
+			sme_ps_enable_auto_ps_timer(hdd_ctx->mac_handle,
+						    adapter->vdev_id,
+						    timeout);
+		}
 	}
 
 	return qdf_status_to_os_return(status);

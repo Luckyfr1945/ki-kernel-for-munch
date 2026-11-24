@@ -37,6 +37,7 @@
 #include "wlan_hdd_scan.h"
 #include "wlan_policy_mgr_api.h"
 #include "wlan_hdd_power.h"
+#include <linux/ki_profile.h>
 #include "wma_api.h"
 #include "cds_utils.h"
 #include "wlan_p2p_ucfg_api.h"
@@ -507,6 +508,20 @@ static int __wlan_hdd_cfg80211_scan(struct wiphy *wiphy,
 						conn_info.conn_state) &&
 	    (!enable_connected_scan)) {
 		hdd_info("enable_connected_scan is false, Aborting scan");
+		if (wlan_hdd_enqueue_blocked_scan_request(dev, request, source))
+			return -EAGAIN;
+		schedule_work(&adapter->scan_block_work);
+		return 0;
+	}
+
+	if (adapter->device_mode == QDF_STA_MODE &&
+	    eConnectionState_Associated ==
+		WLAN_HDD_GET_STATION_CTX_PTR(adapter)->conn_info.conn_state &&
+	    ki_wifi_low_latency_enabled() &&
+	    request->n_channels > 1 &&
+	    (adapter->rssi == 0 || adapter->rssi > -78)) {
+		hdd_debug_rl("ki_profile: suppressing off-channel scan (%u ch, rssi %d) during WiFi low latency",
+			     request->n_channels, adapter->rssi);
 		if (wlan_hdd_enqueue_blocked_scan_request(dev, request, source))
 			return -EAGAIN;
 		schedule_work(&adapter->scan_block_work);
@@ -1325,6 +1340,13 @@ static int __wlan_hdd_cfg80211_sched_scan_start(struct wiphy *wiphy,
 							conn_info.conn_state) &&
 	    (!enable_connected_scan)) {
 		hdd_info("enable_connected_scan is false, Aborting scan");
+		return -EBUSY;
+	}
+
+	if (eConnectionState_Associated ==
+		WLAN_HDD_GET_STATION_CTX_PTR(adapter)->conn_info.conn_state &&
+	    ki_wifi_low_latency_enabled()) {
+		hdd_debug_rl("ki_profile: suppressing PNO sched scan during WiFi low latency");
 		return -EBUSY;
 	}
 

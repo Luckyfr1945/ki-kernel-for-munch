@@ -425,6 +425,11 @@ int wlan_hdd_ipv4_changed(struct notifier_block *nb,
 int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
 			   void *context);
 #endif
+void hdd_apply_ki_wifi_low_latency(struct hdd_context *hdd_ctx,
+				   struct hdd_adapter *adapter, bool enable);
+int wlan_hdd_register_ki_wifi_ll(struct hdd_context *hdd_ctx);
+void wlan_hdd_unregister_ki_wifi_ll(struct hdd_context *hdd_ctx);
+void wlan_hdd_kick_ki_wifi_ll(struct hdd_context *hdd_ctx);
 /**
  * wlan_hdd_ipv6_changed() - IPv6 change notifier callback
  * @nb: pointer to notifier block

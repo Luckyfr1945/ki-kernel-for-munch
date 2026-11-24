@@ -44,6 +44,8 @@
 #include <wlan_nlink_srv.h>
 #include <wlan_hdd_misc.h>
 #include <wlan_hdd_power.h>
+#include <wlan_hdd_tx_rx.h>
+#include <linux/ki_profile.h>
 #include <wlan_hdd_host_offload.h>
 #include <dbglog_host.h>
 #include <wlan_hdd_trace.h>
@@ -1022,6 +1024,183 @@ int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
 	return NOTIFY_DONE;
 }
 #endif
+
+#define KI_LL_MAX_RETRIES	20
+#define KI_LL_RETRY_MS		250
+
+static struct hdd_context *ki_ll_hdd_ctx;
+static DEFINE_SPINLOCK(ki_ll_ctx_lock);
+
+void hdd_apply_ki_wifi_low_latency(struct hdd_context *hdd_ctx,
+				   struct hdd_adapter *adapter, bool enable)
+{
+	bool latency_enable = false;
+	uint32_t auto_bmps_timer_val = 0;
+	uint32_t ps_timeout = 200;
+	uint16_t level;
+	uint8_t target_ac;
+
+	if (!hdd_ctx || !adapter || !hdd_is_interface_up(adapter) ||
+	    adapter->device_mode != QDF_STA_MODE ||
+	    !hdd_conn_is_connected(WLAN_HDD_GET_STATION_CTX_PTR(adapter)))
+		return;
+
+	if (!enable &&
+	    QDF_IS_STATUS_SUCCESS(ucfg_mlme_get_auto_bmps_timer_value(
+				  hdd_ctx->psoc, &auto_bmps_timer_val)) &&
+	    auto_bmps_timer_val)
+		ps_timeout = auto_bmps_timer_val * 1000;
+
+	wlan_hdd_set_powersave(adapter, !enable, enable ? 0 : ps_timeout);
+
+	if (QDF_IS_STATUS_SUCCESS(ucfg_mlme_get_latency_enable(hdd_ctx->psoc,
+							       &latency_enable)) &&
+	    latency_enable && sme_is_feature_supported_by_fw(VDEV_LATENCY_CONFIG)) {
+		level = enable ? 3 : min_t(uint16_t, adapter->latency_level, 3);
+		sme_set_wlm_latency_level(hdd_ctx->mac_handle,
+					  adapter->vdev_id, level);
+	}
+
+	target_ac = enable ? QCA_WLAN_AC_VI : QCA_WLAN_AC_BK;
+	hdd_set_udp_qos_upgrade_config(adapter, target_ac);
+}
+
+static void wlan_hdd_ki_ll_work_fn(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct hdd_context *hdd_ctx = container_of(dwork, struct hdd_context,
+						   ki_ll_work);
+	struct osif_psoc_sync *psoc_sync;
+	struct hdd_adapter *adapter, *next_adapter = NULL;
+	void *hif_ctx;
+	bool desired;
+
+	if (!hdd_ctx || !hdd_ctx->wiphy)
+		return;
+
+	if (osif_psoc_sync_op_start(wiphy_dev(hdd_ctx->wiphy), &psoc_sync)) {
+		if (hdd_ctx->ki_ll_retries < KI_LL_MAX_RETRIES) {
+			hdd_ctx->ki_ll_retries++;
+			schedule_delayed_work(&hdd_ctx->ki_ll_work,
+					      msecs_to_jiffies(KI_LL_RETRY_MS));
+		}
+		return;
+	}
+
+	if (wlan_hdd_validate_context(hdd_ctx))
+		goto out;
+
+	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
+		if (hdd_ctx->driver_status != DRIVER_MODULES_CLOSED &&
+		    hdd_ctx->ki_ll_retries < KI_LL_MAX_RETRIES) {
+			hdd_ctx->ki_ll_retries++;
+			schedule_delayed_work(&hdd_ctx->ki_ll_work,
+					      msecs_to_jiffies(KI_LL_RETRY_MS));
+		}
+		goto out;
+	}
+
+	hdd_ctx->ki_ll_retries = 0;
+	desired = atomic_read(&hdd_ctx->ki_ll_desired) != 0;
+	if (desired == hdd_ctx->ki_ll_applied &&
+	    (!desired || hdd_ctx->ki_ll_rtpm_held))
+		goto out;
+
+	hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
+	if (hif_ctx) {
+		if (desired && !hdd_ctx->ki_ll_rtpm_held) {
+			if (hif_pm_runtime_get_sync(hif_ctx,
+						    RTPM_ID_KI_LOW_LATENCY) == 0)
+				hdd_ctx->ki_ll_rtpm_held = true;
+		} else if (!desired && hdd_ctx->ki_ll_rtpm_held) {
+			hif_pm_runtime_put(hif_ctx, RTPM_ID_KI_LOW_LATENCY);
+			hdd_ctx->ki_ll_rtpm_held = false;
+		}
+	}
+
+	hdd_for_each_adapter_dev_held_safe(hdd_ctx, adapter, next_adapter,
+					   NET_DEV_HOLD_SUSPEND_WLAN) {
+		hdd_apply_ki_wifi_low_latency(hdd_ctx, adapter, desired);
+		hdd_adapter_dev_put_debug(adapter, NET_DEV_HOLD_SUSPEND_WLAN);
+	}
+
+	hdd_ctx->ki_ll_applied = desired;
+	hdd_info("ki_profile: WiFi gaming low latency %s",
+		 desired ? "enabled" : "disabled");
+
+out:
+	osif_psoc_sync_op_stop(psoc_sync);
+}
+
+static void wlan_hdd_ki_wifi_ll_cb(bool enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx) {
+		atomic_set(&ki_ll_hdd_ctx->ki_ll_desired, enable ? 1 : 0);
+		ki_ll_hdd_ctx->ki_ll_retries = 0;
+		mod_delayed_work(system_wq, &ki_ll_hdd_ctx->ki_ll_work, 0);
+	}
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+}
+
+void wlan_hdd_kick_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	unsigned long flags;
+
+	if (!hdd_ctx)
+		return;
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx == hdd_ctx) {
+		atomic_set(&hdd_ctx->ki_ll_desired,
+			   ki_wifi_low_latency_enabled() ? 1 : 0);
+		hdd_ctx->ki_ll_retries = 0;
+		mod_delayed_work(system_wq, &hdd_ctx->ki_ll_work, 0);
+	}
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+}
+
+int wlan_hdd_register_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	unsigned long flags;
+
+	INIT_DELAYED_WORK(&hdd_ctx->ki_ll_work, wlan_hdd_ki_ll_work_fn);
+	atomic_set(&hdd_ctx->ki_ll_desired, 0);
+	hdd_ctx->ki_ll_applied = false;
+	hdd_ctx->ki_ll_rtpm_held = false;
+	hdd_ctx->ki_ll_retries = 0;
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	ki_ll_hdd_ctx = hdd_ctx;
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+
+	return ki_wifi_low_latency_register_cb(wlan_hdd_ki_wifi_ll_cb);
+}
+
+void wlan_hdd_unregister_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	unsigned long flags;
+	void *hif_ctx;
+
+	ki_wifi_low_latency_unregister_cb(wlan_hdd_ki_wifi_ll_cb);
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx == hdd_ctx)
+		ki_ll_hdd_ctx = NULL;
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+
+	cancel_delayed_work_sync(&hdd_ctx->ki_ll_work);
+
+	if (hdd_ctx->ki_ll_rtpm_held) {
+		hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
+		if (hif_ctx)
+			hif_pm_runtime_put(hif_ctx, RTPM_ID_KI_LOW_LATENCY);
+		hdd_ctx->ki_ll_rtpm_held = false;
+	}
+	hdd_ctx->ki_ll_applied = false;
+}
 
 /**
  * hdd_get_ipv4_local_interface() - get ipv4 local interafce from iface list
@@ -2228,6 +2407,7 @@ static int __wlan_hdd_cfg80211_set_power_mgmt(struct wiphy *wiphy,
 {
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
 	struct hdd_context *hdd_ctx;
+	bool orig_allow_ps = allow_power_save;
 	int status;
 
 	hdd_enter();
@@ -2261,9 +2441,15 @@ static int __wlan_hdd_cfg80211_set_power_mgmt(struct wiphy *wiphy,
 		return 0;
 	}
 
+	if (adapter->device_mode == QDF_STA_MODE &&
+	    ki_wifi_low_latency_enabled()) {
+		allow_power_save = false;
+		timeout = 0;
+	}
+
 	status = wlan_hdd_set_powersave(adapter, allow_power_save, timeout);
 
-	allow_power_save ? hdd_stop_dhcp_ind(adapter) :
+	orig_allow_ps ? hdd_stop_dhcp_ind(adapter) :
 		hdd_start_dhcp_ind(adapter);
 
 	hdd_exit();
