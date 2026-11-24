@@ -1,0 +1,133 @@
+#!/system/bin/sh
+# Ki-Settings device model spoof (opt-in, off by default).
+# Replaces the model, brand, manufacturer and market name system-wide by
+# rewriting their read-only props in post-fs-data, before zygote starts, so
+# every app sees the new values after a reboot (Build.* is cached in zygote).
+# The codename (ro.product.device/name), fingerprint, cert and SoC props stay
+# real: HALs, OTA and Xiaomi services key off those, and changing them can
+# break the camera, updates or boot.
+#
+#   ki-spoof set BRAND MANUFACTURER MODEL MARKETNAME   ("" keeps the original)
+#   ki-spoof off
+#   ki-spoof status
+#   ki-spoof apply     post-fs-data.sh
+#   ki-spoof booted    service.sh, once boot completed (clears the boot guard)
+#
+# Boot guard: if the phone fails to finish booting twice in a row with the
+# spoof applied, it is switched off automatically on the next boot.
+
+DIR=/data/adb/ki_spoof
+CONF=$DIR/spoof.conf
+FLAG=$DIR/enabled
+TRIES=$DIR/boot_tries
+GUARD=$DIR/guard_tripped
+PREFIXES="ro.product. ro.product.product. ro.product.odm. ro.product.vendor. ro.product.bootimage. ro.product.system. ro.product.system_ext."
+
+# Letters, digits, space and . _ + ( ) - only, at most 64 chars (props allow 91).
+valid() {
+	case $1 in
+	*[!A-Za-z0-9\ ._+\(\)-]*) return 1 ;;
+	esac
+	[ ${#1} -le 64 ]
+}
+
+load_conf() {
+	BRAND=""
+	MANUFACTURER=""
+	MODEL=""
+	MARKETNAME=""
+	[ -f $CONF ] || return 0
+	while IFS= read -r line; do
+		case $line in
+		BRAND=*) BRAND=${line#BRAND=} ;;
+		MANUFACTURER=*) MANUFACTURER=${line#MANUFACTURER=} ;;
+		MODEL=*) MODEL=${line#MODEL=} ;;
+		MARKETNAME=*) MARKETNAME=${line#MARKETNAME=} ;;
+		esac
+	done < $CONF
+}
+
+find_resetprop() {
+	for r in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop \
+		/data/adb/magisk/resetprop $(command -v resetprop); do
+		[ -x "$r" ] && { echo "$r"; return 0; }
+	done
+	return 1
+}
+
+# set_field FIELD VALUE: rewrite every existing ro.product.*FIELD prop.
+set_field() {
+	[ -n "$2" ] || return 0
+	for pre in $PREFIXES; do
+		# system/system_ext model is Xiaomi's generic "missi" image name
+		case $1.$pre in
+		model.ro.product.system.|model.ro.product.system_ext.) continue ;;
+		esac
+		[ -n "$(getprop $pre$1)" ] && $RESETPROP -n $pre$1 "$2"
+	done
+}
+
+apply() {
+	[ -f $FLAG ] || return 0
+	tries=$(cat $TRIES 2>/dev/null)
+	if [ "${tries:-0}" -ge 2 ]; then
+		rm -f $FLAG $TRIES
+		touch $GUARD
+		return 0
+	fi
+	echo $((${tries:-0} + 1)) > $TRIES
+	RESETPROP=$(find_resetprop) || return 1
+	load_conf
+	set_field brand "$BRAND"
+	set_field manufacturer "$MANUFACTURER"
+	set_field model "$MODEL"
+	set_field marketname "$MARKETNAME"
+}
+
+# Real values from the product partition, for the WebUI.
+real_prop() {
+	sed -n "s/^ro.product.product.$1=//p" /product/etc/build.prop 2>/dev/null | head -n 1
+}
+
+case "$1" in
+set)
+	for v in "$2" "$3" "$4" "$5"; do
+		valid "$v" || { echo "ki-spoof: only letters, digits, space and . _ + ( ) - are allowed (max 64)" >&2; exit 1; }
+	done
+	[ -n "$4" ] || { echo "ki-spoof: model is required" >&2; exit 1; }
+	mkdir -p $DIR
+	chmod 700 $DIR
+	printf 'BRAND=%s\nMANUFACTURER=%s\nMODEL=%s\nMARKETNAME=%s\n' "$2" "$3" "$4" "$5" > $CONF
+	rm -f $TRIES $GUARD
+	touch $FLAG
+	echo "ki-spoof: saved, reboot to apply"
+	;;
+off)
+	rm -f $FLAG $TRIES $GUARD
+	echo "ki-spoof: off, reboot to restore the real model"
+	;;
+apply)
+	apply
+	;;
+booted)
+	rm -f $TRIES
+	;;
+status)
+	load_conf
+	echo "ENABLED=$([ -f $FLAG ] && echo 1 || echo 0)"
+	echo "GUARD=$([ -f $GUARD ] && echo 1 || echo 0)"
+	echo "BRAND=$BRAND"
+	echo "MANUFACTURER=$MANUFACTURER"
+	echo "MODEL=$MODEL"
+	echo "MARKETNAME=$MARKETNAME"
+	echo "LIVE_MODEL=$(getprop ro.product.model)"
+	echo "LIVE_BRAND=$(getprop ro.product.brand)"
+	echo "LIVE_MARKETNAME=$(getprop ro.product.marketname)"
+	echo "REAL_MODEL=$(real_prop model)"
+	echo "REAL_MARKETNAME=$(real_prop marketname)"
+	;;
+*)
+	echo "usage: ki-spoof set BRAND MANUFACTURER MODEL MARKETNAME | off | status"
+	exit 1
+	;;
+esac

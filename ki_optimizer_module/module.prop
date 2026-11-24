@@ -1,6 +1,6 @@
 id=ki_optimizer
 name=Ki-Kernel Settings
-version=v1.5.0
-versionCode=150
+version=v1.7.0
+versionCode=170
 author=Luckyfr1945
-description=Ki-Kernel settings: power profiles, memory, charging, thermal and network controls. Includes a Rust-based 80% charging limit and component versions.
+description=Ki-Kernel settings: power profiles, memory, charging, thermal, network & Wi-Fi gaming low latency controls, opt-in SOD/crash and game network loggers, and a device model spoof. Includes a Rust-based 80% charging limit and component versions.

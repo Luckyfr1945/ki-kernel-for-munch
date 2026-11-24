@@ -834,6 +834,45 @@ h1 {
 .about-note { color: var(--muted); font-size: 11px; line-height: 1.5; margin: 12px 18px; }
 .about-refresh { margin: 0 18px 18px; }
 
+.spoof-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.spoof-fields label { display: grid; gap: 4px; min-width: 0; font-size: 11px; color: var(--muted); }
+.text-input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.text-input:focus { border-color: var(--c-balanced); }
+.text-input.is-invalid { border-color: var(--danger); }
+.spoof-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.spoof-actions .mglru-btn { background-color: var(--bg); border: 1px solid var(--border); padding: 9px 12px; }
+.spoof-actions .spoof-save { color: var(--text); }
+.spoof-actions .mglru-btn:disabled { opacity: 0.5; cursor: default; }
+#spoof-status.is-warning { color: var(--warning); }
+
+.netlog-row { border-top: 1px solid var(--border-subtle); }
+.netlog-sessions { display: grid; gap: 8px; padding: 0 16px 16px; }
+.netlog-session {
+  background: var(--surface-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.netlog-session p { margin: 0; }
+.netlog-session strong { color: var(--text); font-weight: 600; }
+.netlog-session .netlog-meta { color: var(--muted); }
+.netlog-session .netlog-warn { color: var(--warning); }
+
 .about-credits-heading { margin-top: 24px; }
 .about-credits > div:first-child { border-top: 0; }
 .about-credits a { color: var(--text); text-underline-offset: 3px; }

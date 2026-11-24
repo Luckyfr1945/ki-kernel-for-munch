@@ -137,6 +137,10 @@ const rowTcp = document.getElementById("row-tcp");
 const selectTcp = document.getElementById("select-tcp");
 const badgeTcp = document.getElementById("badge-tcp");
 
+const rowWifiLl = document.getElementById("row-wifi-ll");
+const selectWifiLl = document.getElementById("select-wifi-ll");
+const badgeWifiLl = document.getElementById("badge-wifi-ll");
+
 const btnApply = document.getElementById("btn-apply");
 
 let currentProfile = 1;
@@ -440,6 +444,13 @@ async function refreshState() {
       VAL_TCP="$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo 'cubic')"
       AVAIL_TCP="$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo 'bbr3 bbr westwood cubic reno')"
 
+      HAS_WIFILL=0
+      VAL_WIFILL=-1
+      if [ -f /sys/kernel/ki_profile/wifi_low_latency ]; then
+        HAS_WIFILL=1
+        VAL_WIFILL="$(cat /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null || echo '-1')"
+      fi
+
       echo "IS_KI=$IS_KI"
       echo "KERNEL=$KERNEL"
       echo "MODEL=$MODEL"
@@ -463,6 +474,8 @@ async function refreshState() {
       echo "VAL_SWAP=$VAL_SWAP"
       echo "VAL_TCP=$VAL_TCP"
       echo "AVAIL_TCP=$AVAIL_TCP"
+      echo "HAS_WIFILL=$HAS_WIFILL"
+      echo "VAL_WIFILL=$VAL_WIFILL"
     `);
 
     const props = {};
@@ -528,6 +541,22 @@ async function refreshState() {
 
     // Dynamic TCP population & detection
     populateTcpOptions(props["AVAIL_TCP"], props["VAL_TCP"]);
+
+    if (rowWifiLl && selectWifiLl && badgeWifiLl) {
+      const hasWll = props["HAS_WIFILL"] === "1";
+      selectWifiLl.disabled = !hasWll;
+      rowWifiLl.classList.toggle("is-unsupported", !hasWll);
+      if (hasWll) {
+        const wllVal = (props["VAL_WIFILL"] || "-1").trim();
+        selectWifiLl.value = wllVal;
+        badgeWifiLl.textContent = wllVal === "1" ? "Always On" : wllVal === "0" ? "Off" : "Auto";
+        badgeWifiLl.classList.remove("is-unsupported");
+        badgeWifiLl.classList.toggle("is-off", wllVal === "0");
+      } else {
+        badgeWifiLl.textContent = "Unsupported";
+        badgeWifiLl.classList.add("is-unsupported");
+      }
+    }
   } catch (err) {
     console.error("refreshState error:", err);
   }
@@ -546,6 +575,7 @@ async function applyChanges(silent = false) {
   const dynfsync = toggleDynFsync?.checked ? 1 : 0;
   const thermal = toggleThermal?.checked ? 1 : 0;
   const tcp = selectTcp ? selectTcp.value : "cubic";
+  const wifill = selectWifiLl ? selectWifiLl.value : "-1";
 
   const script = `
     # 1. Apply Profile
@@ -594,6 +624,11 @@ async function applyChanges(silent = false) {
       echo "${tcp}" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
     fi
 
+    # 9b. Apply Wi-Fi Gaming Low Latency
+    if [ -f /sys/kernel/ki_profile/wifi_low_latency ]; then
+      echo "${wifill}" > /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null
+    fi
+
     # 10. Persist to configuration file
     for CONF in /sdcard/ki_optimizer.conf /sdcard/ki_settings.conf; do
       if [ -f "$CONF" ]; then
@@ -608,6 +643,11 @@ async function applyChanges(silent = false) {
         sed -i -E "s/^THERMAL_THROTTLE=.*/THERMAL_THROTTLE=${thermal}/" "$CONF" 2>/dev/null
         sed -i -E "s/^DYNAMIC_FSYNC=.*/DYNAMIC_FSYNC=${dynfsync}/" "$CONF" 2>/dev/null
         sed -i -E "s/^TCP_CONGESTION=.*/TCP_CONGESTION=\\"${tcp}\\"/" "$CONF" 2>/dev/null
+        if grep -qE "^WIFI_LOW_LATENCY=" "$CONF"; then
+          sed -i -E "s/^WIFI_LOW_LATENCY=.*/WIFI_LOW_LATENCY=${wifill}/" "$CONF" 2>/dev/null
+        else
+          echo "WIFI_LOW_LATENCY=${wifill}" >> "$CONF" 2>/dev/null
+        fi
       fi
     done
   `;
@@ -728,6 +768,15 @@ selectTcp?.addEventListener("change", (e) => {
   }
 });
 
+selectWifiLl?.addEventListener("change", (e) => {
+  haptic(10);
+  if (badgeWifiLl) {
+    const v = e.target.value;
+    badgeWifiLl.textContent = v === "1" ? "Always On" : v === "0" ? "Off" : "Auto";
+    badgeWifiLl.classList.toggle("is-off", v === "0");
+  }
+});
+
 btnApply?.addEventListener("click", () => {
   haptic(20);
   applyChanges(false);
@@ -738,7 +787,7 @@ setInterval(updateTelemetry, 3500);
 
 // Initialize on Load
 document.addEventListener("DOMContentLoaded", () => {
-  refreshState().then(refreshChargeLimit);
+  refreshState().then(() => Promise.all([refreshChargeLimit(), refreshCrashlog(), refreshNetlog(), refreshSpoof()]));
 });
 
 // Read versions only when About is opened or refreshed.
@@ -906,4 +955,376 @@ chargeLimitToggle?.addEventListener("change", async () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshChargeLimit();
+});
+
+// SOD / crash logger: opt-in, applies immediately, resumed on boot by service.sh.
+const CRASHLOG_BIN = "/data/adb/modules/ki_optimizer/bin/ki-crashlog";
+const crashlogToggle = document.getElementById("toggle-crashlog");
+const crashlogStatus = document.getElementById("crashlog-status");
+const crashlogExport = document.getElementById("btn-crashlog-export");
+let crashlogBusy = false;
+async function refreshCrashlog() {
+  if (crashlogBusy || !crashlogToggle) return;
+  try {
+    const { errno, stdout } = await exec(`[ -x ${CRASHLOG_BIN} ] && ${CRASHLOG_BIN} status`);
+    if (Number(errno) !== 0) throw new Error("Unable to read crash logger");
+    const props = Object.fromEntries(stdout.trim().split("\n").map(line => {
+      const split = line.indexOf("=");
+      return [line.slice(0, split), line.slice(split + 1)];
+    }));
+    const saved = parseInt(props.SAVED || "0", 10) || 0;
+    crashlogToggle.disabled = !isKiKernelActive;
+    crashlogToggle.checked = props.ENABLED === "1";
+    crashlogExport.disabled = !isKiKernelActive || (props.ENABLED !== "1" && saved === 0);
+    let text = props.ENABLED !== "1" ? "Off" :
+      props.RUNNING === "1" ? "Logging to /data/adb/ki_crashlog" : "Enabled, not running";
+    if (saved > 0) text += ` · ${saved} previous boot${saved > 1 ? "s" : ""} saved (last ${props.LAST})`;
+    crashlogStatus.textContent = text;
+  } catch (_) {
+    crashlogToggle.disabled = true;
+    crashlogExport.disabled = true;
+    crashlogStatus.textContent = "Unable to check crash logger";
+  }
+}
+crashlogToggle?.addEventListener("change", async () => {
+  if (crashlogBusy || !isKiKernelActive) return;
+  crashlogBusy = true;
+  crashlogToggle.disabled = true;
+  const enabled = crashlogToggle.checked;
+  crashlogStatus.textContent = enabled ? "Starting..." : "Stopping...";
+  try {
+    const result = await exec(`${CRASHLOG_BIN} ${enabled ? "on" : "off"}`);
+    if (Number(result.errno) !== 0) throw new Error(result.stderr || "Crash logger failed");
+    haptic(10);
+    showToast(enabled ? "Crash logger enabled" : "Crash logger disabled");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    crashlogBusy = false;
+    await refreshCrashlog();
+  }
+});
+crashlogExport?.addEventListener("click", async () => {
+  if (crashlogBusy || !isKiKernelActive) return;
+  crashlogBusy = true;
+  crashlogExport.disabled = true;
+  try {
+    const result = await exec(`${CRASHLOG_BIN} export`);
+    if (Number(result.errno) !== 0) throw new Error(result.stderr || "Export failed");
+    haptic(10);
+    showToast(`Saved ${result.stdout.trim().replace("/sdcard/", "")}`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    crashlogBusy = false;
+    await refreshCrashlog();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshCrashlog();
+});
+
+// Game network logger: opt-in, applies immediately, resumed on boot by service.sh.
+const NETLOG_BIN = "/data/adb/modules/ki_optimizer/bin/ki-netlog";
+const netlogToggle = document.getElementById("toggle-netlog");
+const netlogStatus = document.getElementById("netlog-status");
+const netlogSessions = document.getElementById("netlog-sessions");
+const GAME_NAMES = {
+  "com.mobile.legends": "Mobile Legends",
+  "com.dts.freefireth": "Free Fire",
+  "com.tencent.ig": "PUBG Mobile",
+  "com.pubg.imobile": "BGMI",
+  "com.garena.game.codm": "Call of Duty Mobile",
+  "com.activision.callofduty.shooter": "Call of Duty Mobile",
+  "com.riotgames.league.wildrift": "Wild Rift",
+  "com.garena.game.kgid": "Arena of Valor",
+  "com.miHoYo.GenshinImpact": "Genshin Impact",
+  "com.HoYoverse.hkrpgoversea": "Honkai: Star Rail",
+  "com.HoYoverse.nap": "Zenless Zone Zero",
+  "com.epicgames.fortnite": "Fortnite"
+};
+let netlogBusy = false;
+
+function netlogGameName(pkg) {
+  return GAME_NAMES[pkg] || pkg || "Unknown game";
+}
+
+function parseNetlogSession(line) {
+  const s = {};
+  line.trim().split(/\s+/).forEach(kv => {
+    const i = kv.indexOf("=");
+    if (i > 0) s[kv.slice(0, i)] = kv.slice(i + 1);
+  });
+  return s;
+}
+
+function renderNetlogSession(s) {
+  const item = document.createElement("div");
+  item.className = "netlog-session";
+  const line = (cls, ...parts) => {
+    const p = document.createElement("p");
+    if (cls) p.className = cls;
+    p.append(...parts);
+    item.append(p);
+  };
+  const strong = text => {
+    const b = document.createElement("strong");
+    b.textContent = text;
+    return b;
+  };
+
+  const end = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})$/.exec(s.END || "");
+  const when = end ? `${end[3]}/${end[2]} ${end[4]}:${end[5]}` : (s.END || "");
+  const mins = Math.max(1, Math.round((Number(s.DUR) || 0) / 60));
+  const dur = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
+  const net = s.NET === "wifi" ? "Wi-Fi" : s.NET === "cell" ? "Mobile data" : (s.NET || "Unknown network");
+  line("", strong(netlogGameName(s.GAME)), ` · ${when} · ${dur} · ${net}`);
+
+  // Spikes are counted on the game server when it answers ping, else on the internet.
+  const useSrv = s.SRV_AVG !== undefined;
+  const k = useSrv ? "SRV" : "NET";
+  if (s[`${k}_AVG`] !== undefined) {
+    line("", `Ping ${s[`${k}_AVG`]} ms ${useSrv ? "to the game server" : "to the internet"} · jitter ${s[`${k}_JIT`]} ms · loss ${s[`${k}_LOSS`]}% · max ${s[`${k}_MAX`]} ms`);
+  } else {
+    line("netlog-warn", `No ping replies (loss ${s[`${k}_LOSS`] || "100"}%)`);
+  }
+  const extra = [];
+  if (useSrv && s.NET_AVG !== undefined) extra.push(`internet ${s.NET_AVG} ms`);
+  if (s.GW_AVG !== undefined) extra.push(`router ${s.GW_AVG} ms (max ${s.GW_MAX} ms)`);
+  if (extra.length) line("netlog-meta", extra.join(" · "));
+  if (s.SRV_NOPING) line("netlog-meta", "The game server does not answer ping, so internet ping is shown.");
+
+  const spikes = Number(s.SPIKES) || 0;
+  if (spikes) {
+    const local = Number(s.SPK_LOCAL) || 0;
+    const weak = Number(s.SPK_WEAK) || 0;
+    const other = spikes - local - weak;
+    const causes = [];
+    if (local) causes.push(`${local} Wi-Fi/router`);
+    if (weak) causes.push(`${weak} weak signal`);
+    if (other) causes.push(`${other} ${useSrv ? "server/internet" : "internet"}`);
+    const worst = s.WORST ? ` · worst ${s.WORST.replace("@", " ms at ")}` : "";
+    line("netlog-warn", `${spikes} lag spike${spikes > 1 ? "s" : ""} over 150 ms: ${causes.join(", ")}${worst}`);
+  } else {
+    line("", "No lag spikes over 150 ms");
+  }
+  if (s.SIG_AVG !== undefined) line("netlog-meta", `Signal average ${s.SIG_AVG} dBm, weakest ${s.SIG_MIN} dBm`);
+  if (s.FILE) line("netlog-meta", `Download/Ki-NetLog/${s.FILE}`);
+  return item;
+}
+
+async function refreshNetlog() {
+  if (netlogBusy || !netlogToggle) return;
+  try {
+    const { errno, stdout } = await exec(`[ -x ${NETLOG_BIN} ] && ${NETLOG_BIN} status`);
+    if (Number(errno) !== 0) throw new Error("Unable to read network logger");
+    const props = {};
+    const sessions = [];
+    stdout.trim().split("\n").forEach(line => {
+      if (line.startsWith("S=")) {
+        sessions.push(parseNetlogSession(line.slice(2)));
+        return;
+      }
+      const split = line.indexOf("=");
+      if (split > 0) props[line.slice(0, split)] = line.slice(split + 1);
+    });
+    netlogToggle.disabled = !isKiKernelActive;
+    netlogToggle.checked = props.ENABLED === "1";
+    netlogStatus.textContent = props.ENABLED !== "1" ? "Off" :
+      props.RUNNING !== "1" ? "Enabled, not running" :
+      props.ACTIVE ? `Logging ${netlogGameName(props.ACTIVE)}` :
+      "Waiting for a game from the Ki-Daemon game list";
+    netlogSessions.replaceChildren(...sessions.reverse().map(renderNetlogSession));
+    netlogSessions.hidden = sessions.length === 0;
+  } catch (_) {
+    netlogToggle.disabled = true;
+    netlogStatus.textContent = "Unable to check network logger";
+  }
+}
+netlogToggle?.addEventListener("change", async () => {
+  if (netlogBusy || !isKiKernelActive) return;
+  netlogBusy = true;
+  netlogToggle.disabled = true;
+  const enabled = netlogToggle.checked;
+  netlogStatus.textContent = enabled ? "Starting..." : "Stopping...";
+  try {
+    const result = await exec(`${NETLOG_BIN} ${enabled ? "on" : "off"}`);
+    if (Number(result.errno) !== 0) throw new Error(result.stderr || "Network logger failed");
+    haptic(10);
+    showToast(enabled ? "Game network logger enabled" : "Game network logger disabled");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    netlogBusy = false;
+    await refreshNetlog();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshNetlog();
+});
+
+// Device model spoof: saved here, applied by post-fs-data.sh on the next boot.
+const SPOOF_BIN = "/data/adb/modules/ki_optimizer/bin/ki-spoof";
+// Global model numbers from github.com/KHwang9883/MobileModels (brands/xiaomi_en.md).
+// Xiaomi/POCO presets keep the real brand and manufacturer, so Xiaomi-only features stay.
+const SPOOF_PRESETS = [
+  { group: "Xiaomi", name: "Xiaomi 17 Ultra", brand: "", manufacturer: "", model: "2512BPNDAG", marketname: "Xiaomi 17 Ultra" },
+  { group: "Xiaomi", name: "Leica Leitzphone powered by Xiaomi", brand: "", manufacturer: "", model: "25128PNA1G", marketname: "Leica Leitzphone powered by Xiaomi" },
+  { group: "Xiaomi", name: "Xiaomi 17", brand: "", manufacturer: "", model: "25113PN0EG", marketname: "Xiaomi 17" },
+  { group: "Xiaomi", name: "Xiaomi 17T Pro", brand: "", manufacturer: "", model: "2602EPTC0G", marketname: "Xiaomi 17T Pro" },
+  { group: "Xiaomi", name: "Xiaomi 17T", brand: "", manufacturer: "", model: "2602DPT53G", marketname: "Xiaomi 17T" },
+  { group: "Xiaomi", name: "Xiaomi 15 Ultra", brand: "", manufacturer: "", model: "25010PN30G", marketname: "Xiaomi 15 Ultra" },
+  { group: "Xiaomi", name: "Xiaomi 15", brand: "", manufacturer: "", model: "24129PN74G", marketname: "Xiaomi 15" },
+  { group: "Xiaomi", name: "Xiaomi 15T Pro", brand: "", manufacturer: "", model: "2506BPN68G", marketname: "Xiaomi 15T Pro" },
+  { group: "Xiaomi", name: "Xiaomi 15T", brand: "", manufacturer: "", model: "25069PTEBG", marketname: "Xiaomi 15T" },
+  { group: "Xiaomi", name: "Xiaomi 14 Ultra", brand: "", manufacturer: "", model: "24030PN60G", marketname: "Xiaomi 14 Ultra" },
+  { group: "Xiaomi", name: "Xiaomi 14", brand: "", manufacturer: "", model: "23127PN0CG", marketname: "Xiaomi 14" },
+  { group: "Xiaomi", name: "Xiaomi 14T Pro", brand: "", manufacturer: "", model: "2407FPN8EG", marketname: "Xiaomi 14T Pro" },
+  { group: "Xiaomi", name: "Xiaomi 14T", brand: "", manufacturer: "", model: "2406APNFAG", marketname: "Xiaomi 14T" },
+  { group: "Xiaomi", name: "Xiaomi MIX Flip", brand: "", manufacturer: "", model: "2405CPX3DG", marketname: "Xiaomi MIX Flip" },
+  { group: "POCO", name: "POCO F8 Ultra", brand: "", manufacturer: "", model: "25102PCBEG", marketname: "POCO F8 Ultra" },
+  { group: "POCO", name: "POCO F8 Pro", brand: "", manufacturer: "", model: "2510DPC44G", marketname: "POCO F8 Pro" },
+  { group: "POCO", name: "POCO F7 Ultra", brand: "", manufacturer: "", model: "24122RKC7G", marketname: "POCO F7 Ultra" },
+  { group: "POCO", name: "POCO F6 Pro", brand: "", manufacturer: "", model: "23113RKC6G", marketname: "POCO F6 Pro" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad 8 Pro", brand: "", manufacturer: "", model: "25091RP04G", marketname: "Xiaomi Pad 8 Pro" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad 8", brand: "", manufacturer: "", model: "25097RP43G", marketname: "Xiaomi Pad 8" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad 7 Pro", brand: "", manufacturer: "", model: "24091RPADG", marketname: "Xiaomi Pad 7 Pro" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad 7", brand: "", manufacturer: "", model: "2410CRP4CG", marketname: "Xiaomi Pad 7" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad 6S Pro 12.4", brand: "", manufacturer: "", model: "24018RPACG", marketname: "Xiaomi Pad 6S Pro 12.4" },
+  { group: "Xiaomi Pad", name: "Xiaomi Pad mini", brand: "", manufacturer: "", model: "25079RPDCG", marketname: "Xiaomi Pad mini" },
+  { group: "Other brands", name: "Samsung Galaxy S24 Ultra", brand: "samsung", manufacturer: "samsung", model: "SM-S928B", marketname: "Galaxy S24 Ultra" },
+  { group: "Other brands", name: "Samsung Galaxy S23 Ultra", brand: "samsung", manufacturer: "samsung", model: "SM-S918B", marketname: "Galaxy S23 Ultra" },
+  { group: "Other brands", name: "ASUS ROG Phone 5", brand: "asus", manufacturer: "asus", model: "ASUS_I005D", marketname: "ROG Phone 5" },
+  { group: "Other brands", name: "OnePlus 12", brand: "OnePlus", manufacturer: "OnePlus", model: "CPH2581", marketname: "OnePlus 12" },
+  { group: "Other brands", name: "Google Pixel 8 Pro", brand: "google", manufacturer: "Google", model: "Pixel 8 Pro", marketname: "Pixel 8 Pro" }
+];
+const SPOOF_KEYS = ["model", "marketname", "brand", "manufacturer"];
+// Same rule as ki-spoof: no quotes or shell characters reach the command line.
+const SPOOF_VALID = /^[A-Za-z0-9 ._+()-]{0,64}$/;
+const spoofSelect = document.getElementById("select-spoof");
+const spoofStatus = document.getElementById("spoof-status");
+const spoofSave = document.getElementById("btn-spoof-save");
+const spoofOff = document.getElementById("btn-spoof-off");
+const spoofInputs = Object.fromEntries(SPOOF_KEYS.map(k => [k, document.getElementById(`spoof-${k}`)]));
+let spoofBusy = false;
+
+const spoofGroups = {};
+SPOOF_PRESETS.forEach((preset, i) => {
+  if (!spoofGroups[preset.group]) {
+    spoofGroups[preset.group] = document.createElement("optgroup");
+    spoofGroups[preset.group].label = preset.group;
+    spoofSelect?.append(spoofGroups[preset.group]);
+  }
+  const opt = document.createElement("option");
+  opt.value = String(i);
+  opt.textContent = preset.name;
+  spoofGroups[preset.group].append(opt);
+});
+
+function spoofValues() {
+  return Object.fromEntries(SPOOF_KEYS.map(k => [k, spoofInputs[k].value.trim()]));
+}
+
+function syncSpoofPreset() {
+  const v = spoofValues();
+  const i = SPOOF_PRESETS.findIndex(p => SPOOF_KEYS.every(k => p[k] === v[k]));
+  spoofSelect.value = i >= 0 ? String(i) : "";
+}
+
+spoofSelect?.addEventListener("change", () => {
+  const preset = SPOOF_PRESETS[Number(spoofSelect.value)];
+  if (!preset || spoofSelect.value === "") return;
+  SPOOF_KEYS.forEach(k => {
+    spoofInputs[k].value = preset[k];
+    spoofInputs[k].classList.remove("is-invalid");
+  });
+  haptic(10);
+});
+SPOOF_KEYS.forEach(k => spoofInputs[k]?.addEventListener("input", () => {
+  spoofInputs[k].classList.toggle("is-invalid", !SPOOF_VALID.test(spoofInputs[k].value.trim()));
+  syncSpoofPreset();
+}));
+
+function spoofLabel(name, model) {
+  return !name || name === model ? model : `${name} (${model})`;
+}
+
+// fill=false keeps unsaved edits (used when the WebUI comes back to the front).
+async function refreshSpoof(fill = true) {
+  if (spoofBusy || !spoofSelect) return;
+  try {
+    const { errno, stdout } = await exec(`[ -x ${SPOOF_BIN} ] && ${SPOOF_BIN} status`);
+    if (Number(errno) !== 0) throw new Error("Unable to read device spoof");
+    const props = {};
+    stdout.trim().split("\n").forEach(line => {
+      const split = line.indexOf("=");
+      if (split > 0) props[line.slice(0, split)] = line.slice(split + 1);
+    });
+    const enabled = props.ENABLED === "1";
+    const realName = props.REAL_MARKETNAME || props.REAL_MODEL || props.LIVE_MODEL || "this phone";
+    const liveSpoofed = props.REAL_MODEL && props.LIVE_MODEL !== props.REAL_MODEL;
+    const target = spoofLabel(props.MARKETNAME, props.MODEL);
+    spoofStatus.classList.toggle("is-warning", props.GUARD === "1");
+    if (props.GUARD === "1") {
+      spoofStatus.textContent = "Turned off automatically: the phone did not finish booting twice with the spoof.";
+    } else if (enabled) {
+      spoofStatus.textContent = props.LIVE_MODEL === props.MODEL ?
+        `Active · apps see ${target}` : `Saved · reboot to show as ${target}`;
+    } else {
+      spoofStatus.textContent = liveSpoofed ?
+        `Off · reboot to restore ${realName}` : `Off · apps see ${spoofLabel(realName, props.LIVE_MODEL || "?")}`;
+    }
+    SPOOF_KEYS.forEach(k => {
+      if (!fill) return;
+      spoofInputs[k].value = props[k.toUpperCase()] || "";
+      spoofInputs[k].placeholder = k === "model" ? (props.REAL_MODEL || "") :
+        k === "marketname" ? (props.REAL_MARKETNAME || "") : "Keep original";
+      spoofInputs[k].classList.remove("is-invalid");
+    });
+    if (fill) syncSpoofPreset();
+    spoofSave.disabled = !isKiKernelActive;
+    spoofOff.disabled = !isKiKernelActive || (!enabled && !liveSpoofed);
+  } catch (_) {
+    spoofSave.disabled = true;
+    spoofOff.disabled = true;
+    spoofStatus.textContent = "Unable to check device spoof";
+  }
+}
+
+async function runSpoof(args, okMessage) {
+  if (spoofBusy || !isKiKernelActive) return;
+  spoofBusy = true;
+  spoofSave.disabled = true;
+  spoofOff.disabled = true;
+  try {
+    const result = await exec(`${SPOOF_BIN} ${args}`);
+    if (Number(result.errno) !== 0) throw new Error(result.stderr || "Device spoof failed");
+    haptic(10);
+    showToast(okMessage);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    spoofBusy = false;
+    await refreshSpoof();
+  }
+}
+
+spoofSave?.addEventListener("click", () => {
+  const v = spoofValues();
+  const bad = SPOOF_KEYS.filter(k => !SPOOF_VALID.test(v[k]));
+  bad.forEach(k => spoofInputs[k].classList.add("is-invalid"));
+  if (bad.length) {
+    showToast("Use letters, digits, space and . _ + ( ) - only", true);
+    return;
+  }
+  if (!v.model) {
+    spoofInputs.model.classList.add("is-invalid");
+    showToast("Model is required", true);
+    return;
+  }
+  runSpoof(`set '${v.brand}' '${v.manufacturer}' '${v.model}' '${v.marketname}'`, "Saved. Reboot to apply");
+});
+spoofOff?.addEventListener("click", () => runSpoof("off", "Spoof off. Reboot to restore the real model"));
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshSpoof(false);
 });

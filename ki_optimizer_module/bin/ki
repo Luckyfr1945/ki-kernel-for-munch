@@ -50,14 +50,15 @@ apply_config() {
         local throt=$(grep -E "^THERMAL_THROTTLE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
         local dyn_fsync=$(grep -E "^DYNAMIC_FSYNC=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
         local tcp=$(grep -E "^TCP_CONGESTION=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
+        local wifi_ll=$(grep -E "^WIFI_LOW_LATENCY=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
         local vfs=$(grep -E "^VFS_CACHE_PRESSURE=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
         local sched=$(grep -E "^IO_SCHEDULER=" "$conf" | head -n 1 | cut -d'=' -f2 | tr -d ' "\r')
 
         [ -n "$ki_p" ] && set_profile "$ki_p" silent
         [ -n "$mglru" ] && set_mglru "$mglru" silent
         [ -n "$bypass" ] && set_bypass "$bypass" silent
-        [ -n "$s_fc" ] && echo "$s_fc" > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
         [ -n "$f_fc" ] && echo "$f_fc" > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
+        [ -n "$s_fc" ] && echo "$s_fc" > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
         [ -n "$s_bat" ] && echo "$s_bat" > /sys/kernel/ki_profile/screen_off_battery 2>/dev/null
         [ -n "$throt" ] && set_thermal "$throt" silent
         if [ -n "$dyn_fsync" ]; then
@@ -70,6 +71,7 @@ apply_config() {
             echo "$wl" > /sys/devices/virtual/misc/boeffla_wakelock_blocker/wakelock_blocker 2>/dev/null
         fi
         [ -n "$tcp" ] && echo "$tcp" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+        [ -n "$wifi_ll" ] && echo "$wifi_ll" > /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null
         # Swappiness left at ROM/kernel default as requested
         [ -n "$vfs" ] && echo "$vfs" > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
         if [ -n "$sched" ]; then
@@ -175,6 +177,39 @@ set_thermal() {
     fi
 }
 
+set_wifi_ll() {
+    if ! verify_kernel; then return 1; fi
+    local val="$1"
+    local target=""
+    case "$val" in
+        auto|-1) target="-1" ;;
+        on|1)    target="1" ;;
+        off|0)   target="0" ;;
+        *)
+            echo -e "${R}Usage: ki wifi [auto|-1|1|on|0|off]${X}"
+            return 1
+            ;;
+    esac
+
+    if echo "$target" > /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null; then
+        if [ -f "$CONF_PATH" ]; then
+            if grep -qE "^WIFI_LOW_LATENCY=" "$CONF_PATH"; then
+                sed -i -E "s/^WIFI_LOW_LATENCY=.*/WIFI_LOW_LATENCY=${target}/" "$CONF_PATH" 2>/dev/null
+            else
+                echo "WIFI_LOW_LATENCY=${target}" >> "$CONF_PATH" 2>/dev/null
+            fi
+        fi
+        case "$target" in
+            -1) echo -e "${B}✔ WiFi Low Latency: AUTO (Performance)${X}" ;;
+            1)  echo -e "${G}✔ WiFi Low Latency: ALWAYS ON (Screen ON)${X}" ;;
+            0)  echo -e "${R}✔ WiFi Low Latency: OFF${X}" ;;
+        esac
+    else
+        echo -e "${R}✖ Failed to set WiFi Low Latency (unsupported kernel?)${X}"
+        return 1
+    fi
+}
+
 show_status() {
     local cur_p=$(cat /sys/kernel/ki_profile/mode 2>/dev/null || cut -d' ' -f1 /proc/ki_profile 2>/dev/null || echo "?")
     local cur_mglru=$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo "0")
@@ -185,7 +220,12 @@ show_status() {
     local cur_sbat=$(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo "0")
     local cur_fsync=$(cat /sys/kernel/dyn_fsync/Dyn_fsync_active 2>/dev/null || echo "0")
     local cur_tcp=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "cubic")
+    local cur_wll=$(cat /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null || echo "-1")
     local cur_swap=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "80")
+
+    local wll_str="${B}Auto (Performance)${X}"
+    [ "$cur_wll" = "1" ] && wll_str="${G}Always On (Screen ON)${X}"
+    [ "$cur_wll" = "0" ] && wll_str="${R}OFF${X}"
 
     local p_str="${B}Balanced [1]${X}"
     [ "$cur_p" = "0" ] && p_str="${G}Battery Saver [0]${X}"
@@ -223,6 +263,7 @@ show_status() {
     echo -e " • Screen-Off Battery  : $sbat_str"
     echo -e " • Dynamic Fsync       : $fsync_str"
     echo -e " • TCP Algorithm       : ${W}$cur_tcp${X}"
+    echo -e " • WiFi Low Latency    : $wll_str"
     echo -e " • zRAM Swappiness     : ${W}$cur_swap${X}"
     echo -e "${C}────────────────────────────────────────────────────────${X}"
 }
@@ -312,6 +353,7 @@ case "$1" in
   "thermal_throttle": $(cat /sys/kernel/ki_profile/thermal_throttle 2>/dev/null || echo 1),
   "screen_off_battery": $(cat /sys/kernel/ki_profile/screen_off_battery 2>/dev/null || echo 0),
   "tcp": "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo cubic)",
+  "wifi_low_latency": $(cat /sys/kernel/ki_profile/wifi_low_latency 2>/dev/null || echo -1),
   "tcp_available": "$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)",
   "swappiness": $(cat /proc/sys/vm/swappiness 2>/dev/null || echo 130),
   "battery_pct": $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0),
@@ -342,8 +384,21 @@ EOF
     thermal|throt)
         set_thermal "$2"
         ;;
+    wifi|wifill)
+        set_wifi_ll "$2"
+        ;;
     reload|apply)
         apply_config
+        ;;
+    crashlog)
+        /data/adb/modules/ki_optimizer/bin/ki-crashlog "$2"
+        ;;
+    netlog)
+        /data/adb/modules/ki_optimizer/bin/ki-netlog "$2"
+        ;;
+    spoof)
+        shift
+        /data/adb/modules/ki_optimizer/bin/ki-spoof "$@"
         ;;
     daemon)
         shift
@@ -368,7 +423,11 @@ EOF
         echo "  ki bypass [1|0]: Enable/Disable Bypass Charging"
         echo "  ki fc [1|0]    : Enable/Disable Fast Charge Overdrive"
         echo "  ki thermal [1|0]: Enable/Bypass Thermal Guard"
+        echo "  ki wifi [auto|1|0]: WiFi Gaming Low Latency (Auto=Perf, 1=Always On, 0=Off)"
         echo "  ki reload      : Apply settings from /sdcard/ki_optimizer.conf"
+        echo "  ki crashlog [on|off|status|export]: SOD / crash logger (off by default)"
+        echo "  ki netlog [on|off|status]: Game network latency logger (off by default)"
+        echo "  ki spoof set BRAND MANUFACTURER MODEL MARKETNAME | off | status: Device model spoof (reboot to apply)"
         echo "  ki daemon status: Show Ki-Daemon Auto Game Turbo status"
         echo "  ki daemon start : Start Ki-Daemon in background"
         echo "  ki daemon stop  : Stop Ki-Daemon"

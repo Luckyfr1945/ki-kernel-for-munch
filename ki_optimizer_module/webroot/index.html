@@ -279,6 +279,91 @@
             </select>
           </div>
         </div>
+
+        <!-- Wi-Fi Gaming Low Latency -->
+        <div class="setting-row setting-row-stack" id="row-wifi-ll">
+          <div class="setting-info">
+            <div class="setting-title-row">
+              <h3>Wi-Fi Gaming Low Latency</h3>
+              <span class="setting-badge status-detail" id="badge-wifi-ll">Checking...</span>
+            </div>
+            <p>Disables Wi-Fi power-save sleep, prevents PCIe runtime PM stalls, suppresses background scans, and prioritizes game UDP packets while screen is on.</p>
+          </div>
+          <div class="select-wrap">
+            <select class="custom-select" id="select-wifi-ll">
+              <option value="-1">Auto (Performance Mode)</option>
+              <option value="1">Always On (Screen On)</option>
+              <option value="0">Off</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Device Spoof -->
+    <section class="settings-section" aria-labelledby="device-heading">
+      <h2 class="section-title" id="device-heading">Device</h2>
+      <div class="settings-card">
+        <div class="setting-row setting-row-stack" id="row-spoof">
+          <div class="setting-info">
+            <div class="setting-title-row">
+              <h3>Device Model Spoof</h3>
+            </div>
+            <p>Changes the model, brand and market name that every app sees, games included. The codename, fingerprint and hardware stay real. Takes effect after a reboot. Changing the brand can hide Xiaomi-only features.</p>
+            <p id="spoof-status" role="status" aria-live="polite">Checking...</p>
+          </div>
+          <div class="select-wrap">
+            <select class="custom-select" id="select-spoof" aria-label="Device preset">
+              <option value="">Custom</option>
+            </select>
+          </div>
+          <div class="spoof-fields">
+            <label>Model<input class="text-input" id="spoof-model" maxlength="64" autocomplete="off" spellcheck="false"></label>
+            <label>Market name<input class="text-input" id="spoof-marketname" maxlength="64" autocomplete="off" spellcheck="false"></label>
+            <label>Brand<input class="text-input" id="spoof-brand" maxlength="64" autocomplete="off" spellcheck="false"></label>
+            <label>Manufacturer<input class="text-input" id="spoof-manufacturer" maxlength="64" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <div class="spoof-actions">
+            <button type="button" class="mglru-btn spoof-save" id="btn-spoof-save" disabled>Save · reboot to apply</button>
+            <button type="button" class="mglru-btn" id="btn-spoof-off" disabled>Turn off</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Diagnostics -->
+    <section class="settings-section" aria-labelledby="diag-heading">
+      <h2 class="section-title" id="diag-heading">Diagnostics</h2>
+      <div class="settings-card">
+        <div class="setting-row" id="row-crashlog">
+          <div class="setting-info">
+            <div class="setting-title-row">
+              <h3>SOD & Crash Logger</h3>
+            </div>
+            <p>Saves the kernel log to storage so a freeze or screen of death can be traced after a forced restart. Turn on only while hunting a bug. Applies immediately.</p>
+            <p id="crashlog-status" role="status" aria-live="polite">Checking...</p>
+          </div>
+          <label class="switch" aria-label="Toggle SOD and crash logger">
+            <input type="checkbox" id="toggle-crashlog" disabled>
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+        <button type="button" class="mglru-btn about-refresh" id="btn-crashlog-export" disabled>Export logs to Download</button>
+
+        <div class="setting-row netlog-row" id="row-netlog">
+          <div class="setting-info">
+            <div class="setting-title-row">
+              <h3>Game Network Logger</h3>
+            </div>
+            <p>While a game is open, pings the game server, the internet and your Wi-Fi router every second and records signal strength, so you can see what caused each lag spike. Logs go to Download/Ki-NetLog. Applies immediately.</p>
+            <p id="netlog-status" role="status" aria-live="polite">Checking...</p>
+          </div>
+          <label class="switch" aria-label="Toggle game network logger">
+            <input type="checkbox" id="toggle-netlog" disabled>
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="netlog-sessions" id="netlog-sessions" hidden></div>
       </div>
     </section>
 

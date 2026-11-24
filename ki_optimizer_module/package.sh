@@ -13,7 +13,7 @@ mkdir -p "$RELEASE_DIR1" "$RELEASE_DIR2"
 
 echo "Packaging $ZIP_NAME..."
 cd "$DIR"
-zip -r9 "$RELEASE_DIR1/$ZIP_NAME" . -x "*.git*" -x "package.sh"
+zip -r9 "$RELEASE_DIR1/$ZIP_NAME" . -x "*.git*" -x "package.sh" -x "charging/target/*"
 cp -f "$RELEASE_DIR1/$ZIP_NAME" "$RELEASE_DIR1/Ki-Settings.zip"
 cp -f "$RELEASE_DIR1/$ZIP_NAME" "$RELEASE_DIR2/$ZIP_NAME"
 cp -f "$RELEASE_DIR1/$ZIP_NAME" "$RELEASE_DIR2/Ki-Settings.zip"

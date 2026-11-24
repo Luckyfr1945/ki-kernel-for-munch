@@ -15,6 +15,20 @@ until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 3
 done
 
+# Boot finished: clear the device spoof boot guard.
+[ -f /data/adb/ki_spoof/boot_tries ] && sh "$MODDIR/bin/ki-spoof" booted
+
+# Resume the opt-in SOD / crash logger (off unless enabled in Ki-Settings).
+# Started right after boot so the clock is set for the archive names.
+if [ -f /data/adb/ki_crashlog/enabled ] && [ -x "$MODDIR/bin/ki-crashlog" ]; then
+    "$MODDIR/bin/ki-crashlog" start >/dev/null 2>&1
+fi
+
+# Resume the opt-in game network logger (off unless enabled in Ki-Settings).
+if [ -f /data/adb/ki_netlog/enabled ] && [ -x "$MODDIR/bin/ki-netlog" ]; then
+    "$MODDIR/bin/ki-netlog" start >/dev/null 2>&1
+fi
+
 # Ensure ki CLI is linked in root PATH without touching /system
 for bin_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/magisk; do
     if [ -d "$bin_dir" ]; then
