@@ -25,7 +25,7 @@
 #define DRIVER_VERSION "1.1.0"
 
 /* Default blocked wakelocks (safe non-critical wakeups to reduce idle battery drain) */
-#define DEFAULT_BLOCKED_WAKELOCKS "wlan_pno_wl;wlan_extscan_wl;netlink;wlan_scan_wl;hal_bluetooth_lock"
+#define DEFAULT_BLOCKED_WAKELOCKS "wlan_pno_wl;wlan_extscan_wl;netlink;scan_wake_lock;hal_bluetooth_lock"
 
 static char list_wl[LENGTH_LIST_WL] = {0};
 static char list_wl_default[LENGTH_LIST_WL_DEFAULT] = {0};
