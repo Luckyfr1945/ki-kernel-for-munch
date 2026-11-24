@@ -83,21 +83,22 @@ jobs:
           CHOSEN_OS=$(echo "${{ inputs.target_os }}" | awk '{print $1}')
           echo "target_os=$CHOSEN_OS" >> $GITHUB_OUTPUT
 
-      - name: Cache ZyCromerZ Clang
+      - name: Cache Neutron Clang 24
         id: cache-clang
         uses: actions/cache@v4
         with:
-          path: /home/runner/zyc-clang
-          key: zyc-clang-16.0.6-20260807
+          path: /home/runner/neutron-clang
+          key: neutron-clang-24-06092026
 
-      - name: Pre-download ZyCromerZ Clang 16
+      - name: Pre-download Neutron Clang 24
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
-          mkdir -p $HOME/zyc-clang
-          cd $HOME/zyc-clang
-          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
-          tar -xf Clang.tar.gz
-          rm -f Clang.tar.gz
+          sudo apt-get update && sudo apt-get install -y zstd
+          mkdir -p $HOME/neutron-clang
+          cd $HOME/neutron-clang
+          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/06092026/neutron-clang-06092026.tar.zst -o neutron-clang.tar.zst
+          tar --use-compress-program=unzstd -xf neutron-clang.tar.zst
+          rm -f neutron-clang.tar.zst
 
   build:
     name: Build (${{ matrix.device }} - ${{ matrix.variant }})
@@ -127,7 +128,7 @@ jobs:
       - name: Setup External Modules (BakaSU, NoMount, Baseband-guard)
         env:
           BAKASU_REV: 548d1dda060ca198823d8808804d01f5209ef4a9  # + .github/ci-patches/bakasu.patch
-          NOMOUNT_REV: 00e7c5d4fdbf1e58decea3522b8eb7207a46d413  # v2.3.0 (dev)
+          NOMOUNT_REV: dcd77d03e9912f397a586d7da81694d1628f170e  # upstream master
           BBG_REV: a54e0dc6cf0aff4dd87fec49644a02d2eb612905
         run: |
           set -euo pipefail
@@ -154,30 +155,30 @@ jobs:
       - name: Install Dependencies & Cross Compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex \
+          sudo apt-get install -y bc bison build-essential ccache curl flex zstd \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             libssl-dev libelf-dev zip python3 python3-pip
 
-      - name: Restore ZyCromerZ Clang Cache
+      - name: Restore Neutron Clang 24 Cache
         id: cache-clang
         uses: actions/cache@v4
         with:
-          path: /home/runner/zyc-clang
-          key: zyc-clang-16.0.6-20260807
+          path: /home/runner/neutron-clang
+          key: neutron-clang-24-06092026
 
-      - name: Setup ZyCromerZ Clang 16 (Fallback)
+      - name: Setup Neutron Clang 24 (Fallback)
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
-          mkdir -p $HOME/zyc-clang
-          cd $HOME/zyc-clang
-          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
-          tar -xf Clang.tar.gz
-          rm -f Clang.tar.gz
+          mkdir -p $HOME/neutron-clang
+          cd $HOME/neutron-clang
+          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/06092026/neutron-clang-06092026.tar.zst -o neutron-clang.tar.zst
+          tar --use-compress-program=unzstd -xf neutron-clang.tar.zst
+          rm -f neutron-clang.tar.zst
 
       - name: Compile Kernel (${{ matrix.device }} - ${{ matrix.variant }})
         run: |
-          export PATH="$HOME/zyc-clang/bin:$PATH"
+          export PATH="$HOME/neutron-clang/bin:$PATH"
           chmod +x build.sh tools/hostcc
           bash build.sh ${{ matrix.device }} ${{ matrix.variant }} ${{ needs.setup.outputs.target_os }}
 

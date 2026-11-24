@@ -9,7 +9,7 @@ set -e
 
 TARGET_DEVICE=$1
 KERNEL_NAME="Ki-kernel"
-KERNEL_VERSION="v1.6"
+KERNEL_VERSION="v1.7"
 BUILD_DATETIME=$(date +'%Y%m%d_%H%M')
 GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 
@@ -33,17 +33,19 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-# Detect Toolchain (ZyCromerZ Clang 16 > Neutron > Proton)
-ZYC_PATH=$HOME/zyc-clang/bin
+# Detect Toolchain (Neutron Clang 24 > ZyCromerZ Clang 16 > Proton)
 NEUTRON_PATH=$HOME/neutron-clang/bin
+ZYC_PATH=$HOME/zyc-clang/bin
 PROTON_PATH=$HOME/proton-clang/proton-clang-20210522/bin
 
-if [ -d "$ZYC_PATH" ]; then
+USE_LLVM_IAS=0
+if [ -d "$NEUTRON_PATH" ]; then
+    export PATH="$NEUTRON_PATH:$PATH"
+    USE_LLVM_IAS=1
+    echo "Using Toolchain: Neutron Clang ($NEUTRON_PATH)"
+elif [ -d "$ZYC_PATH" ]; then
     export PATH="$ZYC_PATH:$PATH"
     echo "Using Toolchain: ZyCromerZ Clang 16 ($ZYC_PATH)"
-elif [ -d "$NEUTRON_PATH" ]; then
-    export PATH="$NEUTRON_PATH:$PATH"
-    echo "Using Toolchain: Neutron Clang ($NEUTRON_PATH)"
 elif [ -d "$PROTON_PATH" ]; then
     export PATH="$PROTON_PATH:$PATH"
     echo "Using Toolchain: Proton Clang ($PROTON_PATH)"
@@ -52,20 +54,14 @@ else
     exit 1
 fi
 
-if ! command -v aarch64-linux-gnu-ld >/dev/null 2>&1; then
-    echo "[aarch64-linux-gnu-ld] not found in environment."
+if ! command -v ld.lld >/dev/null 2>&1 && ! command -v aarch64-linux-gnu-ld >/dev/null 2>&1; then
+    echo "[ld.lld / aarch64-linux-gnu-ld] not found in environment."
     exit 1
 fi
 
 if ! command -v clang >/dev/null 2>&1; then
     echo "[clang] not found in environment."
     exit 1
-fi
-
-# Prioritize ZyC Clang 16 if available
-if [ -d "$HOME/zyc-clang/bin" ]; then
-    export PATH="$HOME/zyc-clang/bin:$PATH"
-    echo "Using ZyC Clang: [$HOME/zyc-clang/bin]"
 fi
 
 # Enable ccache for fast compiling
@@ -90,7 +86,10 @@ echo "CCACHE_DIR: [$CCACHE_DIR]"
 export KBUILD_BUILD_USER="build-user"
 export KBUILD_BUILD_HOST="build-host 4.19.404R"
 
-MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+if [ "$USE_LLVM_IAS" -eq 1 ]; then
+    MAKE_ARGS="$MAKE_ARGS LLVM=1 LLVM_IAS=1"
+fi
 
 if [ ! -f "arch/arm64/configs/${TARGET_DEVICE}_defconfig" ]; then
     echo "Error: arch/arm64/configs/${TARGET_DEVICE}_defconfig not found."
@@ -338,7 +337,17 @@ else
 fi
 
 local_version_date_str="-${KERNEL_NAME}-${KERNEL_VERSION}"
-sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
+
+GPU_DTSI="arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi"
+GPU_DTSI_BAK=$(mktemp /tmp/kona-v2-gpu.XXXXXX.dtsi)
+cp -f "$GPU_DTSI" "$GPU_DTSI_BAK"
+cleanup_dtsi() {
+    if [ -f "$GPU_DTSI_BAK" ]; then
+        cp -f "$GPU_DTSI_BAK" "$GPU_DTSI" 2>/dev/null || true
+        rm -f "$GPU_DTSI_BAK"
+    fi
+}
+trap cleanup_dtsi EXIT
 
 # Pre-generate SELinux headers so KernelSU never races with parallel make
 if [ ! -f "security/selinux/flask.h" ]; then
@@ -355,6 +364,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     echo ">>> Compiling Kernel for AOSP / Custom ROM <<<"
     rm -rf out/
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+    scripts/config --file out/.config --set-str LOCALVERSION "${local_version_date_str}"
     apply_ksu_config
     apply_droidspaces_config
     make $MAKE_ARGS olddefconfig
@@ -386,7 +396,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/aosp/dtb_stock
     fi
     cp build_artifacts/aosp/dtb_stock build_artifacts/aosp/dtb
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    cp -f "$GPU_DTSI_BAK" "$GPU_DTSI"
 
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
     echo ">>> AOSP Build Done! <<<"
@@ -405,6 +415,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
     rm -rf out/
     rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/null || true
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
+    scripts/config --file out/.config --set-str LOCALVERSION "${local_version_date_str}"
     apply_ksu_config
     apply_droidspaces_config
 
@@ -475,7 +486,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/miui/dtb_stock
     fi
     cp build_artifacts/miui/dtb_stock build_artifacts/miui/dtb
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    cp -f "$GPU_DTSI_BAK" "$GPU_DTSI"
 
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
     if [ "$TARGET_OS" == "coloros" ]; then

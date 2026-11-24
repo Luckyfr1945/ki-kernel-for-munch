@@ -3,7 +3,7 @@
 **Build Date:** 2026-11-12  
 **Kernel Version:** Linux 4.19.325  
 **Variant:** MIUI/HyperOS, AOSP, And ColorOS/OxygenOS (Universal & Single Variants)  
-**Toolchain:** ZyCromerZ Clang 16.0.6 (LLVM 16.0.6 + GNU Binutils 2.47)  
+**Toolchain:** Neutron Clang 24.0.0git (`06092026`, LLVM 24 + Neutron LLD 24.0.0, `LLVM=1 LLVM_IAS=1`)  
 
 ---
 
@@ -12,7 +12,7 @@
 
 ### Build & Base
 - Based on LineageOS 22.2 SM8250 kernel (MIUI features and some drivers from UtsavBalar1231)
-- Clang LTO + ThinLTO, `-O3`, ARMv8.2-A Kryo 585 tuning
+- Clang ThinLTO (AOSP; `LTO_NONE` on MIUI/ColorOS), `-O2`, Cortex-A77 tuning (`-mtune=cortex-a77`)
 - Variants: KSU+SuSFS, KSU only, No-KSU — targets AOSP, MIUI/HyperOS, ColorOS/OxygenOS/RealmeUI, or Universal zip
 - `/proc/config.gz` reflects the real build config
 - Defconfigs for other SM8250 devices (alioth, apollo, lmi, umi, cmi, cas, thyme, pipa, elish, enuma, dagu, psyche) with parallel CI builds
@@ -28,10 +28,10 @@
 - uname handling for Android 16/17 BPF loaders
 
 ### Ki-Profile (In-Kernel Performance Profiles)
-- Battery / Balanced / Performance via `/sys/kernel/ki_profile/` and `/proc/ki_profile` (non-root)
-- Nodes: `mode`, `current_profile`, `active_profile`, `available_modes`, `screen_state`, `screen_off_battery`, `thermal_throttle`, `max_freq_silver/gold/prime`, `reapply`
+- Battery / Balanced / Performance via `/sys/kernel/ki_profile/` (0644 root-write) and `/proc/ki_profile`
+- Nodes: `mode`, `current_profile`, `active_profile`, `available_modes`, `screen_state`, `screen_off_battery`, `thermal_throttle`, `wifi_low_latency`, `max_freq_silver/gold/prime`, `reapply`
 - Per-cluster schedutil tuning (rate limits, hispeed, iowait boost), WALT/migration tuning, per-zone VM watermarks
-- Touch sched boost (Performance only), Thermal Guard with temperature auto-guard, auto Battery on screen-off
+- Touch sched boost (Performance only), Thermal Guard with temperature auto-guard, auto Battery on screen-off, Wi-Fi gaming low-latency integration (`wifi_low_latency`)
 
 ### CPU, Scheduler & Core
 - Schedutil default, 300 MHz idle floor, ordered-workqueue CPU input boost
@@ -68,9 +68,9 @@
 - BINFMT_MISC binary emulation
 
 ### Display
-- KCAL hardware color calibration (`kcal`, `kcal_enable`, `kcal_min`, `kcal_sat`, `kcal_val`, `kcal_cont`, `kcal_hue`, `kcal_invert`), Night Light & LiveDisplay compatible
-- Hardware DC Dimming + Qualcomm DSPP PCC exposure adjustment (`dimlayer_exposure`, `dimming`, `dc_dimming`, `disp_param`, `hbm`)
-- KTZ8866 11-bit backlight calibration, `bl-min-level=1`
+- KCAL hardware color calibration (`kcal`, `kcal_enable`, `kcal_min`, `kcal_sat`, `kcal_val`, `kcal_cont`, `kcal_hue`, `kcal_invert`) on AOSP (`techpack/display/msm/`), Night Light & LiveDisplay compatible
+- Hardware DC Dimming + Qualcomm DSPP PCC exposure adjustment (`dimlayer_exposure`, `dimming`, `dc_dimming`, `disp_param`, `hbm`) on AOSP (`techpack/display/msm/`)
+- AMOLED DCS backlight on `munch` (`bl-min-level=1`); KTZ8866 11-bit calibration for dual-ktz8866 tablet targets
 - SOD hardening: HyperOS DozeSuspend ESD handling, FOD LHBM white read guard, SDE/rotator debug panic disabled, protected OLED power rails
 
 ### GPU (Adreno 650)
@@ -86,7 +86,7 @@
 
 ### Power Management
 - Boeffla Wakelock Blocker (`/sys/kernel/wakelock_blocker/`)
-- qcacld Wi-Fi wakelocks removed
+- Standard QDF Wi-Fi wakelocks active alongside Boeffla Wakelock Blocker; Wi-Fi gaming low-latency mode (disables BMPS/RTPM suspend, enables WLM ultralow, upgrades UDP QoS, suppresses off-channel background scans)
 - Linux 5.4 PM runtime/sleep backports, CAF RPMH transaction loops
 - Reduced debug/logging in cnss2, xhci, iommu, lmh, tsens, synx, npu, clk
 
@@ -100,7 +100,7 @@
 - Focaltech touch and aw86927 haptic optimizations
 - `n0kz_attributes` for NKM compatibility
 - USB gadget: RNDIS, ECM, NCM, MIDI, UVC, UAC1/2, HID
-- Binder Freeze API + Frozen Notification (Android 17), TF_CLEAR_BUF
+- Binder `TF_CLEAR_BUF` support (page-by-page kernel mapping clear)
 - pstore/ramoops (v5.4 backport, 4MB)
 
 ### Module Security
@@ -113,7 +113,7 @@
 - Hardened split_boot / vendor_boot and A/B slot handling, TWRP/OrangeFox and EROFS ColorOS support
 
 ### Userspace Companions
-- Ki-Settings (ki_optimizer) v1.5.0 WebUI: profiles, MGLRU, bypass charging, fast charge, Screen-Off Battery, Thermal Guard, wakelock blocker, dynamic fsync, TCP congestion, VFS cache pressure, I/O scheduler, component versions
+- Ki-Settings (ki_optimizer) v1.6.0 WebUI: profiles, MGLRU, bypass charging, fast charge, Screen-Off Battery, Thermal Guard, wakelock blocker, dynamic fsync, TCP congestion, VFS cache pressure, I/O scheduler, opt-in SOD & crash logger, opt-in game network logger, device model spoof, component versions
 - `ki-charge-limit` (Rust): opt-in 80% charging limit — pauses via kernel bypass at 80%, resumes at 75%, persists across reboot
 - Ki-Daemon (Rust): Auto Game Turbo — switches to Performance + bypass charging while gaming and restores after
 - On-device test scripts: crash logger, jank, SOD and reboot stress tests
@@ -122,6 +122,10 @@
 
 ---
 
+- Wi-Fi gaming low latency (`qcacld-3.0` / `qca-wifi-host-cmn`): fixed false DHCP indication and connect runtime PM leak on `set_power_mgmt`, added `delayed_work` retry and post-enable kick so state transitions are not dropped, kept WLM at level 3 while active, restored configured `auto_bmps_timer_val` on exit, suppressed off-channel background and PNO scans while associated with healthy RSSI, and restored standard QDF wakelocks alongside Boeffla Wakelock Blocker.
+- Adreno GPU / KGSL: fixed post-POPP removal indexing (`num_pwrlevels - 2` and `perf_idx = 1` instead of the `0 Hz` sentinel / max turbo OPP), converted `kgsl_set_performance_mode()` idle timeout to `msecs_to_jiffies()`, and aligned speed-bin 3 frequencies in `kona-v2-gpu.dtsi` and `kona-v2-gpu-extreme.dtsi` with `gpu_opp_table_v2`.
+- Charging, display, binder and OPlus fixes: tightened bypass charging (immediate charge-pump disable, unplug reset) and >=49C/70C thermal guards across `smb5`, `bq27z561`, `pd_policy_manager`, `cp_qc30` and `policy_engine`; enabled `CONFIG_CHARGER_LN8000_MUNCH` in `munch_stock-defconfig`; fixed KCAL hue/invert/saturation/locking; separated Boeffla sysfs kobj attributes; tightened `/proc/ki_profile` and `/proc/mglru` to `0644`; rewrote `binder_alloc_clear_buf()` using `kmap_atomic`; fixed bounds, locking and fd leaks in `nandswap_core`, `oplus_nwpower`, `oplus_hans`, `oplus_stub_nodes`, `net/socket.c` and `e404_attributes`.
+- Switched build script and CI toolchain to Neutron Clang 24 (`06092026`, `LLVM=1 LLVM_IAS=1`).
 - Backported the `close_range` syscall (436, with `CLOSE_RANGE_CLOEXEC`). Android 17 bionic `posix_spawn(POSIX_SPAWN_CLOEXEC_DEFAULT)` calls it without a fallback, so on this 4.19 kernel netd's dnsmasq spawn died with exit 127 before exec. That left nothing answering DNS on the hotspot gateway — the real cause of "hotspot connected, no internet" on every ROM.
 - Removed the hotspot workarounds that masked the dnsmasq failure: the forced DNS DNAT to 1.1.1.1 (overrode client DNS, leaked around VPN/Private DNS, skipped nat-table rules), the tc ingress bypass on tethering interfaces (disabled Android BPF tethering offload), and the netd pipe EPIPE suppression. Verified on device: dnsmasq answers on the gateway and BPF offload forwards hotspot traffic with no errors.
 - Hotspot TTL fix: forwarded packets decrement TTL/hop limit again and the `ttl <= 1` check (ICMP time exceeded) is restored, so routing loops through tethered clients end instead of circulating forever. Only traffic from a tethered client to the carrier upstream keeps its original TTL, so carrier tethering detection stays bypassed.
@@ -130,6 +134,9 @@
   - New `oplus_hans` generic netlink family (`CONFIG_OPLUS_HANS`): answers the ofreezer daemon handshake (`LOOP_BACK`, cpuctl v2) and reports cgroup v2 freezer support, so the framework freezes apps through `cgroup.freeze`. Binder/signal unfreeze reports are not implemented (no GKI vendor hooks on 4.19).
   - Added missing stub nodes: `sched_assist_enabled`, `debug_enabled`, `lowend_plat_opt`, `sched_disable_camera_ux`, `sched_control_ux_select`, `sched_group_enabled`, `sched_ddl_enabled` (`/proc/oplus_scheduler/sched_assist/`); `async_ux_enable`, `set_last_async_ux`, `set_async_ux_after_pending`, `all_tasks_ux_sts`, `sched_debug`, `use_t_vendordata`, `unset_async_ux_inrestore`, `get_random_binder_task` (`/proc/oplus_binder/`); `heavy_task_info`, `rt_info`, `rt_num`, `cpu_min_freq`, `cpu_max_freq`, `disable_cpufreq_limit`, `fake_cpu7_cpuinfo_max_freq`, `skip_gameself_setaffinity` (`/proc/game_opt/`); `frame_boost_debug`, `input_boost_enabled`, `slide_boost_enabled`, `slide_min_util` (`/proc/sys/fbg/`).
 - Sync Droidspaces kernel requirements with upstream: enable devtmpfs and nftables in munch defconfig, fix old config names, and check the resolved config before building.
+- Ki-Settings v1.6.0: added an opt-in device model spoof (Device section, off by default, `ki spoof set|off|status`). A new `post-fs-data.sh` rewrites `ro.product[.product|.odm|.vendor|.bootimage|.system|.system_ext].{model,brand,manufacturer,marketname}` with resetprop before zygote starts, so every app sees the new model after a reboot. 29 presets with global model numbers: Xiaomi 14/14T/14T Pro/14 Ultra, 15/15T/15T Pro/15 Ultra, 17/17T/17T Pro/17 Ultra, Leica Leitzphone powered by Xiaomi, MIX Flip, POCO F6 Pro/F7 Ultra/F8 Pro/F8 Ultra, Xiaomi Pad 6S Pro 12.4/7/7 Pro/8/8 Pro/mini (these keep the real Xiaomi/POCO brand), Galaxy S24 Ultra, Galaxy S23 Ultra, ROG Phone 5, OnePlus 12 and Pixel 8 Pro, or custom values; an empty brand/manufacturer keeps the original. Codename, product name, fingerprint, cert and SoC props are never touched (HALs, OTA and Xiaomi services depend on them). A boot guard switches the spoof off if the phone fails to finish booting twice in a row.
+- Ki-Settings v1.6.0: added an opt-in game network logger (Diagnostics section, off by default, `ki netlog on|off|status`). While a game from the Ki-Daemon list is on screen it pings the game server (found from the game's own UDP/TCP sockets, skipped when it ignores ping), 1.1.1.1 and the Wi-Fi router once per second, samples Wi-Fi RSSI or cellular RSRP/SNR every 10 s and writes one CSV per session to `/sdcard/Download/Ki-NetLog`. Each session is summarised in the WebUI (average ping, jitter, loss, worst spike) and every spike over 150 ms is attributed to the Wi-Fi/router, weak signal or the server/internet.
+- Ki-Settings v1.6.0: added an opt-in SOD & crash logger (Diagnostics section, off by default, `ki crashlog on|off|status|export`). It streams the kernel log and a 30 s status line (screen, suspend stats, CPU clocks, fps) to `/data/adb/ki_crashlog`, archives the previous boot with its power-off reason after a forced restart, and exports everything to `/sdcard/Download`. pstore is wiped by a long power-key press, so this is the only way to see what happened before an SOD.
 - Ki-Settings v1.5.0: added opt-in Rust 80% charging limit (`ki-charge-limit`, bypass at 80%, resume at 75%) and component versions in WebUI.
 - NoMount upstream sync to v2.3.0 (`maxsteeel/nomount` dev `00e7c5d`): inode-based rules, pre-opened backing file cache, O(1) revalidate, UAF/OOB fixes, and rejection of rules whose backing path is virtual (#120).
 - Memory reclaim rebalance (kswapd stays on LITTLE cores 0-3 for power saving):
