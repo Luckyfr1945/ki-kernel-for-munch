@@ -1970,9 +1970,11 @@ struct hdd_context {
 	qdf_spinlock_t pm_qos_lock;
 #endif
 	struct delayed_work ki_ll_work;
+	struct mutex ki_ll_lock;
 	atomic_t ki_ll_desired;
 	bool ki_ll_applied;
 	bool ki_ll_rtpm_held;
+	bool ki_ll_suspended;
 	u8 ki_ll_retries;
 	/* number of rf chains supported by target */
 	uint32_t  num_rf_chains;

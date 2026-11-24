@@ -1065,6 +1065,19 @@ void hdd_apply_ki_wifi_low_latency(struct hdd_context *hdd_ctx,
 	hdd_set_udp_qos_upgrade_config(adapter, target_ac);
 }
 
+static void wlan_hdd_ki_ll_release_rtpm_locked(struct hdd_context *hdd_ctx)
+{
+	void *hif_ctx;
+
+	if (!hdd_ctx->ki_ll_rtpm_held)
+		return;
+
+	hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
+	if (hif_ctx)
+		hif_pm_runtime_put(hif_ctx, RTPM_ID_KI_LOW_LATENCY);
+	hdd_ctx->ki_ll_rtpm_held = false;
+}
+
 static void wlan_hdd_ki_ll_work_fn(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
@@ -1074,37 +1087,51 @@ static void wlan_hdd_ki_ll_work_fn(struct work_struct *work)
 	struct hdd_adapter *adapter, *next_adapter = NULL;
 	void *hif_ctx;
 	bool desired;
+	unsigned long flags;
 
-	if (!hdd_ctx || !hdd_ctx->wiphy)
+	if (!hdd_ctx || !hdd_ctx->wiphy || READ_ONCE(hdd_ctx->ki_ll_suspended))
 		return;
 
 	if (osif_psoc_sync_op_start(wiphy_dev(hdd_ctx->wiphy), &psoc_sync)) {
-		if (hdd_ctx->ki_ll_retries < KI_LL_MAX_RETRIES) {
-			hdd_ctx->ki_ll_retries++;
-			schedule_delayed_work(&hdd_ctx->ki_ll_work,
-					      msecs_to_jiffies(KI_LL_RETRY_MS));
-		}
-		return;
-	}
-
-	if (wlan_hdd_validate_context(hdd_ctx))
-		goto out;
-
-	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
-		if (hdd_ctx->driver_status != DRIVER_MODULES_CLOSED &&
+		spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+		if (ki_ll_hdd_ctx == hdd_ctx && !hdd_ctx->ki_ll_suspended &&
 		    hdd_ctx->ki_ll_retries < KI_LL_MAX_RETRIES) {
 			hdd_ctx->ki_ll_retries++;
 			schedule_delayed_work(&hdd_ctx->ki_ll_work,
 					      msecs_to_jiffies(KI_LL_RETRY_MS));
 		}
+		spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+		return;
+	}
+
+	if (wlan_hdd_validate_context(hdd_ctx) ||
+	    hdd_ctx->is_wiphy_suspended ||
+	    READ_ONCE(hdd_ctx->ki_ll_suspended))
+		goto out;
+
+	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
+		spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+		if (ki_ll_hdd_ctx == hdd_ctx && !hdd_ctx->ki_ll_suspended &&
+		    hdd_ctx->driver_status != DRIVER_MODULES_CLOSED &&
+		    hdd_ctx->ki_ll_retries < KI_LL_MAX_RETRIES) {
+			hdd_ctx->ki_ll_retries++;
+			schedule_delayed_work(&hdd_ctx->ki_ll_work,
+					      msecs_to_jiffies(KI_LL_RETRY_MS));
+		}
+		spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
 		goto out;
 	}
 
 	hdd_ctx->ki_ll_retries = 0;
+
+	mutex_lock(&hdd_ctx->ki_ll_lock);
+	if (READ_ONCE(hdd_ctx->ki_ll_suspended))
+		goto unlock;
+
 	desired = atomic_read(&hdd_ctx->ki_ll_desired) != 0;
 	if (desired == hdd_ctx->ki_ll_applied &&
 	    (!desired || hdd_ctx->ki_ll_rtpm_held))
-		goto out;
+		goto unlock;
 
 	hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 	if (hif_ctx) {
@@ -1128,6 +1155,8 @@ static void wlan_hdd_ki_ll_work_fn(struct work_struct *work)
 	hdd_info("ki_profile: WiFi gaming low latency %s",
 		 desired ? "enabled" : "disabled");
 
+unlock:
+	mutex_unlock(&hdd_ctx->ki_ll_lock);
 out:
 	osif_psoc_sync_op_stop(psoc_sync);
 }
@@ -1140,7 +1169,8 @@ static void wlan_hdd_ki_wifi_ll_cb(bool enable)
 	if (ki_ll_hdd_ctx) {
 		atomic_set(&ki_ll_hdd_ctx->ki_ll_desired, enable ? 1 : 0);
 		ki_ll_hdd_ctx->ki_ll_retries = 0;
-		mod_delayed_work(system_wq, &ki_ll_hdd_ctx->ki_ll_work, 0);
+		if (!ki_ll_hdd_ctx->ki_ll_suspended)
+			mod_delayed_work(system_wq, &ki_ll_hdd_ctx->ki_ll_work, 0);
 	}
 	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
 }
@@ -1157,9 +1187,91 @@ void wlan_hdd_kick_ki_wifi_ll(struct hdd_context *hdd_ctx)
 		atomic_set(&hdd_ctx->ki_ll_desired,
 			   ki_wifi_low_latency_enabled() ? 1 : 0);
 		hdd_ctx->ki_ll_retries = 0;
-		mod_delayed_work(system_wq, &hdd_ctx->ki_ll_work, 0);
+		if (!hdd_ctx->ki_ll_suspended)
+			mod_delayed_work(system_wq, &hdd_ctx->ki_ll_work, 0);
 	}
 	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+}
+
+static void wlan_hdd_suspend_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	struct hdd_adapter *adapter, *next_adapter = NULL;
+	unsigned long flags;
+
+	if (!hdd_ctx)
+		return;
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx != hdd_ctx) {
+		spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+		return;
+	}
+	hdd_ctx->ki_ll_suspended = true;
+	atomic_set(&hdd_ctx->ki_ll_desired, 0);
+	hdd_ctx->ki_ll_retries = 0;
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+
+	cancel_delayed_work_sync(&hdd_ctx->ki_ll_work);
+
+	mutex_lock(&hdd_ctx->ki_ll_lock);
+	if (hdd_ctx->ki_ll_applied &&
+	    hdd_ctx->driver_status == DRIVER_MODULES_ENABLED) {
+		hdd_for_each_adapter_dev_held_safe(hdd_ctx, adapter,
+						   next_adapter,
+						   NET_DEV_HOLD_SUSPEND_WLAN) {
+			hdd_apply_ki_wifi_low_latency(hdd_ctx, adapter, false);
+			hdd_adapter_dev_put_debug(adapter,
+						  NET_DEV_HOLD_SUSPEND_WLAN);
+		}
+	}
+	hdd_ctx->ki_ll_applied = false;
+	wlan_hdd_ki_ll_release_rtpm_locked(hdd_ctx);
+	mutex_unlock(&hdd_ctx->ki_ll_lock);
+}
+
+static void wlan_hdd_resume_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	unsigned long flags;
+	bool want;
+
+	if (!hdd_ctx)
+		return;
+
+	want = ki_wifi_low_latency_enabled();
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx == hdd_ctx) {
+		hdd_ctx->ki_ll_suspended = false;
+		atomic_set(&hdd_ctx->ki_ll_desired, want ? 1 : 0);
+		hdd_ctx->ki_ll_retries = 0;
+		if (want)
+			mod_delayed_work(system_wq, &hdd_ctx->ki_ll_work, 0);
+	}
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+}
+
+void wlan_hdd_stop_ki_wifi_ll(struct hdd_context *hdd_ctx)
+{
+	unsigned long flags;
+
+	if (!hdd_ctx)
+		return;
+
+	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
+	if (ki_ll_hdd_ctx != hdd_ctx) {
+		spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+		return;
+	}
+	hdd_ctx->ki_ll_suspended = true;
+	atomic_set(&hdd_ctx->ki_ll_desired, 0);
+	hdd_ctx->ki_ll_retries = 0;
+	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+
+	cancel_delayed_work_sync(&hdd_ctx->ki_ll_work);
+
+	mutex_lock(&hdd_ctx->ki_ll_lock);
+	wlan_hdd_ki_ll_release_rtpm_locked(hdd_ctx);
+	hdd_ctx->ki_ll_applied = false;
+	mutex_unlock(&hdd_ctx->ki_ll_lock);
 }
 
 int wlan_hdd_register_ki_wifi_ll(struct hdd_context *hdd_ctx)
@@ -1167,9 +1279,11 @@ int wlan_hdd_register_ki_wifi_ll(struct hdd_context *hdd_ctx)
 	unsigned long flags;
 
 	INIT_DELAYED_WORK(&hdd_ctx->ki_ll_work, wlan_hdd_ki_ll_work_fn);
+	mutex_init(&hdd_ctx->ki_ll_lock);
 	atomic_set(&hdd_ctx->ki_ll_desired, 0);
 	hdd_ctx->ki_ll_applied = false;
 	hdd_ctx->ki_ll_rtpm_held = false;
+	hdd_ctx->ki_ll_suspended = false;
 	hdd_ctx->ki_ll_retries = 0;
 
 	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
@@ -1182,24 +1296,28 @@ int wlan_hdd_register_ki_wifi_ll(struct hdd_context *hdd_ctx)
 void wlan_hdd_unregister_ki_wifi_ll(struct hdd_context *hdd_ctx)
 {
 	unsigned long flags;
-	void *hif_ctx;
+	bool registered;
 
 	ki_wifi_low_latency_unregister_cb(wlan_hdd_ki_wifi_ll_cb);
 
 	spin_lock_irqsave(&ki_ll_ctx_lock, flags);
-	if (ki_ll_hdd_ctx == hdd_ctx)
+	registered = (ki_ll_hdd_ctx == hdd_ctx);
+	if (registered) {
 		ki_ll_hdd_ctx = NULL;
+		hdd_ctx->ki_ll_suspended = true;
+	}
 	spin_unlock_irqrestore(&ki_ll_ctx_lock, flags);
+
+	if (!registered)
+		return;
 
 	cancel_delayed_work_sync(&hdd_ctx->ki_ll_work);
 
-	if (hdd_ctx->ki_ll_rtpm_held) {
-		hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
-		if (hif_ctx)
-			hif_pm_runtime_put(hif_ctx, RTPM_ID_KI_LOW_LATENCY);
-		hdd_ctx->ki_ll_rtpm_held = false;
-	}
+	mutex_lock(&hdd_ctx->ki_ll_lock);
+	wlan_hdd_ki_ll_release_rtpm_locked(hdd_ctx);
 	hdd_ctx->ki_ll_applied = false;
+	mutex_unlock(&hdd_ctx->ki_ll_lock);
+	mutex_destroy(&hdd_ctx->ki_ll_lock);
 }
 
 /**
@@ -2059,6 +2177,7 @@ static int _wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 	errno = __wlan_hdd_cfg80211_resume_wlan(wiphy);
 	hif_pm_runtime_put(hif_ctx, RTPM_ID_SUSPEND_RESUME);
+	wlan_hdd_resume_ki_wifi_ll(hdd_ctx);
 
 	return errno;
 }
@@ -2322,9 +2441,12 @@ static int _wlan_hdd_cfg80211_suspend_wlan(struct wiphy *wiphy,
 	if (errno)
 		return errno;
 
+	wlan_hdd_suspend_ki_wifi_ll(hdd_ctx);
+
 	errno = __wlan_hdd_cfg80211_suspend_wlan(wiphy, wow);
 	if (errno) {
 		hif_pm_runtime_put(hif_ctx, RTPM_ID_SUSPEND_RESUME);
+		wlan_hdd_resume_ki_wifi_ll(hdd_ctx);
 		return errno;
 	}
 

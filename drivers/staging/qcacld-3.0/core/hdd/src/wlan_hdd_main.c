@@ -13744,6 +13744,7 @@ int hdd_wlan_stop_modules(struct hdd_context *hdd_ctx, bool ftm_mode)
 
 		hdd_skip_acs_scan_timer_deinit(hdd_ctx);
 
+		wlan_hdd_stop_ki_wifi_ll(hdd_ctx);
 		hdd_disable_power_management();
 		if (hdd_deconfigure_cds(hdd_ctx)) {
 			hdd_err("Failed to de-configure CDS");
