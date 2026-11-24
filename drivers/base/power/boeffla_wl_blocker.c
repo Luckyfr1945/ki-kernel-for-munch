@@ -25,7 +25,7 @@
 #define DRIVER_VERSION "1.1.0"
 
 /* Default blocked wakelocks (safe non-critical wakeups to reduce idle battery drain) */
-#define DEFAULT_BLOCKED_WAKELOCKS "wlan_pno_wl;wlan_extscan_wl;netlink;qcom_rx_wakelock;IPA_WS;wlan_wow_wl"
+#define DEFAULT_BLOCKED_WAKELOCKS "wlan_pno_wl;wlan_extscan_wl;netlink;wlan_scan_wl;hal_bluetooth_lock"
 
 static char list_wl[LENGTH_LIST_WL] = {0};
 static char list_wl_default[LENGTH_LIST_WL_DEFAULT] = {0};
@@ -58,8 +58,10 @@ static bool is_critical_wakelock(const char *name)
 	    strstr(name, "qcom_rx_wakelock") ||
 	    strstr(name, "IPA_WS") ||
 	    strstr(name, "IPA_CLIENT") ||
-	    strstr(name, "wlan") ||
-	    strstr(name, "pno") ||
+	    strstr(name, "wlan_wake") ||
+	    strstr(name, "wlan_ctrl_wake") ||
+	    strstr(name, "wlan_rx_wake") ||
+	    strstr(name, "wlan_wow_wl") ||
 	    strstr(name, "dwc3") ||
 	    strstr(name, "usb") ||
 	    strstr(name, "AudioMix") ||
@@ -67,7 +69,6 @@ static bool is_critical_wakelock(const char *name)
 	    strstr(name, "Audio") ||
 	    strstr(name, "sound") ||
 	    strstr(name, "media") ||
-	    strstr(name, "wlan_wow_wl") ||
 	    strstr(name, "netmgr_wl") ||
 	    strstr(name, "msm_drm") ||
 	    strstr(name, "display"))
@@ -124,9 +125,8 @@ bool is_wakelock_blocked(const char *name)
 }
 EXPORT_SYMBOL_GPL(is_wakelock_blocked);
 
-/* sysfs: wakelock_blocker */
-static ssize_t wakelock_blocker_show(struct device *dev,
-				     struct device_attribute *attr, char *buf)
+/* sysfs shared helpers */
+static ssize_t wl_blocker_list_read(char *buf)
 {
 	unsigned long flags;
 	ssize_t ret;
@@ -138,9 +138,7 @@ static ssize_t wakelock_blocker_show(struct device *dev,
 	return ret;
 }
 
-static ssize_t wakelock_blocker_store(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t wl_blocker_list_write(const char *buf, size_t count)
 {
 	unsigned long flags;
 	size_t len = count;
@@ -157,7 +155,6 @@ static ssize_t wakelock_blocker_store(struct device *dev,
 	} else {
 		strncpy(list_wl, buf, len);
 		list_wl[len] = '\0';
-		/* Strip trailing newline */
 		if (len > 0 && list_wl[len - 1] == '\n')
 			list_wl[len - 1] = '\0';
 	}
@@ -167,18 +164,13 @@ static ssize_t wakelock_blocker_store(struct device *dev,
 
 	return count;
 }
-static DEVICE_ATTR_RW(wakelock_blocker);
 
-/* sysfs: enabled (Simple 1/0 toggle) */
-static ssize_t enabled_show(struct device *dev,
-			    struct device_attribute *attr, char *buf)
+static ssize_t wl_enabled_read(char *buf)
 {
 	return sprintf(buf, "%u\n", wl_blocker_active ? 1 : 0);
 }
 
-static ssize_t enabled_store(struct device *dev,
-			     struct device_attribute *attr,
-			     const char *buf, size_t count)
+static ssize_t wl_enabled_write(const char *buf, size_t count)
 {
 	unsigned int val;
 	unsigned long flags;
@@ -200,12 +192,8 @@ static ssize_t enabled_store(struct device *dev,
 	build_search_string(list_wl, list_wl_default);
 	return count;
 }
-static DEVICE_ATTR_RW(enabled);
 
-/* sysfs: wakelock_blocker_default & default_wakelocks */
-static ssize_t wakelock_blocker_default_show(struct device *dev,
-					     struct device_attribute *attr,
-					     char *buf)
+static ssize_t wl_default_read(char *buf)
 {
 	unsigned long flags;
 	ssize_t ret;
@@ -217,9 +205,7 @@ static ssize_t wakelock_blocker_default_show(struct device *dev,
 	return ret;
 }
 
-static ssize_t wakelock_blocker_default_store(struct device *dev,
-					      struct device_attribute *attr,
-					      const char *buf, size_t count)
+static ssize_t wl_default_write(const char *buf, size_t count)
 {
 	unsigned long flags;
 	size_t len = count;
@@ -239,32 +225,18 @@ static ssize_t wakelock_blocker_default_store(struct device *dev,
 
 	return count;
 }
-static DEVICE_ATTR_RW(wakelock_blocker_default);
 
-static struct device_attribute dev_attr_default_wakelocks = {
-	.attr = { .name = "default_wakelocks", .mode = 0644 },
-	.show = wakelock_blocker_default_show,
-	.store = wakelock_blocker_default_store,
-};
-
-/* sysfs: version */
-static ssize_t version_show(struct device *dev,
-			    struct device_attribute *attr, char *buf)
+static ssize_t wl_version_read(char *buf)
 {
 	return sprintf(buf, "%s\n", DRIVER_VERSION);
 }
-static DEVICE_ATTR_RO(version);
 
-/* sysfs: debug */
-static ssize_t debug_show(struct device *dev,
-			  struct device_attribute *attr, char *buf)
+static ssize_t wl_debug_read(char *buf)
 {
 	return sprintf(buf, "%u\n", wl_blocker_debug ? 1 : 0);
 }
 
-static ssize_t debug_store(struct device *dev,
-			   struct device_attribute *attr,
-			   const char *buf, size_t count)
+static ssize_t wl_debug_write(const char *buf, size_t count)
 {
 	unsigned int val;
 
@@ -273,6 +245,76 @@ static ssize_t debug_store(struct device *dev,
 
 	wl_blocker_debug = !!val;
 	return count;
+}
+
+/* sysfs: device attributes (/sys/devices/virtual/misc/boeffla_wakelock_blocker/) */
+static ssize_t wakelock_blocker_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	return wl_blocker_list_read(buf);
+}
+
+static ssize_t wakelock_blocker_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	return wl_blocker_list_write(buf, count);
+}
+static DEVICE_ATTR_RW(wakelock_blocker);
+
+static ssize_t enabled_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return wl_enabled_read(buf);
+}
+
+static ssize_t enabled_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	return wl_enabled_write(buf, count);
+}
+static DEVICE_ATTR_RW(enabled);
+
+static ssize_t wakelock_blocker_default_show(struct device *dev,
+					     struct device_attribute *attr,
+					     char *buf)
+{
+	return wl_default_read(buf);
+}
+
+static ssize_t wakelock_blocker_default_store(struct device *dev,
+					      struct device_attribute *attr,
+					      const char *buf, size_t count)
+{
+	return wl_default_write(buf, count);
+}
+static DEVICE_ATTR_RW(wakelock_blocker_default);
+
+static struct device_attribute dev_attr_default_wakelocks = {
+	.attr = { .name = "default_wakelocks", .mode = 0644 },
+	.show = wakelock_blocker_default_show,
+	.store = wakelock_blocker_default_store,
+};
+
+static ssize_t version_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return wl_version_read(buf);
+}
+static DEVICE_ATTR_RO(version);
+
+static ssize_t debug_show(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+	return wl_debug_read(buf);
+}
+
+static ssize_t debug_store(struct device *dev,
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	return wl_debug_write(buf, count);
 }
 static DEVICE_ATTR_RW(debug);
 
@@ -288,6 +330,92 @@ static struct attribute *boeffla_wl_blocker_attrs[] = {
 
 static const struct attribute_group boeffla_wl_blocker_group = {
 	.attrs = boeffla_wl_blocker_attrs,
+};
+
+/* sysfs: kobject attributes (/sys/kernel/wakelock_blocker/) */
+static ssize_t kobj_enabled_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return wl_enabled_read(buf);
+}
+
+static ssize_t kobj_enabled_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	return wl_enabled_write(buf, count);
+}
+
+static ssize_t kobj_wakelock_blocker_show(struct kobject *kobj,
+					  struct kobj_attribute *attr, char *buf)
+{
+	return wl_blocker_list_read(buf);
+}
+
+static ssize_t kobj_wakelock_blocker_store(struct kobject *kobj,
+					   struct kobj_attribute *attr,
+					   const char *buf, size_t count)
+{
+	return wl_blocker_list_write(buf, count);
+}
+
+static ssize_t kobj_default_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return wl_default_read(buf);
+}
+
+static ssize_t kobj_default_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	return wl_default_write(buf, count);
+}
+
+static ssize_t kobj_version_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return wl_version_read(buf);
+}
+
+static ssize_t kobj_debug_show(struct kobject *kobj,
+			       struct kobj_attribute *attr, char *buf)
+{
+	return wl_debug_read(buf);
+}
+
+static ssize_t kobj_debug_store(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t count)
+{
+	return wl_debug_write(buf, count);
+}
+
+static struct kobj_attribute kobj_attr_enabled =
+	__ATTR(enabled, 0644, kobj_enabled_show, kobj_enabled_store);
+static struct kobj_attribute kobj_attr_wakelock_blocker =
+	__ATTR(wakelock_blocker, 0644, kobj_wakelock_blocker_show, kobj_wakelock_blocker_store);
+static struct kobj_attribute kobj_attr_wakelock_blocker_default =
+	__ATTR(wakelock_blocker_default, 0644, kobj_default_show, kobj_default_store);
+static struct kobj_attribute kobj_attr_default_wakelocks =
+	__ATTR(default_wakelocks, 0644, kobj_default_show, kobj_default_store);
+static struct kobj_attribute kobj_attr_version =
+	__ATTR(version, 0444, kobj_version_show, NULL);
+static struct kobj_attribute kobj_attr_debug =
+	__ATTR(debug, 0644, kobj_debug_show, kobj_debug_store);
+
+static struct attribute *wl_blocker_kobj_attrs[] = {
+	&kobj_attr_enabled.attr,
+	&kobj_attr_wakelock_blocker.attr,
+	&kobj_attr_wakelock_blocker_default.attr,
+	&kobj_attr_default_wakelocks.attr,
+	&kobj_attr_version.attr,
+	&kobj_attr_debug.attr,
+	NULL,
+};
+
+static const struct attribute_group wl_blocker_kobj_group = {
+	.attrs = wl_blocker_kobj_attrs,
 };
 
 static struct miscdevice boeffla_wl_blocker_device = {
@@ -317,8 +445,14 @@ static int __init boeffla_wl_blocker_init(void)
 
 	/* Also expose cleanly under /sys/kernel/wakelock_blocker/ */
 	wl_blocker_kobj = kobject_create_and_add("wakelock_blocker", kernel_kobj);
-	if (wl_blocker_kobj)
-		ret = sysfs_create_group(wl_blocker_kobj, &boeffla_wl_blocker_group);
+	if (wl_blocker_kobj) {
+		ret = sysfs_create_group(wl_blocker_kobj, &wl_blocker_kobj_group);
+		if (ret) {
+			pr_warn("boeffla_wl_blocker: kobj sysfs_create_group failed (%d)\n", ret);
+			kobject_put(wl_blocker_kobj);
+			wl_blocker_kobj = NULL;
+		}
+	}
 
 	/* Default: OFF initially */
 	list_wl[0] = '\0';
