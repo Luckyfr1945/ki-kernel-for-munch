@@ -106,9 +106,9 @@ static ssize_t fts_glove_mode_show(
 
 	mutex_lock(&input_dev->mutex);
 	fts_read_reg(FTS_REG_GLOVE_MODE_EN, &val);
-	count = snprintf(buf + count, PAGE_SIZE, "Glove Mode:%s\n",
-					 ts_data->glove_mode ? "On" : "Off");
-	count += snprintf(buf + count, PAGE_SIZE, "Glove Reg(0xC0):%d\n", val);
+	count = scnprintf(buf, PAGE_SIZE, "Glove Mode:%s\n",
+					  ts_data->glove_mode ? "On" : "Off");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Glove Reg(0xC0):%d\n", val);
 	mutex_unlock(&input_dev->mutex);
 
 	return count;
@@ -124,17 +124,25 @@ static ssize_t fts_glove_mode_store(
 	if (FTS_SYSFS_ECHO_ON(buf)) {
 		if (!ts_data->glove_mode) {
 			FTS_DEBUG("enter glove mode");
-			ret = fts_ex_mode_switch(MODE_GLOVE, ENABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->glove_mode = ENABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_GLOVE, ENABLE);
+				if (ret >= 0) {
+					ts_data->glove_mode = ENABLE;
+				}
 			}
 		}
 	} else if (FTS_SYSFS_ECHO_OFF(buf)) {
 		if (ts_data->glove_mode) {
 			FTS_DEBUG("exit glove mode");
-			ret = fts_ex_mode_switch(MODE_GLOVE, DISABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->glove_mode = DISABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_GLOVE, DISABLE);
+				if (ret >= 0) {
+					ts_data->glove_mode = DISABLE;
+				}
 			}
 		}
 	}
@@ -154,9 +162,9 @@ static ssize_t fts_cover_mode_show(
 
 	mutex_lock(&input_dev->mutex);
 	fts_read_reg(FTS_REG_COVER_MODE_EN, &val);
-	count = snprintf(buf + count, PAGE_SIZE, "Cover Mode:%s\n",
-					 ts_data->cover_mode ? "On" : "Off");
-	count += snprintf(buf + count, PAGE_SIZE, "Cover Reg(0xC1):%d\n", val);
+	count = scnprintf(buf, PAGE_SIZE, "Cover Mode:%s\n",
+					  ts_data->cover_mode ? "On" : "Off");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Cover Reg(0xC1):%d\n", val);
 	mutex_unlock(&input_dev->mutex);
 
 	return count;
@@ -172,17 +180,25 @@ static ssize_t fts_cover_mode_store(
 	if (FTS_SYSFS_ECHO_ON(buf)) {
 		if (!ts_data->cover_mode) {
 			FTS_DEBUG("enter cover mode");
-			ret = fts_ex_mode_switch(MODE_COVER, ENABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->cover_mode = ENABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_COVER, ENABLE);
+				if (ret >= 0) {
+					ts_data->cover_mode = ENABLE;
+				}
 			}
 		}
 	} else if (FTS_SYSFS_ECHO_OFF(buf)) {
 		if (ts_data->cover_mode) {
 			FTS_DEBUG("exit cover mode");
-			ret = fts_ex_mode_switch(MODE_COVER, DISABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->cover_mode = DISABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_COVER, DISABLE);
+				if (ret >= 0) {
+					ts_data->cover_mode = DISABLE;
+				}
 			}
 		}
 	}
@@ -201,9 +217,9 @@ static ssize_t fts_charger_mode_show(
 
 	mutex_lock(&input_dev->mutex);
 	fts_read_reg(FTS_REG_CHARGER_MODE_EN, &val);
-	count = snprintf(buf + count, PAGE_SIZE, "Charger Mode:%s\n",
-					 ts_data->charger_mode ? "On" : "Off");
-	count += snprintf(buf + count, PAGE_SIZE, "Charger Reg(0x8B):%d\n", val);
+	count = scnprintf(buf, PAGE_SIZE, "Charger Mode:%s\n",
+					  ts_data->charger_mode ? "On" : "Off");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Charger Reg(0x8B):%d\n", val);
 	mutex_unlock(&input_dev->mutex);
 
 	return count;
@@ -219,22 +235,30 @@ static ssize_t fts_charger_mode_store(
 	if (FTS_SYSFS_ECHO_ON(buf)) {
 		if (!ts_data->charger_mode) {
 			FTS_DEBUG("enter charger mode");
-			ret = fts_ex_mode_switch(MODE_CHARGER, ENABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->charger_mode = ENABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_CHARGER, ENABLE);
+				if (ret >= 0) {
+					ts_data->charger_mode = ENABLE;
+				}
 			}
 		}
 	} else if (FTS_SYSFS_ECHO_OFF(buf)) {
 		if (ts_data->charger_mode) {
 			FTS_DEBUG("exit charger mode");
-			ret = fts_ex_mode_switch(MODE_CHARGER, DISABLE);
-			if (ret >= 0) {
+			if (ts_data->suspended) {
 				ts_data->charger_mode = DISABLE;
+			} else {
+				ret = fts_ex_mode_switch(MODE_CHARGER, DISABLE);
+				if (ret >= 0) {
+					ts_data->charger_mode = DISABLE;
+				}
 			}
 		}
 	}
 
-	FTS_DEBUG("charger mode:%d", ts_data->glove_mode);
+	FTS_DEBUG("charger mode:%d", ts_data->charger_mode);
 	return count;
 }
 

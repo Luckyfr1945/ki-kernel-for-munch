@@ -109,9 +109,9 @@ static ssize_t fts_gesture_show(
 
 	mutex_lock(&ts_data->input_dev->mutex);
 	fts_read_reg(FTS_REG_GESTURE_EN, &val);
-	count = snprintf(buf, PAGE_SIZE, "Gesture Mode:%s\n",
-					 ts_data->gesture_mode ? "On" : "Off");
-	count += snprintf(buf + count, PAGE_SIZE, "Reg(0xD0)=%d\n", val);
+	count = scnprintf(buf, PAGE_SIZE, "Gesture Mode:%s\n",
+					  ts_data->gesture_mode ? "On" : "Off");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Reg(0xD0)=%d\n", val);
 	mutex_unlock(&ts_data->input_dev->mutex);
 
 	return count;
@@ -145,19 +145,19 @@ static ssize_t fts_gesture_buf_show(
 	struct fts_gesture_st *gesture = &fts_gesture_data;
 
 	mutex_lock(&input_dev->mutex);
-	count = snprintf(buf, PAGE_SIZE, "Gesture ID:%d\n", gesture->gesture_id);
-	count += snprintf(buf + count, PAGE_SIZE, "Gesture PointNum:%d\n",
-					  gesture->point_num);
-	count += snprintf(buf + count, PAGE_SIZE, "Gesture Points Buffer:\n");
+	count = scnprintf(buf, PAGE_SIZE, "Gesture ID:%d\n", gesture->gesture_id);
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Gesture PointNum:%d\n",
+					   gesture->point_num);
+	count += scnprintf(buf + count, PAGE_SIZE - count, "Gesture Points Buffer:\n");
 
 	/* save point data,max:6 */
 	for (i = 0; i < FTS_GESTURE_POINTS_MAX; i++) {
-		count += snprintf(buf + count, PAGE_SIZE, "%3d(%4d,%4d) ", i,
-						  gesture->coordinate_x[i], gesture->coordinate_y[i]);
+		count += scnprintf(buf + count, PAGE_SIZE - count, "%3d(%4d,%4d) ", i,
+						   gesture->coordinate_x[i], gesture->coordinate_y[i]);
 		if ((i + 1) % 4 == 0)
-			count += snprintf(buf + count, PAGE_SIZE, "\n");
+			count += scnprintf(buf + count, PAGE_SIZE - count, "\n");
 	}
-	count += snprintf(buf + count, PAGE_SIZE, "\n");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "\n");
 	mutex_unlock(&input_dev->mutex);
 
 	return count;

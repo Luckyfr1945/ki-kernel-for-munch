@@ -86,6 +86,7 @@ static void fts_read_palm_data(u8 reg_value);
 static int fts_palm_sensor_cmd(int value);
 static void fts_palm_mode_recovery(struct fts_ts_data *ts_data);
 static void fts_game_mode_recovery(struct fts_ts_data *ts_data);
+static void fts_init_touch_mode_data(struct fts_ts_data *ts_data);
 
 #define PANEL_ORIENTATION_DEGREE_0 	0	/* normal portrait orientation */
 #define PANEL_ORIENTATION_DEGREE_90	1	/* anticlockwise 90 degrees */
@@ -120,7 +121,8 @@ int fts_wait_tp_to_valid(void)
 
 	do {
 		ret = fts_read_reg(FTS_REG_CHIP_ID, &idh);
-		ret = fts_read_reg(FTS_REG_CHIP_ID2, &idl);
+		if (ret >= 0)
+			ret = fts_read_reg(FTS_REG_CHIP_ID2, &idl);
 		if ((ret < 0) || (idh != chip_idh) || (idl != chip_idl)) {
 			FTS_DEBUG("TP Not Ready,ReadData:0x%02x%02x", idh, idl);
 		} else if ((idh == chip_idh) && (idl == chip_idl)) {
@@ -331,7 +333,8 @@ static int fts_get_ic_information(struct fts_ts_data *ts_data)
 
 	do {
 		ret = fts_read_reg(FTS_REG_CHIP_ID, &chip_id[0]);
-		ret = fts_read_reg(FTS_REG_CHIP_ID2, &chip_id[1]);
+		if (ret >= 0)
+			ret = fts_read_reg(FTS_REG_CHIP_ID2, &chip_id[1]);
 		if ((ret < 0) || (0x0 == chip_id[0]) || (0x0 == chip_id[1])) {
 			FTS_DEBUG("chip id read invalid, read:0x%02x%02x",
 					  chip_id[0], chip_id[1]);
@@ -547,6 +550,8 @@ static int fts_input_report_b(struct fts_ts_data *data)
 		} else {
 			input_report_key(data->input_dev, BTN_TOUCH, 1);
 		}
+	} else if (!touchs) {
+		lpm_disable_for_dev(false, LPM_EVENT_INPUT);
 	}
 
 	input_sync(data->input_dev);
@@ -746,6 +751,8 @@ static void fts_irq_read_report(void)
 		fts_input_report_a(ts_data);
 #endif
 		mutex_unlock(&ts_data->report_mutex);
+	} else if (!ts_data->touchs) {
+		lpm_disable_for_dev(false, LPM_EVENT_INPUT);
 	}
 
 #if FTS_ESDCHECK_EN
@@ -1076,6 +1083,7 @@ static int fts_power_source_init(struct fts_ts_data *ts_data)
 			if (ret) {
 				FTS_ERROR("vcc_i2c regulator set_vtg failed,ret=%d", ret);
 				regulator_put(ts_data->vcc_i2c);
+				ts_data->vcc_i2c = NULL;
 			}
 		}
 	}
@@ -1425,9 +1433,9 @@ static void tpdbg_shutdown(struct fts_ts_data *ts_data, bool enable)
 	if (enable) {
 		ts_data->poweroff_on_sleep = true;
 		cancel_work_sync(&fts_data->resume_work);
-		fts_ts_suspend(&ts_data->client->dev);
+		fts_ts_suspend(ts_data->dev);
 	} else {
-		fts_ts_resume(&ts_data->client->dev);
+		fts_ts_resume(ts_data->dev);
 	}
 }
 
@@ -1435,9 +1443,9 @@ static void tpdbg_suspend(struct fts_ts_data *ts_data, bool enable)
 {
 	if (enable) {
 		cancel_work_sync(&fts_data->resume_work);
-		fts_ts_suspend(&ts_data->client->dev);
+		fts_ts_suspend(ts_data->dev);
 	} else {
-		fts_ts_resume(&ts_data->client->dev);
+		fts_ts_resume(ts_data->dev);
 	}
 }
 
@@ -1450,40 +1458,24 @@ static int tpdbg_open(struct inode *inode, struct file *file)
 
 static ssize_t tpdbg_read(struct file *file, char __user *buf, size_t size, loff_t *ppos)
 {
+	const char *str = "cmd support as below:\n"
+			  "\necho \"irq-disable\" or \"irq-enable\" to ctrl irq\n"
+			  "\necho \"tp-suspend-en\" or \"tp-suspend-off\" to ctrl panel in or off suspend status\n"
+			  "\necho \"tp-sd-en\" or \"tp-sd-off\" to ctrl panel in or off sleep status\n";
 
-	const char *str = "cmd support as below:\n \
-				\necho \"irq-disable\" or \"irq-enable\" to ctrl irq\n \
-				\necho \"tp-suspend-en\" or \"tp-suspend-off\" to ctrl panel in or off suspend status\n \
-				\necho \"tp-sd-en\" or \"tp-sd-off\" to ctrl panel in or off sleep status\n";
-
-	loff_t pos = *ppos;
-	int len = strlen(str);
-
-	if (pos < 0)
-		return -EINVAL;
-	if (pos >= len)
-		return 0;
-
-	if (copy_to_user(buf, str, len))
-		return -EFAULT;
-
-	*ppos = pos + len;
-
-	return len;
+	return simple_read_from_buffer(buf, size, ppos, str, strlen(str));
 }
 
 static ssize_t tpdbg_write(struct file *file, const char __user *buf, size_t size, loff_t *ppos)
 {
 	struct fts_ts_data *ts_data = file->private_data;
-	char *cmd = kzalloc(size, GFP_KERNEL);
-	int ret = size;
+	char cmd[64] = { 0 };
 
-	if (!cmd)
-		return -ENOMEM;
-	if (copy_from_user(cmd, buf, size)) {
-		ret = -EFAULT;
-		goto out;
-	}
+	if (!ts_data || size == 0 || size >= sizeof(cmd))
+		return -EINVAL;
+	if (copy_from_user(cmd, buf, size))
+		return -EFAULT;
+	cmd[size] = '\0';
 
 	if (!strncmp(cmd, "irq-disable", 11))
 		fts_irq_disable();
@@ -1495,13 +1487,10 @@ static ssize_t tpdbg_write(struct file *file, const char __user *buf, size_t siz
 		tpdbg_suspend(ts_data, false);
 	else if (!strncmp(cmd, "tp-sd-en", 8))
 		tpdbg_shutdown(ts_data, true);
-	else if (!strncmp(cmd, "tp-sd-off", 9)) {
+	else if (!strncmp(cmd, "tp-sd-off", 9))
 		tpdbg_shutdown(ts_data, false);
-	}
-out:
-	kfree(cmd);
 
-	return ret;
+	return size;
 }
 
 static int tpdbg_release(struct inode *inode, struct file *file)
@@ -1540,6 +1529,10 @@ static void fts_power_supply_work(struct work_struct *work)
 
 	if (ts_data == NULL)
 		return;
+	if (ts_data->suspended) {
+		FTS_DEBUG("TP is suspended, defer usb status until resume");
+		return;
+	}
 #if defined(CONFIG_PM) && FTS_PATCH_COMERR_PM
 	if (ts_data->pm_suspend) {
 		FTS_ERROR("TP is in suspend mode, don't set usb status!");
@@ -1550,18 +1543,21 @@ static void fts_power_supply_work(struct work_struct *work)
 	mutex_lock(&ts_data->power_supply_lock);
 	charger_mode = !!power_supply_is_system_supplied();
 	if (charger_mode != ts_data->charger_mode) {
-		ts_data->charger_mode = charger_mode;
 		FTS_INFO("%s %d\n", __func__, charger_mode);
 		if (charger_mode) {
 			FTS_INFO("%s USB is exist\n", __func__);
 			ret = fts_write_reg(FTS_REG_CHARGER_MODE_EN, 1);
 			if (ret < 0)
 				FTS_ERROR("set power supply exist fail, ret=%d", ret);
+			else
+				ts_data->charger_mode = charger_mode;
 		} else {
 			FTS_INFO("%s USB is not exist\n", __func__);
 			ret = fts_write_reg(FTS_REG_CHARGER_MODE_EN, 0);
 			if (ret < 0)
 				FTS_ERROR("set power supply not exist fail, ret=%d", ret);
+			else
+				ts_data->charger_mode = charger_mode;
 		}
 	}
 	mutex_unlock(&ts_data->power_supply_lock);
@@ -1602,6 +1598,10 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
 	spin_lock_init(&ts_data->irq_lock);
 	mutex_init(&ts_data->report_mutex);
 	mutex_init(&ts_data->bus_lock);
+#ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
+	mutex_init(&ts_data->cmd_update_mutex);
+	fts_init_touch_mode_data(ts_data);
+#endif
 
 	/* Init communication interface */
 	ret = fts_bus_init(ts_data);
@@ -1848,13 +1848,14 @@ static int fts_ts_suspend(struct device *dev)
 		return 0;
 	}
 
-	ts_data->suspended = true;
 	cancel_delayed_work_sync(&ts_data->init_work);
 
 	if (ts_data->fw_loading) {
 		FTS_INFO("fw upgrade in process, can't suspend");
 		return 0;
 	}
+
+	ts_data->suspended = true;
 
 #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
 	if (ts_data->palm_sensor_switch) {
@@ -1872,8 +1873,10 @@ static int fts_ts_suspend(struct device *dev)
 	ts_data->poweroff_on_sleep = true;
 #endif
 	if (ts_data->gesture_mode && !ts_data->poweroff_on_sleep) {
+		ts_data->gesture_suspended = true;
 		fts_gesture_suspend(ts_data);
 	} else {
+		ts_data->gesture_suspended = false;
 		fts_irq_disable();
 
 		FTS_INFO("make TP enter into sleep mode");
@@ -1892,7 +1895,6 @@ static int fts_ts_suspend(struct device *dev)
 	}
 
 	fts_release_all_finger();
-	ts_data->suspended = true;
 	FTS_FUNC_EXIT();
 	return 0;
 }
@@ -1924,14 +1926,8 @@ static int fts_ts_resume(struct device *dev)
 	fts_esdcheck_resume();
 #endif
 
-#ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
-	if (ts_data->palm_sensor_switch) {
-		FTS_INFO("palm sensor OFF, switch to ON");
-		fts_palm_sensor_cmd(1);
-	}
-#endif
-
-	if (ts_data->gesture_mode && !ts_data->poweroff_on_sleep) {
+	if (ts_data->gesture_suspended) {
+		ts_data->gesture_suspended = false;
 		fts_gesture_resume(ts_data);
 	} else {
 		fts_irq_enable();
@@ -1939,6 +1935,17 @@ static int fts_ts_resume(struct device *dev)
 
 	ts_data->poweroff_on_sleep = false;
 	ts_data->suspended = false;
+
+#ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
+	fts_game_mode_recovery(ts_data);
+	if (ts_data->palm_sensor_switch) {
+		FTS_INFO("palm sensor OFF, switch to ON");
+		fts_palm_sensor_cmd(1);
+	}
+#endif
+	if (ts_data->ts_workqueue)
+		queue_work(ts_data->ts_workqueue, &ts_data->power_supply_work);
+
 	FTS_FUNC_EXIT();
 	return 0;
 }
@@ -2050,6 +2057,8 @@ static char fts_touch_vendor_read(void)
 static void fts_init_touch_mode_data(struct fts_ts_data *ts_data)
 {
 	struct fts_ts_platform_data *pdata = ts_data->pdata;
+
+	memset(&xiaomi_touch_interfaces, 0x00, sizeof(struct xiaomi_touch_interface));
 
 	/* Touch Game Mode Switch */
 	xiaomi_touch_interfaces.touch_mode[Touch_Game_Mode][GET_DEF_VALUE] = 0;
@@ -2169,8 +2178,13 @@ static void fts_update_touchmode_data(struct fts_ts_data *ts_data)
 	bool game_mode_state_change = false;
 	u8 cmd[7] = {0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
+	if (!ts_data || ts_data->suspended) {
+		FTS_DEBUG("TP is suspended, defer touch mode data until resume");
+		return;
+	}
+
 #if defined(CONFIG_PM) && FTS_PATCH_COMERR_PM
-	if (ts_data && ts_data->pm_suspend) {
+	if (ts_data->pm_suspend) {
 		FTS_ERROR("SYSTEM is in suspend mode, don't set touch mode data");
 		return;
 	}
@@ -2410,7 +2424,7 @@ static ssize_t fts_double_tap_store(struct kobject *kobj,
 
 	if (fts_data) {
 		fts_update_gesture_state(fts_data, GESTURE_DOUBLETAP, !!val);
-		if (fts_data->suspended && fts_data->gesture_mode)
+		if (fts_data->suspended && fts_data->gesture_suspended && fts_data->gesture_mode)
 			fts_gesture_recovery(fts_data);
 	}
 
@@ -2468,8 +2482,6 @@ static int fts_ts_probe(struct spi_device *spi)
 	}
 
 #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
-	mutex_init(&ts_data->cmd_update_mutex);
-	memset(&xiaomi_touch_interfaces, 0x00, sizeof(struct xiaomi_touch_interface));
 	xiaomi_touch_interfaces.panel_vendor_read = fts_panel_vendor_read;
 	xiaomi_touch_interfaces.panel_color_read = fts_panel_color_read;
 	xiaomi_touch_interfaces.panel_display_read = fts_panel_display_read;
@@ -2482,7 +2494,6 @@ static int fts_ts_probe(struct spi_device *spi)
 	xiaomi_touch_interfaces.palm_sensor_write = fts_palm_sensor_write;
 	xiaomi_touch_interfaces.get_touch_super_resolution_factor = fts_get_touch_super_resolution_factor;
 
-	fts_init_touch_mode_data(ts_data);
 	xiaomitouch_register_modedata(&xiaomi_touch_interfaces);
 #if defined(CONFIG_TOUCHSCREEN_COMMON)
 	tp_common_set_double_tap_ops(&fts_double_tap_ops);
