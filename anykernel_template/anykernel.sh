@@ -46,7 +46,7 @@ home="$AKHOME";
 
 ui_print " ";
 ui_print "  ===========================================";
-ui_print "  |          Ki-Kernel v1.6 | munch         |";
+ui_print "  |          Ki-Kernel v1.7 | munch         |";
 ui_print "  |                                         |";
 ui_print "  ===========================================";
 ui_print " ";
@@ -375,14 +375,6 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         IS_RECOVERY=1;
     fi;
 
-    GETEVENT_CMD="";
-    for p in getevent /system/bin/getevent /sbin/getevent /bin/getevent /system/xbin/getevent /vendor/bin/getevent; do
-        if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then
-            GETEVENT_CMD="$p";
-            break;
-        fi;
-    done;
-
     if [ -f /sdcard/oc ] || [ -f /tmp/oc ] || [ -f /data/oc ] || [ -f /sdcard/Download/oc ]; then
         ui_print " -> Trigger file detected: Using OC + Undervolt (683 MHz)";
         CHOSEN_DTB="oc";
@@ -396,58 +388,88 @@ if [ -f "$AKHOME/dtb_oc" ] && [ -f "$AKHOME/dtb_stock" ]; then
         ui_print " Waiting for key press (15s timeout, default: Stock)...";
 
         CHOSEN_DTB="stock";
-        EVENT_FILE="/tmp/ak3_events";
-        rm -f "$EVENT_FILE";
 
-        GETEVENT_PID="";
-        if [ -n "$GETEVENT_CMD" ]; then
-            $GETEVENT_CMD -l > "$EVENT_FILE" 2>/dev/null &
-            GETEVENT_PID=$!;
-        fi;
+        # Two independent key readers run side by side; the first one that
+        # sees a press wins, so the selector works in TWRP and AERA alike:
+        #  1. getevent (what works in TWRP). update-binary has bind-mounted the
+        #     ROM's /system over the recovery's, so this is the ROM's getevent,
+        #     which only starts if the ROM's runtime APEX mounted (not in AERA).
+        #  2. The bundled busybox reading /dev/input directly (what works in
+        #     AERA); its "cat" writes each event out immediately.
+        BB="";
+        [ -x "$AKHOME/tools/busybox" ] && BB="$AKHOME/tools/busybox";
+
+        KEYDIR="/tmp/ak3_keys";
+        GETEVENT_FILE="/tmp/ak3_getevent";
+        rm -rf "$KEYDIR" "$GETEVENT_FILE";
+        mkdir -p "$KEYDIR";
+
+        READER_PIDS="";
+        for p in getevent /system/bin/getevent /sbin/getevent /bin/getevent /system/xbin/getevent /vendor/bin/getevent; do
+            if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then
+                $p -l > "$GETEVENT_FILE" 2>/dev/null &
+                READER_PIDS="$READER_PIDS $!";
+                break;
+            fi;
+        done;
+
+        # struct input_event is 16 bytes for a 32-bit reader, 24 for 64-bit.
+        REC=16;
+        [ -n "$BB" ] && [ "$($BB od -An -tu1 -j4 -N1 "$BB" 2>/dev/null | $BB tr -d ' ')" = "2" ] && REC=24;
+
+        for dev in /dev/input/event*; do
+            [ -c "$dev" ] || continue;
+            $BB cat "$dev" > "$KEYDIR/${dev##*/}" 2>/dev/null &
+            READER_PIDS="$READER_PIDS $!";
+        done;
 
         timeout=15;
-        start=0;
-        if [ -x "$AKHOME/tools/busybox" ]; then
-            start=$("$AKHOME/tools/busybox" date +%s 2>/dev/null || echo 0);
-        else
-            start=$(date +%s 2>/dev/null || echo 0);
-        fi;
+        start=$($BB date +%s 2>/dev/null || echo 0);
 
         while :; do
-            if [ -s "$EVENT_FILE" ]; then
-                if grep -qiE "KEY_VOLUMEUP|0073" "$EVENT_FILE" 2>/dev/null; then
-                    ui_print "  Selected : OC + Undervolt (683-150 MHz)" " ";
-                    CHOSEN_DTB="oc";
-                    break;
-                elif grep -qiE "KEY_VOLUMEDOWN|0072" "$EVENT_FILE" 2>/dev/null; then
-                    ui_print "  Selected : Stock Default (670 MHz)" " ";
-                    CHOSEN_DTB="stock";
-                    break;
+            key="";
+            # getevent -l prints key names; match only those (a bare "0073"
+            # also matches touch coordinates such as ABS_MT_POSITION_X 00000073).
+            if [ -s "$GETEVENT_FILE" ]; then
+                if $BB grep -q "KEY_VOLUMEUP" "$GETEVENT_FILE" 2>/dev/null; then
+                    key="up";
+                elif $BB grep -q "KEY_VOLUMEDOWN" "$GETEVENT_FILE" 2>/dev/null; then
+                    key="down";
                 fi;
             fi;
+            # Raw events, fields as u16: ... type code value_lo value_hi.
+            # Match a press (value 1) of KEY_VOLUMEUP (115) / KEY_VOLUMEDOWN (114).
+            [ -z "$key" ] && key=$(for f in "$KEYDIR"/*; do
+                      $BB od -An -tu2 -w$REC -v "$f" 2>/dev/null;
+                  done | $BB awk -v n=$((REC / 2)) '
+                      $(n - 3) == 1 && $(n - 1) == 1 && $n == 0 {
+                          if ($(n - 2) == 115) { print "up"; exit }
+                          if ($(n - 2) == 114) { print "down"; exit }
+                      }');
 
-            now=0;
-            if [ -x "$AKHOME/tools/busybox" ]; then
-                now=$("$AKHOME/tools/busybox" date +%s 2>/dev/null || echo 0);
-            else
-                now=$(date +%s 2>/dev/null || echo 0);
-            fi;
+            case "$key" in
+                up)
+                    ui_print "  Selected : OC + Undervolt (683-150 MHz)" " ";
+                    CHOSEN_DTB="oc";
+                    break;;
+                down)
+                    ui_print "  Selected : Stock Default (670 MHz)" " ";
+                    CHOSEN_DTB="stock";
+                    break;;
+            esac;
 
+            now=$($BB date +%s 2>/dev/null || echo 0);
             if [ "$start" -gt 0 ] && [ "$now" -gt 0 ] && [ $((now - start)) -ge $timeout ]; then
                 ui_print "  ! Timeout reached, defaulting to: Stock Default (670 MHz)" " ";
                 CHOSEN_DTB="stock";
                 break;
             fi;
 
-            if [ -x "$AKHOME/tools/busybox" ]; then
-                "$AKHOME/tools/busybox" sleep 0.1 2>/dev/null || sleep 1 2>/dev/null || true;
-            else
-                sleep 1 2>/dev/null || true;
-            fi;
+            $BB sleep 0.2 2>/dev/null || sleep 1 2>/dev/null || true;
         done;
 
-        [ -n "$GETEVENT_PID" ] && kill -9 "$GETEVENT_PID" 2>/dev/null;
-        rm -f "$EVENT_FILE";
+        [ -n "$READER_PIDS" ] && kill $READER_PIDS 2>/dev/null;
+        rm -rf "$KEYDIR" "$GETEVENT_FILE";
     else
         # Flashing from booted Android (KernelSU / Magisk / FKM app)
         ui_print " -> Flashing via App (non-recovery): Using default Stock Default (670 MHz)";
@@ -534,7 +556,8 @@ chmod 664 /sys/class/power_supply/battery/battery_charging_enabled 2>/dev/null
 chmod 664 /sys/class/power_supply/battery/charging_enabled 2>/dev/null
 
 # Kernel tweak nodes permissions (controlled by user via Ki-Kernel Settings module)
-chmod 666 /sys/kernel/ki_profile/* 2>/dev/null
+chmod 644 /sys/kernel/ki_profile/* 2>/dev/null
+chmod 666 /sys/kernel/ki_profile/thermal_throttle 2>/dev/null
 chmod 666 /dev/ntsync 2>/dev/null
 chmod 666 /sys/devices/platform/kcal_ctrl.0/* 2>/dev/null
 chmod 644 /sys/kernel/mm/lru_gen/* 2>/dev/null
@@ -561,25 +584,16 @@ chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/disp_param 2>/
 chmod 666 /sys/devices/virtual/mi_display/disp_feature/disp-DSI-*/dimming 2>/dev/null
 chmod 666 /sys/block/zram0/comp_algorithm 2>/dev/null
 
-# Fast charge nodes permission & active defaults (15W Type-C Laptop, 40W QC3.5, 67W PPS Turbo)
+# Fast charge nodes permissions (values controlled by Ki-Kernel Settings module / defaults)
 chmod 666 /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/screen_on_fast_charge 2>/dev/null
-echo 1 > /sys/kernel/fast_charge/screen_on_fast_charge 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
 chmod 666 /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/force_fast_charge 2>/dev/null
-echo 1 > /sys/kernel/fast_charge/force_fast_charge 2>/dev/null
 chmod 666 /proc/fast_charge 2>/dev/null
-echo 1 > /proc/fast_charge 2>/dev/null
 chmod 666 /sys/class/power_supply/usb/pd_authentication 2>/dev/null
-echo 1 > /sys/class/power_supply/usb/pd_authentication 2>/dev/null
 chmod 666 /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
-echo 1 > /sys/class/power_supply/battery/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
-echo 1 > /sys/class/power_supply/bms/fastcharge_mode 2>/dev/null
 chmod 666 /sys/class/power_supply/bms/authentic 2>/dev/null
-echo 1 > /sys/class/power_supply/bms/authentic 2>/dev/null
 
 # Wakelock blocker permissions
 chmod 666 /sys/kernel/wakelock_blocker/wake_lock 2>/dev/null
@@ -606,8 +620,6 @@ chmod 666 /proc/devinfo/lcd* 2>/dev/null
 chmod 666 /sys/class/oplus_chg/*/* 2>/dev/null
 
 # Tethering & Hotspot fixes for AOSP Android 16+
-device_config put netd override_tether_enable_bpf_offload false 2>/dev/null
-device_config put connectivity tether_enable_bpf_offload false 2>/dev/null
 setprop net.tethering.noprofile 1 2>/dev/null
 
 EOF
