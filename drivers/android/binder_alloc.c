@@ -766,24 +766,52 @@ static void binder_free_buf_locked(struct binder_alloc *alloc,
  *
  * Free the buffer allocated via binder_alloc_new_buffer()
  */
+static struct page *binder_alloc_get_page(struct binder_alloc *alloc,
+					  struct binder_buffer *buffer,
+					  binder_size_t buffer_offset,
+					  pgoff_t *pgoffp);
+
 /**
- * binder_alloc_clear_buf() - zero a binder buffer's user-space data region
+ * binder_alloc_clear_buf() - zero a binder buffer's data region
  * @alloc:	binder_alloc for this proc
  * @buffer:	buffer to clear
  *
- * Zero the user-space data region of @buffer to prevent sensitive IPC payload
- * data from leaking into subsequent transactions that reuse the same memory.
- * Called when the transaction has TF_CLEAR_BUF set.
- * The buffer user_data is a contiguous mmap region so a single clear_user()
- * covers the full allocation.
+ * Zero the data region of @buffer via kernel page mappings to prevent
+ * sensitive IPC payload data from leaking into subsequent transactions that
+ * reuse the same memory. Called when the transaction has TF_CLEAR_BUF set.
+ * The binder user mmap is read-only (PROT_READ), so clear_user() would fail.
  */
 void binder_alloc_clear_buf(struct binder_alloc *alloc,
 			    struct binder_buffer *buffer)
 {
-	size_t bytes = binder_alloc_buffer_size(alloc, buffer);
+	size_t bytes;
+	binder_size_t offset = 0;
 
-	if (bytes && buffer->user_data)
-		clear_user(buffer->user_data, bytes);
+	mutex_lock(&alloc->mutex);
+	if (!buffer->user_data || !alloc->pages ||
+	    buffer->user_data < alloc->buffer) {
+		mutex_unlock(&alloc->mutex);
+		return;
+	}
+
+	bytes = binder_alloc_buffer_size(alloc, buffer);
+	while (bytes) {
+		unsigned long size;
+		struct page *page;
+		pgoff_t pgoff;
+		void *base_ptr;
+
+		page = binder_alloc_get_page(alloc, buffer, offset, &pgoff);
+		size = min_t(size_t, bytes, PAGE_SIZE - pgoff);
+		if (page) {
+			base_ptr = kmap_atomic(page);
+			memset(base_ptr + pgoff, 0, size);
+			kunmap_atomic(base_ptr);
+		}
+		bytes -= size;
+		offset += size;
+	}
+	mutex_unlock(&alloc->mutex);
 }
 
 void binder_alloc_free_buf(struct binder_alloc *alloc,
