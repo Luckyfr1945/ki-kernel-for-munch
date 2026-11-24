@@ -110,7 +110,7 @@ static int hans_handler(struct sk_buff *skb, struct genl_info *info)
 	const struct hans_message *data;
 
 	/* The ofreezer 1.0 daemon omits the trailing 'persistent' field */
-	if (len < NLA_HDRLEN || nla_type(nla) != HANS_ATTR_MSG_GENL ||
+	if (!nla_ok(nla, len) || nla_type(nla) != HANS_ATTR_MSG_GENL ||
 	    nla_len(nla) < (int)(sizeof(*data) - sizeof(int)))
 		return -EINVAL;
 

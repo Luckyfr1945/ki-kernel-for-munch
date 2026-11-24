@@ -13,7 +13,10 @@
 #include <linux/version.h>
 #include <linux/notifier.h>
 #include <linux/sysctl.h>
+#include <linux/workqueue.h>
+#include <linux/mutex.h>
 
+static DEFINE_MUTEX(oplus_buf_lock);
 static char ufs_read_mb[32] = "0\n";
 static char ufs_write_mb[32] = "0\n";
 static char lcd_info[64] = "unknown\n";
@@ -35,7 +38,8 @@ static struct device *oplus_chg_gauge_dev;
 static struct kobject *oplus_display_kobj;
 
 static struct notifier_block psy_nb;
-static bool usb_attr_added = false;
+static struct work_struct usb_attr_work;
+static atomic_t usb_attr_added = ATOMIC_INIT(0);
 
 #define QUICK_CHARGE_NORMAL	0
 #define QUICK_CHARGE_FAST	1
@@ -77,8 +81,42 @@ static int get_usb_type(void) {
 
 	psy = power_supply_get_by_name("usb");
 	if (psy) {
-		if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &val))
+		if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &val)) {
 			usb_type = val.intval;
+		} else {
+			if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_PD_ACTIVE, &val)) {
+				if (val.intval == POWER_SUPPLY_PD_PPS_ACTIVE) {
+					power_supply_put(psy);
+					return POWER_SUPPLY_USB_TYPE_PD_PPS;
+				}
+				if (val.intval == POWER_SUPPLY_PD_ACTIVE) {
+					power_supply_put(psy);
+					return POWER_SUPPLY_USB_TYPE_PD;
+				}
+			}
+			if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_REAL_TYPE, &val)) {
+				switch (val.intval) {
+				case POWER_SUPPLY_TYPE_USB_PD:
+				case POWER_SUPPLY_TYPE_USB_PD_DRP:
+					usb_type = POWER_SUPPLY_USB_TYPE_PD;
+					break;
+				case POWER_SUPPLY_TYPE_USB_DCP:
+				case POWER_SUPPLY_TYPE_USB_HVDCP:
+				case POWER_SUPPLY_TYPE_USB_HVDCP_3:
+				case POWER_SUPPLY_TYPE_USB_HVDCP_3P5:
+					usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+					break;
+				case POWER_SUPPLY_TYPE_USB_CDP:
+					usb_type = POWER_SUPPLY_USB_TYPE_CDP;
+					break;
+				case POWER_SUPPLY_TYPE_USB:
+					usb_type = POWER_SUPPLY_USB_TYPE_SDP;
+					break;
+				default:
+					break;
+				}
+			}
+		}
 		power_supply_put(psy);
 	}
 	return usb_type;
@@ -91,7 +129,12 @@ static int get_adapter_power_mw(void) {
 
     psy = power_supply_get_by_name("usb");
     if (psy) {
-        if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_POWER_MAX, &val)) {
+        if (power_supply_get_property(psy, POWER_SUPPLY_PROP_POWER_MAX, &val) ||
+            val.intval <= 0) {
+            val.intval = 0;
+            if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_APDO_MAX, &val))
+                power_w = val.intval;
+        } else {
             power_w = val.intval;
         }
         power_supply_put(psy);
@@ -150,25 +193,50 @@ static const char *health_str(int h) {
 	}
 }
 
+static ssize_t oplus_strbuf_read(char __user *buf, size_t count, loff_t *ppos,
+				 const char *src, size_t cap)
+{
+    char tmp[64];
+    size_t len;
+
+    if (cap > sizeof(tmp)) return -EINVAL;
+    mutex_lock(&oplus_buf_lock);
+    len = strnlen(src, cap - 1);
+    memcpy(tmp, src, len);
+    mutex_unlock(&oplus_buf_lock);
+
+    return simple_read_from_buffer(buf, count, ppos, tmp, len);
+}
+
+static ssize_t oplus_strbuf_write(const char __user *buf, size_t count,
+				  char *dst, size_t cap)
+{
+    char tmp[64];
+
+    if (count >= cap || cap > sizeof(tmp)) return -EINVAL;
+    if (copy_from_user(tmp, buf, count)) return -EFAULT;
+    tmp[count] = '\0';
+
+    mutex_lock(&oplus_buf_lock);
+    memcpy(dst, tmp, count + 1);
+    mutex_unlock(&oplus_buf_lock);
+
+    return count;
+}
+
 static ssize_t ufs_read_mb_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
-    return simple_read_from_buffer(buf, count, ppos, ufs_read_mb, strlen(ufs_read_mb));
+    return oplus_strbuf_read(buf, count, ppos, ufs_read_mb, sizeof(ufs_read_mb));
 }
 static ssize_t ufs_read_mb_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
-    if (count >= sizeof(ufs_read_mb)) return -EINVAL;
-    if (copy_from_user(ufs_read_mb, buf, count)) return -EFAULT;
-    ufs_read_mb[count] = '\0';
-    return count;
+    return oplus_strbuf_write(buf, count, ufs_read_mb, sizeof(ufs_read_mb));
 }
 static const struct file_operations ufs_read_mb_fops = { .read = ufs_read_mb_read, .write = ufs_read_mb_write };
 
 static ssize_t ufs_write_mb_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
-    return simple_read_from_buffer(buf, count, ppos, ufs_write_mb, strlen(ufs_write_mb));
+    return oplus_strbuf_read(buf, count, ppos, ufs_write_mb, sizeof(ufs_write_mb));
 }
 static ssize_t ufs_write_mb_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
-    if (count >= sizeof(ufs_write_mb)) return -EINVAL;
-    if (copy_from_user(ufs_write_mb, buf, count)) return -EFAULT;
-    ufs_write_mb[count] = '\0';
-    return count;
+    return oplus_strbuf_write(buf, count, ufs_write_mb, sizeof(ufs_write_mb));
 }
 static const struct file_operations ufs_write_mb_fops = { .read = ufs_write_mb_read, .write = ufs_write_mb_write };
 
@@ -276,13 +344,10 @@ static struct ctl_table fbg_sysctl_root[] = {
 static struct ctl_table_header *fbg_sysctl_header;
 
 static ssize_t devinfo_lcd_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
-    return simple_read_from_buffer(buf, count, ppos, lcd_info, strlen(lcd_info));
+    return oplus_strbuf_read(buf, count, ppos, lcd_info, sizeof(lcd_info));
 }
 static ssize_t devinfo_lcd_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
-    if (count >= sizeof(lcd_info)) return -EINVAL;
-    if (copy_from_user(lcd_info, buf, count)) return -EFAULT;
-    lcd_info[count] = '\0';
-    return count;
+    return oplus_strbuf_write(buf, count, lcd_info, sizeof(lcd_info));
 }
 static const struct file_operations devinfo_lcd_fops = { .read = devinfo_lcd_read, .write = devinfo_lcd_write };
 
@@ -808,13 +873,21 @@ static ssize_t chg_up_limit_store(struct device *dev, struct device_attribute *a
 static DEVICE_ATTR(chg_up_limit, 0664, chg_up_limit_show, chg_up_limit_store);
 
 static DECLARE_WAIT_QUEUE_HEAD(mutual_cmd_wq);
+static atomic_t mutual_cmd_ready = ATOMIC_INIT(0);
 static int mutual_cmd_val = 0;
 static ssize_t mutual_cmd_show(struct device *dev, struct device_attribute *attr, char *buf) {
-    wait_event_interruptible_timeout(mutual_cmd_wq, false, msecs_to_jiffies(30000));
-    return sprintf(buf, "%d\n", mutual_cmd_val);
+    wait_event_interruptible_timeout(mutual_cmd_wq,
+        atomic_read(&mutual_cmd_ready) != 0, msecs_to_jiffies(30000));
+    atomic_set(&mutual_cmd_ready, 0);
+    return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(mutual_cmd_val));
 }
 static ssize_t mutual_cmd_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
-    if (sscanf(buf, "%d", &mutual_cmd_val) == 1) wake_up_interruptible(&mutual_cmd_wq);
+    int val;
+    if (kstrtoint(buf, 10, &val) == 0) {
+        WRITE_ONCE(mutual_cmd_val, val);
+        atomic_set(&mutual_cmd_ready, 1);
+        wake_up_interruptible(&mutual_cmd_wq);
+    }
     return count;
 }
 static DEVICE_ATTR_RW(mutual_cmd);
@@ -1020,10 +1093,13 @@ static void try_add_usb_attr(void) {
 	struct power_supply *usb_psy;
 	struct kernfs_node *kn;
 
-	if (usb_attr_added) return;
+	if (atomic_cmpxchg(&usb_attr_added, 0, 1) != 0)
+		return;
 	usb_psy = power_supply_get_by_name("usb");
-	if (!usb_psy) return;
-	usb_attr_added = true;
+	if (!usb_psy) {
+		atomic_set(&usb_attr_added, 0);
+		return;
+	}
 
 	if (usb_psy->dev.kobj.sd) {
 		kn = sysfs_get_dirent(usb_psy->dev.kobj.sd, dev_attr_quick_charge_type.attr.name);
@@ -1033,13 +1109,20 @@ static void try_add_usb_attr(void) {
 			return;
 		}
 	}
-	device_create_file(&usb_psy->dev, &dev_attr_quick_charge_type);
+	if (device_create_file(&usb_psy->dev, &dev_attr_quick_charge_type))
+		atomic_set(&usb_attr_added, 0);
 	power_supply_put(usb_psy);
+}
+
+static void try_add_usb_attr_work(struct work_struct *work) {
+	try_add_usb_attr();
 }
 
 static int psy_notifier_call(struct notifier_block *nb, unsigned long event, void *data) {
 	struct power_supply *psy = data;
-	if (psy && !strcmp(psy->desc->name, "usb")) try_add_usb_attr();
+	if (psy && psy->desc && !strcmp(psy->desc->name, "usb") &&
+	    !atomic_read(&usb_attr_added))
+		schedule_work(&usb_attr_work);
 	return NOTIFY_OK;
 }
 
@@ -1249,6 +1332,7 @@ static int __init oplus_stub_nodes_init(void) {
         }
     }
 
+	INIT_WORK(&usb_attr_work, try_add_usb_attr_work);
 	psy_nb.notifier_call = psy_notifier_call;
 	rc = power_supply_reg_notifier(&psy_nb);
 	if (rc) pr_warn("oplus_charger: psy notifier failed: %d\n", rc);
@@ -1260,8 +1344,9 @@ static int __init oplus_stub_nodes_init(void) {
 
 static void __exit oplus_stub_nodes_exit(void) {
 	power_supply_unreg_notifier(&psy_nb);
+	cancel_work_sync(&usb_attr_work);
 
-	if (usb_attr_added) {
+	if (atomic_read(&usb_attr_added)) {
 		struct power_supply *usb_psy = power_supply_get_by_name("usb");
 		if (usb_psy) {
 			device_remove_file(&usb_psy->dev, &dev_attr_quick_charge_type);
@@ -1275,31 +1360,31 @@ static void __exit oplus_stub_nodes_exit(void) {
 		kobject_put(oplus_display_kobj);
 	}
 
-	if (oplus_chg_class && oplus_chg_gauge_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_gauge_dev)) {
 		sysfs_remove_group(&oplus_chg_gauge_dev->kobj, &oplus_chg_gauge_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 5));
 	}
-	if (oplus_chg_class && oplus_chg_wireless_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_wireless_dev)) {
 		sysfs_remove_group(&oplus_chg_wireless_dev->kobj, &oplus_chg_wireless_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 4));
 	}
-	if (oplus_chg_class && oplus_chg_ac_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_ac_dev)) {
 		sysfs_remove_group(&oplus_chg_ac_dev->kobj, &oplus_chg_ac_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 3));
 	}
-	if (oplus_chg_class && oplus_chg_common_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_common_dev)) {
 		sysfs_remove_group(&oplus_chg_common_dev->kobj, &oplus_chg_common_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 2));
 	}
-	if (oplus_chg_class && oplus_chg_usb_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_usb_dev)) {
 		sysfs_remove_group(&oplus_chg_usb_dev->kobj, &oplus_chg_usb_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 1));
 	}
-	if (oplus_chg_class && oplus_chg_battery_dev) {
+	if (!IS_ERR_OR_NULL(oplus_chg_class) && !IS_ERR_OR_NULL(oplus_chg_battery_dev)) {
 		sysfs_remove_group(&oplus_chg_battery_dev->kobj, &oplus_chg_battery_group);
 		device_destroy(oplus_chg_class, MKDEV(0, 0));
 	}
-	if (oplus_chg_class) class_destroy(oplus_chg_class);
+	if (!IS_ERR_OR_NULL(oplus_chg_class)) class_destroy(oplus_chg_class);
 	if (fbg_sysctl_header) unregister_sysctl_table(fbg_sysctl_header);
 }
 

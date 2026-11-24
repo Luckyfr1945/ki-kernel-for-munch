@@ -331,7 +331,7 @@ static inline void ns_data_check(void)
 	struct kstatfs st;
 
 	if (kern_path("/data", LOOKUP_FOLLOW, &kpath))
-		goto out;
+		return;
 	if (vfs_statfs(&kpath, &st))
 		goto out;
 
@@ -355,7 +355,7 @@ static inline void ns_data_check(void)
 */
 
 out:
-	return;
+	path_put(&kpath);
 }
 
 static void ns_life_ctrl_update(bool timer)
@@ -454,7 +454,7 @@ static void enqueue_reclaim_data(pid_t nr, struct reclaim_info *info)
 		return;
 	if (waken_task->state == TASK_INTERRUPTIBLE)
 		wake_up_process(waken_task);
-	if (nswapdropd->state == TASK_INTERRUPTIBLE)
+	if (nswapdropd && nswapdropd->state == TASK_INTERRUPTIBLE)
 		wake_up_process(nswapdropd);
 }
 
@@ -559,9 +559,6 @@ retry:
 	down_read(&mm->mmap_sem);
 
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
-		if (vma->vm_flags & VM_NANDSWAP)
-			continue;
-
 		if (is_vm_hugetlb_page(vma))
 			continue;
 
@@ -576,7 +573,6 @@ retry:
 					   &walk, vma);
 		if (err == -1)
 			break;
-		vma->vm_flags |= VM_NANDSWAP;
 	}
 
 	flush_tlb_mm(mm);
@@ -713,10 +709,8 @@ cont:
 		}
 
 		list_add(&page->lru, &page_list);
-#ifdef CONFIG_OPLUS_SYSTEM_KERNEL_QCOM
 		inc_node_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
-#endif
 		isolated++;
 		rp->nr_scanned++;
 
@@ -814,7 +808,6 @@ static ssize_t reclaim_anon(struct task_struct *task)
 		rp.vma = vma;
 		walk_page_range_hook(mm, vma->vm_start, vma->vm_end,
 				     &reclaim_walk, &rp);
-		vma->vm_flags &= ~VM_NANDSWAP;
 		if (!rp.nr_to_reclaim)
 			break;
 	}
@@ -925,12 +918,12 @@ static int drop_swapcache_pte(pmd_t *pmd, unsigned long start,
 		page = find_get_page(swapper_space, swp_offset(entry));
 		if (!page)
 			continue;
-		put_page(page);
 
-		if (page_count(page) > 1)
+		if (page_count(page) > 2 || isolate_lru_page(page)) {
+			put_page(page);
 			continue;
-		if (isolate_lru_page(page))
-			continue;
+		}
+		put_page(page);
 
 		/*
 		 * MADV_FREE clears pte dirty bit and then marks the page
@@ -947,10 +940,8 @@ static int drop_swapcache_pte(pmd_t *pmd, unsigned long start,
 
 		list_add(&page->lru, &page_list);
 
-#ifdef CONFIG_OPLUS_SYSTEM_KERNEL_QCOM
 		inc_node_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
-#endif
 		rp->nr_scanned++;
 	}
 
@@ -1064,6 +1055,7 @@ static int swapdropd_fn(void *p)
 {
 	struct reclaim_data data;
 	struct task_struct *task;
+	pid_t pid;
 	bool retry;
 
 	set_freezable();
@@ -1090,11 +1082,13 @@ static int swapdropd_fn(void *p)
 				msleep(30);
 			} while (nswapind && (nswapind->state == TASK_RUNNING));
 
+			pid = task->pid;
+
 			retry = drop_swapcache_task(task);
 			put_task_struct(task);
 
 			if (retry) {
-				enqueue_reclaim_data(task->pid, &drop_info);
+				enqueue_reclaim_data(pid, &drop_info);
 				msleep_interruptible(1000);
 			}
 		}
@@ -1113,8 +1107,9 @@ static inline unsigned long nandswap_type(void)
 {
 	unsigned long type;
 	for (type = 0; type < MAX_SWAPFILES; type++)
-		if ((swap_info[type]->flags & SWP_NANDSWAP) &&
-			(swap_info[type]->flags & SWP_USED))
+		if (swap_info[type] &&
+		    (swap_info[type]->flags & SWP_NANDSWAP) &&
+		    (swap_info[type]->flags & SWP_USED))
 			break;
 
 	return type;
@@ -1466,13 +1461,13 @@ static struct file_operations stat_info_fops = {
 
 static inline void ns_create_proc(struct proc_dir_entry *parent) {
 	if (parent) {
-		proc_create("swap_ctl", S_IRUGO | S_IWUGO, parent,
+		proc_create("swap_ctl", 0644, parent,
 				&swap_ctl_fops);
-		proc_create("fn_enable", S_IRUGO | S_IWUGO, parent,
+		proc_create("fn_enable", 0644, parent,
 				&fn_enable_fops);
-		proc_create("swap_limit", S_IWUGO, parent,
+		proc_create("swap_limit", 0200, parent,
 				&swap_limit_fops);
-		proc_create("dev_life", S_IWUGO, parent,
+		proc_create("dev_life", 0200, parent,
 				&dev_life_fops);
 		proc_create("life_protect", S_IRUGO, parent,
 				&life_protect_fops);

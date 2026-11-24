@@ -92,16 +92,23 @@ static int __init parse_e404_args(char *str)
 }
 early_param("e404_args", parse_e404_args);
 
+static DEFINE_SPINLOCK(e404_blocklist_lock);
+
 bool e404_comm_blocked(const char *comm)
 {
+    unsigned long flags;
     int i;
 
+    spin_lock_irqsave(&e404_blocklist_lock, flags);
     for (i = 0; i < blocked_cnt; i++) {
         if (!strncmp(comm,
                      blocked[i],
-                     blocked_len[i]))
+                     blocked_len[i])) {
+            spin_unlock_irqrestore(&e404_blocklist_lock, flags);
             return true;
+        }
     }
+    spin_unlock_irqrestore(&e404_blocklist_lock, flags);
 
     return false;
 }
@@ -109,9 +116,12 @@ EXPORT_SYMBOL_GPL(e404_comm_blocked);
 
 static void e404_rebuild_blocklist(char *buf)
 {
+    unsigned long flags;
     char *p = buf;
     char *token;
+    int count = 0;
 
+    spin_lock_irqsave(&e404_blocklist_lock, flags);
     blocked_cnt = 0;
     while ((token = strsep(&p, ",")) &&
            blocked_cnt < E404_MAX_BLOCKED) {
@@ -126,30 +136,40 @@ static void e404_rebuild_blocklist(char *buf)
         blocked_len[blocked_cnt] =
             strlen(blocked[blocked_cnt]);
 
-        pr_alert("E404: blocking '%s'\n", blocked[blocked_cnt]);
         blocked_cnt++;
     }
-    pr_alert("E404: total blocked apps = %d\n", blocked_cnt);
+    count = blocked_cnt;
+    spin_unlock_irqrestore(&e404_blocklist_lock, flags);
+    pr_alert("E404: total blocked apps = %d\n", count);
 }
 
 static ssize_t bg_blocklist_show(struct kobject *kobj,
                                  struct kobj_attribute *attr, char *buf)
 {
-    return scnprintf(buf, PAGE_SIZE, "%s\n",
-                     e404_data.bg_blocklist);
+    unsigned long flags;
+    ssize_t ret;
+
+    spin_lock_irqsave(&e404_blocklist_lock, flags);
+    ret = scnprintf(buf, PAGE_SIZE, "%s\n",
+                    e404_data.bg_blocklist);
+    spin_unlock_irqrestore(&e404_blocklist_lock, flags);
+    return ret;
 }
 
 static ssize_t bg_blocklist_store(struct kobject *kobj,
                                   struct kobj_attribute *attr,
                                   const char *buf, size_t count)
 {
+    unsigned long flags;
     char tmp[E404_BLOCKLIST_STRLEN];
 
     strscpy(tmp, buf, sizeof(tmp));
     strreplace(tmp, '\n', '\0');
+    spin_lock_irqsave(&e404_blocklist_lock, flags);
     strscpy(e404_data.bg_blocklist,
             tmp,
             sizeof(e404_data.bg_blocklist));
+    spin_unlock_irqrestore(&e404_blocklist_lock, flags);
 
     e404_rebuild_blocklist(tmp);
 

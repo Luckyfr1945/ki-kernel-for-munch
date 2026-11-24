@@ -15,6 +15,8 @@
 #include <linux/ipc_logging.h>
 #include <linux/atomic.h>
 #include <linux/err.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/netlink.h>
@@ -144,6 +146,7 @@ static struct sock *oplus_nwpower_sock;
 static u64 wakeup_unsl_msg[KERNEL_UNSL_MONITOR_LEN] = {0};
 
 #define KERNEL_UNSL_APP_WAKEUP_LEN 300
+static DEFINE_SPINLOCK(nwpower_blacklist_lock);
 static u32 blacklist_len = 0;
 static u32 blacklist_uid[KERNEL_UNSL_APP_WAKEUP_LEN] = {0};
 
@@ -183,44 +186,77 @@ static uid_t get_uid_from_sock(const struct sock *sk)
 }
 
 static void nwpower_unsl_blacklist_reject(void) {
+	u64 *send_buf = NULL;
+	size_t send_len = sizeof(blacklist_reject_uid);
+
+	spin_lock_bh(&nwpower_blacklist_lock);
 	if (record_blacklist_reject_index > 0) {
 		blacklist_reject_uid[0] = record_blacklist_reject_index;
-		nwpower_send_to_user(NW_POWER_REPORT_BLACK_REJECT, (char*)blacklist_reject_uid, sizeof(blacklist_reject_uid));
-		memset(blacklist_reject_uid, 0x0, OPLUS_MAX_RECORD_BLACK_REJECT_LEN * sizeof(u32));
+		send_buf = kmemdup(blacklist_reject_uid, send_len, GFP_ATOMIC);
+		memset(blacklist_reject_uid, 0x0, sizeof(blacklist_reject_uid));
 		record_blacklist_reject_index = 0;
+	}
+	spin_unlock_bh(&nwpower_blacklist_lock);
+
+	if (send_buf) {
+		nwpower_send_to_user(NW_POWER_REPORT_BLACK_REJECT,
+				     (char *)send_buf, send_len);
+		kfree(send_buf);
 	}
 }
 
 extern bool oplus_check_socket_in_blacklist(int is_input, struct socket *sock) {
-	int i = 0;
+	u32 i = 0;
 	uid_t uid = 0;
 	struct timespec now_ts;
+	bool matched = false;
+	u64 *flush_buf = NULL;
 
-	if (early_rom_type != 3 || blacklist_len <= 0)
+	if (early_rom_type != 3 || READ_ONCE(blacklist_len) == 0)
 		return false;
 
-	if (sock && sock->sk && (sock->sk->sk_family == 2 || sock->sk->sk_family == 10)){
+	if (sock && sock->sk && (sock->sk->sk_family == 2 || sock->sk->sk_family == 10)) {
 		uid = get_uid_from_sock(sock->sk);
-		if(uid == 0) {
+		if (uid == 0) {
 			return false;
 		}
 		now_ts = current_kernel_time();
+		spin_lock_bh(&nwpower_blacklist_lock);
 		for (i = 0; i < blacklist_len; i++) {
-			if(blacklist_uid[i] == uid) {
+			if (blacklist_uid[i] == uid) {
 				if (is_input != 1) {
 					if (record_blacklist_reject_index >= OPLUS_MAX_RECORD_BLACK_REJECT_LEN) {
-						nwpower_unsl_blacklist_reject();
+						blacklist_reject_uid[0] = record_blacklist_reject_index;
+						flush_buf = kmemdup(blacklist_reject_uid,
+								    sizeof(blacklist_reject_uid),
+								    GFP_ATOMIC);
+						memset(blacklist_reject_uid, 0x0,
+						       sizeof(blacklist_reject_uid));
+						record_blacklist_reject_index = 0;
 					}
 					if (record_blacklist_reject_index < OPLUS_MAX_RECORD_BLACK_REJECT_LEN) {
-						blacklist_reject_uid[record_blacklist_reject_index*2+1] = now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000;
-						blacklist_reject_uid[record_blacklist_reject_index*2+2] = (u64)uid << 32 | is_input;
+						blacklist_reject_uid[record_blacklist_reject_index * 2 + 1] =
+							now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000;
+						blacklist_reject_uid[record_blacklist_reject_index * 2 + 2] =
+							(u64)uid << 32 | is_input;
 						record_blacklist_reject_index++;
 					}
 				}
-				printk("[oplus_netcontroller] blacklist reject, stamp=%ld, is_input=%d, uid=%u",
-					now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000, is_input, uid);
-				return true;
+				matched = true;
+				break;
 			}
+		}
+		spin_unlock_bh(&nwpower_blacklist_lock);
+		if (flush_buf) {
+			nwpower_send_to_user(NW_POWER_REPORT_BLACK_REJECT,
+					     (char *)flush_buf,
+					     sizeof(blacklist_reject_uid));
+			kfree(flush_buf);
+		}
+		if (matched) {
+			printk("[oplus_netcontroller] blacklist reject, stamp=%ld, is_input=%d, uid=%u",
+			       now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000, is_input, uid);
+			return true;
 		}
 		return false;
 	}
@@ -229,18 +265,26 @@ extern bool oplus_check_socket_in_blacklist(int is_input, struct socket *sock) {
 
 static int nwpower_set_blacklist_uids(struct nlmsghdr *nlh) {
 	u32 *data;
-	int i = 0;
+	u32 i;
+	u32 max_entries;
+	u32 len;
+
+	if (!nlh || nlh->nlmsg_len < nlmsg_msg_size(sizeof(u32)))
+		return -EINVAL;
+
 	data = (u32 *)NLMSG_DATA(nlh);
-	memset(blacklist_uid, 0x0, KERNEL_UNSL_APP_WAKEUP_LEN * sizeof(u32));
-	blacklist_len = *data;
-	for (i = 0; i < blacklist_len; i++) {
-		if (i >= KERNEL_UNSL_APP_WAKEUP_LEN) {
-			printk("[oplus_netcontroller] uids length exceed the limit!");
-			break;
-		} else {
-			blacklist_uid[i] = *(data + i + 1);
-		}
-	}
+	max_entries = (nlmsg_len(nlh) - sizeof(u32)) / sizeof(u32);
+	len = min_t(u32, *data, min_t(u32, max_entries, KERNEL_UNSL_APP_WAKEUP_LEN));
+	if (*data > KERNEL_UNSL_APP_WAKEUP_LEN)
+		printk("[oplus_netcontroller] uids length exceed the limit!");
+
+	spin_lock_bh(&nwpower_blacklist_lock);
+	memset(blacklist_uid, 0x0, sizeof(blacklist_uid));
+	for (i = 0; i < len; i++)
+		blacklist_uid[i] = data[i + 1];
+	WRITE_ONCE(blacklist_len, len);
+	spin_unlock_bh(&nwpower_blacklist_lock);
+
 	return 0;
 }
 
@@ -831,20 +875,15 @@ static void print_ipa_wakeup(bool unsl, struct tcp_hook_struct *ptcp_in, struct 
 static void reset_count(u64 qrtr[][4], struct tcp_hook_struct *ptcp_in, struct tcp_hook_struct *ptcp_out,
 	struct tcp_hook_struct *ptcp_re_in, struct tcp_hook_struct *ptcp_re_out, u64 wakeup[OPLUS_NW_WAKEUP_SUM]) {
 	int i;
-	int j;
 	for (i = 0; i < OPLUS_MAX_QRTR_SERVICE_LEN; ++i) {
 		if (qrtr[i][0] == 1) {
 			qrtr[i][3] = 0;
 		}
 	}
-	for (i = 0; i < OPLUS_MAX_RECORD_IP_LEN; ++i) {
-		for (j = 0; j < 3; ++j) {
-			ptcp_in->set[i+j] = 0;
-			ptcp_out->set[i+j] = 0;
-			ptcp_re_in->set[i+j] = 0;
-			ptcp_re_out->set[i+j] = 0;
-		}
-	}
+	memset(ptcp_in->set, 0, sizeof(ptcp_in->set));
+	memset(ptcp_out->set, 0, sizeof(ptcp_out->set));
+	memset(ptcp_re_in->set, 0, sizeof(ptcp_re_in->set));
+	memset(ptcp_re_out->set, 0, sizeof(ptcp_re_out->set));
 	for (i = 0; i < OPLUS_NW_WAKEUP_SUM; ++i) {
 		wakeup[i] = 0;
 	}
