@@ -1644,7 +1644,7 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 		val->intval = smblib_get_fastcharge_mode(chg);
 		break;
 	case POWER_SUPPLY_PROP_PD_AUTHENTICATION:
-		val->intval = 1;
+		val->intval = chg->pd_verifed;
 		break;
 	case POWER_SUPPLY_PROP_ADAPTER_CC_MODE:
 		val->intval = chg->adapter_cc_mode;
@@ -1788,12 +1788,12 @@ static int smb5_usb_set_prop(struct power_supply *psy,
 		smblib_set_prop_usb_voltage_max_limit(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_PD_AUTHENTICATION:
-		chg->pd_verifed = val->intval;
+		chg->pd_verifed = !!val->intval;
 		pr_err("set pd_verifed =%d\n", chg->pd_verifed );
 		/*if set pd authentication auto set fastcharge mode*/
 		/*do not break here*/
 	case POWER_SUPPLY_PROP_FASTCHARGE_MODE:
-		rc = smblib_set_fastcharge_mode(chg, val->intval);
+		rc = smblib_set_fastcharge_mode(chg, !!val->intval);
 		power_supply_changed(chg->usb_psy);
 		schedule_delayed_work(&chg->report_soc_decimal_work,
 				msecs_to_jiffies(REPORT_SOC_DECIMAL_MS));
@@ -3502,18 +3502,11 @@ static ssize_t fast_charge_proc_read(struct file *file, char __user *buf,
 	int len;
 	int val = 0;
 
-	if (*ppos != 0)
-		return 0;
-
 	if (__smbchg)
 		val = smblib_get_force_fast_charge(__smbchg);
 
 	len = scnprintf(kbuf, sizeof(kbuf), "%d\n", val);
-	if (copy_to_user(buf, kbuf, len))
-		return -EFAULT;
-
-	*ppos += len;
-	return len;
+	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
 }
 
 static ssize_t fast_charge_proc_write(struct file *file, const char __user *buf,

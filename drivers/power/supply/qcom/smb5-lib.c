@@ -3959,8 +3959,8 @@ static void smblib_reg_work(struct work_struct *work)
 					POWER_SUPPLY_PROP_TEMP, &bval))
 				b_temp = bval.intval;
 
-			/* Safety guard: leave bypass at SOC <= 15% or batt > 48C */
-			if ((b_soc >= 0 && b_soc <= 15) || b_temp > 480) {
+			/* Safety guard: leave bypass only at critically low SOC <= 15% */
+			if (b_soc >= 0 && b_soc <= 15) {
 				pr_warn("SMB5: bypass safety guard (SOC=%d%%, temp=%d), disabling\n",
 					b_soc, b_temp);
 				smblib_set_bypass(chg, false);
@@ -5584,6 +5584,11 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 	int icl = 0;
 	if (chg->is_qc_class_a && !chg->qc3_raise_done)
 		icl = MAIN_ICL_MIN;
+
+	if (chg->bypass_active) {
+		val->intval = false;
+		return 0;
+	}
 
 	if (chg->ext_bbc) {
 		rc = smblib_get_prop_from_bbc(chg,
@@ -9790,6 +9795,12 @@ static void typec_src_removal(struct smb_charger *chg)
 	cancel_delayed_work_sync(&chg->pl_enable_work);
 	cancel_delayed_work_sync(&chg->raise_qc3_vbus_work);
 	cancel_delayed_work_sync(&chg->check_init_boot);
+
+	/* reset bypass charging */
+	if (chg->bypass_active) {
+		pr_info("SMB5: charger unplugged, resetting bypass charging\n");
+		smblib_set_bypass(chg, false);
+	}
 
 	/* reset input current limit voters */
 	vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true,
