@@ -1280,13 +1280,18 @@ void kgsl_set_performance_mode(bool enable)
 
 	if (enable) {
 		if (pwr->num_pwrlevels >= 2)
-			pwr->min_pwrlevel = min_t(unsigned int, 1, pwr->num_pwrlevels - 2);
-		pwr->interval_timeout = 200;
+			pwr->min_pwrlevel = clamp_t(unsigned int, 1,
+						    pwr->max_pwrlevel,
+						    pwr->num_pwrlevels - 2);
+		pwr->interval_timeout = msecs_to_jiffies(200);
 		if (adreno_dev)
 			clear_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
 	} else {
-		pwr->min_pwrlevel = pwr->num_pwrlevels - 2;
-		pwr->interval_timeout = 80;
+		if (pwr->num_pwrlevels >= 2)
+			pwr->min_pwrlevel = max_t(unsigned int,
+						  pwr->num_pwrlevels - 2,
+						  pwr->max_pwrlevel);
+		pwr->interval_timeout = msecs_to_jiffies(80);
 		if (adreno_dev)
 			set_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
 	}
