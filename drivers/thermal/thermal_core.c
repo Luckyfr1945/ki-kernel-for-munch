@@ -72,6 +72,7 @@ struct screen_monitor sm;
 
 struct usb_monitor {
 	struct notifier_block psy_notifier;
+	struct work_struct usb_online_work;
 	int usb_online;
 };
 
@@ -2184,16 +2185,11 @@ static int screen_state_for_thermal_callback(struct notifier_block *nb,
 }
 #endif
 
-static int usb_online_callback(struct notifier_block *nb,
-		unsigned long val, void *data)
+static void usb_online_work_fn(struct work_struct *work)
 {
 	static struct power_supply *usb_psy;
-	struct power_supply *psy = data;
 	union power_supply_propval ret = {0,};
 	int err = 0;
-
-	if (strcmp(psy->desc->name, "usb"))
-		return NOTIFY_OK;
 
 	if (!usb_psy)
 		usb_psy = power_supply_get_by_name("usb");
@@ -2202,13 +2198,25 @@ static int usb_online_callback(struct notifier_block *nb,
 		err = power_supply_get_property(usb_psy,
 				POWER_SUPPLY_PROP_ONLINE, &ret);
 		if (err) {
-			pr_err("usb online read error:%d\n",err);
-			return err;
+			pr_err("usb online read error:%d\n", err);
+			return;
 		}
 		usb_state.usb_online = ret.intval;
 
 		sysfs_notify(&thermal_message_dev.kobj, NULL, "usb_online");
 	}
+}
+
+static int usb_online_callback(struct notifier_block *nb,
+		unsigned long val, void *data)
+{
+	struct power_supply *psy = data;
+
+	if (!psy || !psy->desc || strcmp(psy->desc->name, "usb"))
+		return NOTIFY_OK;
+
+	/* power_supply_notifier is atomic (RCU); defer sleeping calls to workqueue */
+	schedule_work(&usb_state.usb_online_work);
 
 	return NOTIFY_OK;
 }
@@ -2260,6 +2268,7 @@ static int __init thermal_init(void)
 		pr_warn("Thermal: register screen state callback failed\n");
 #endif
 
+	INIT_WORK(&usb_state.usb_online_work, usb_online_work_fn);
 	usb_state.psy_notifier.notifier_call = usb_online_callback;
 	result = power_supply_reg_notifier(&usb_state.psy_notifier);
 	if (result < 0) {
