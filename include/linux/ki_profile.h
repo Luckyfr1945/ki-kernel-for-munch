@@ -23,6 +23,9 @@ int ki_cpufreq_reset_idle_floors(int mode);
 int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int max_freq);
 unsigned int ki_cpufreq_get_max(unsigned int cpu);
 int ki_get_active_profile(void);
+bool ki_wifi_low_latency_enabled(void);
+int ki_wifi_low_latency_register_cb(void (*cb)(bool enable));
+void ki_wifi_low_latency_unregister_cb(void (*cb)(bool enable));
 
 #ifdef CONFIG_CPU_BOOST
 void cpu_boost_set_input_sched_boost(unsigned int type, unsigned int hold_ms);

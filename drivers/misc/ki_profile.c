@@ -54,6 +54,10 @@ EXPORT_SYMBOL_GPL(ki_get_active_profile);
 #define KI_SCREEN_OFF_DELAY_MS	5000
 static bool ki_screen_off_battery = false;
 static int ki_user_thermal_throttle = -1; /* -1 = follow profile, 0 = disabled, 1 = enabled */
+static int ki_user_wifi_low_latency = -1; /* -1 = auto (Performance + screen on), 0 = off, 1 = always on while screen on */
+static bool ki_wifi_low_latency_active;
+static DEFINE_MUTEX(ki_wifi_cb_mutex);
+static void (*ki_wifi_ll_cb)(bool enable);
 static bool ki_screen_on = true;
 static bool ki_battery_armed;
 static struct delayed_work ki_screen_work;
@@ -329,7 +333,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	/*
 	 * Balanced (Daily Driver - v1.3 Adem Anyem & Smooth 120Hz Efficiency):
 	 * Restored v1.3 thermal comfort and battery efficiency with butter-smooth 120Hz UI.
-	 * Tasks balanced on Silver cluster (up_migrate = 95/85, grp = 95/85) so casual
+	 * Tasks balanced on Silver cluster (up_migrate = 92/82, grp = 92/82) so casual
 	 * multitasking (WhatsApp, YouTube, TikTok, Maps) stays on cool LITTLE cores.
 	 * Down-rate hold 1000us (1ms) quickly recovers 300MHz idle floor when touch stops,
 	 * eliminating thermal accumulation and excessive active battery drain.
@@ -337,25 +341,25 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	 * ensuring Prime core only wakes on heavy sustained load.
 	 * Valid SM8250 OPP frequencies:
 	 *   - Silver: hispeed 1.17GHz, rtg_boost 1.17GHz, floor 0, max 1.80GHz (1804800)
-	 *   - Gold:   hispeed 1.47GHz, rtg_boost 1.47GHz, floor 0, max 2.05GHz (2054400)
+	 *   - Gold:   hispeed 1.47GHz, rtg_boost 1.47GHz, floor 0, max 2.15GHz (2150400)
 	 *   - Prime:  hispeed 1.61GHz, rtg_boost 1.61GHz, floor 0, max 2.36GHz (2361600)
 	 * Zero floor frequency (floor_freq = 0) enables full idle drop down to 300MHz.
 	 * Zero iowait boost (iowait_boost_max = 0) prevents background streaming/downloads from spiking clocks.
-	 * Capping Gold to 2.05GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
+	 * Capping Gold to 2.15GHz and Prime to 2.36GHz chops off high-voltage thermal walls.
 	 * Touch sched boost is kept off in Balanced (same as stock/v1.3) to maximize battery life.
 	 * Swappiness is not hardcoded here to allow user / ROM customization via /proc/sys/vm/swappiness.
 	 */
 	[KI_PROFILE_BALANCED] = {
 		.cl = {
-			{ .up_us = 1000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 85, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1804800 },
-			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 85, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2054400 },
-			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 88, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
+			{ .up_us = 1000, .down_us = 1000, .hispeed_freq = 1171200, .hispeed_load = 82, .rtg_boost_freq = 1171200, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 1804800 },
+			{ .up_us = 2000, .down_us = 1000, .hispeed_freq = 1478400, .hispeed_load = 82, .rtg_boost_freq = 1478400, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2150400 },
+			{ .up_us = 4000, .down_us = 1000, .hispeed_freq = 1612800, .hispeed_load = 82, .rtg_boost_freq = 1612800, .floor_freq = 0, .iowait_boost_max = 0, .max_freq = 2361600 },
 		},
 		.touch_sched_boost = 0,
 		.touch_boost_ms = 0,
 		.thermal_throttle = true,
-		.up_migrate = 95, .down_migrate = 85,
-		.grp_up_migrate = 95, .grp_down_migrate = 85,
+		.up_migrate = 92, .down_migrate = 82,
+		.grp_up_migrate = 92, .grp_down_migrate = 82,
 		.window_stats_policy = 2,
 		.wmark_scale = 12, .vfs_cache_pressure = 70,
 	},
@@ -400,6 +404,64 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 	},
 };
 
+bool ki_wifi_low_latency_enabled(void)
+{
+	return READ_ONCE(ki_wifi_low_latency_active);
+}
+EXPORT_SYMBOL_GPL(ki_wifi_low_latency_enabled);
+
+static bool ki_wifi_should_enable(int mode, bool screen_on)
+{
+	int user = READ_ONCE(ki_user_wifi_low_latency);
+
+	if (!screen_on)
+		return false;
+	if (user >= 0)
+		return user != 0;
+	return mode == KI_PROFILE_PERFORMANCE;
+}
+
+static void ki_wifi_sync_state(int mode, bool screen_on)
+{
+	bool want = ki_wifi_should_enable(mode, screen_on);
+	void (*cb)(bool enable);
+
+	if (want == READ_ONCE(ki_wifi_low_latency_active))
+		return;
+
+	WRITE_ONCE(ki_wifi_low_latency_active, want);
+	mutex_lock(&ki_wifi_cb_mutex);
+	cb = ki_wifi_ll_cb;
+	if (cb)
+		cb(want);
+	mutex_unlock(&ki_wifi_cb_mutex);
+}
+
+int ki_wifi_low_latency_register_cb(void (*cb)(bool enable))
+{
+	bool cur;
+
+	if (!cb)
+		return -EINVAL;
+
+	mutex_lock(&ki_wifi_cb_mutex);
+	ki_wifi_ll_cb = cb;
+	cur = READ_ONCE(ki_wifi_low_latency_active);
+	cb(cur);
+	mutex_unlock(&ki_wifi_cb_mutex);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ki_wifi_low_latency_register_cb);
+
+void ki_wifi_low_latency_unregister_cb(void (*cb)(bool enable))
+{
+	mutex_lock(&ki_wifi_cb_mutex);
+	if (ki_wifi_ll_cb == cb)
+		ki_wifi_ll_cb = NULL;
+	mutex_unlock(&ki_wifi_cb_mutex);
+}
+EXPORT_SYMBOL_GPL(ki_wifi_low_latency_unregister_cb);
+
 static bool ki_gpu_perf_applied;	/* protected by ki_profile_mutex */
 
 static unsigned int ki_target_max(int i, int mode)
@@ -420,6 +482,8 @@ static unsigned int ki_target_max(int i, int mode)
 		return user;
 	return cap;
 }
+
+static bool ki_in_boot_settle;		/* protected by ki_profile_mutex */
 
 static int apply_ki_profile(int mode, bool force)
 {
@@ -509,6 +573,8 @@ static int apply_ki_profile(int mode, bool force)
 	else
 		cancel_delayed_work(&ki_guard_work);
 
+	ki_wifi_sync_state(mode, screen_on);
+
 	/*
 	 * Update VM watermarks & idle floors only on explicit force switch (boot or user sysfs),
 	 * never during rapid screen on/off to prevent zone lock contention & SoD.
@@ -528,7 +594,8 @@ static int apply_ki_profile(int mode, bool force)
 		watermark_scale_factor = ut->wmark_scale;
 		watermark_boost_factor = 0;
 		sysctl_compact_unevictable_allowed = 0;
-		sysctl_vfs_cache_pressure = ut->vfs_cache_pressure;
+		if (!ki_in_boot_settle || sysctl_vfs_cache_pressure == 100)
+			sysctl_vfs_cache_pressure = ut->vfs_cache_pressure;
 		setup_per_zone_wmarks();
 	}
 
@@ -568,10 +635,19 @@ static int ki_apply_effective(bool force)
 	int mode = ki_effective_mode();
 	int ret;
 	bool screen_on = READ_ONCE(ki_screen_on);
+	bool want_thermal_throttle;
+	int user_throt = READ_ONCE(ki_user_thermal_throttle);
+
+	if (user_throt >= 0)
+		want_thermal_throttle = (user_throt != 0) || !screen_on;
+	else
+		want_thermal_throttle = ki_tunes[mode].thermal_throttle || !screen_on;
 
 	force |= ki_force_pending;
 	if (!force && !ki_apply_incomplete && mode == READ_ONCE(ki_active_mode) &&
 	    (ki_tunes[mode].gpu_perf && screen_on) == ki_gpu_perf_applied &&
+	    ki_wifi_should_enable(mode, screen_on) == READ_ONCE(ki_wifi_low_latency_active) &&
+	    want_thermal_throttle == READ_ONCE(ki_thermal_throttle_enabled) &&
 	    !READ_ONCE(ki_guard_parked))
 		return 0;
 
@@ -861,6 +937,41 @@ static ssize_t thermal_throttle_store(struct kobject *kobj, struct kobj_attribut
 	return count;
 }
 
+static ssize_t wifi_low_latency_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", READ_ONCE(ki_user_wifi_low_latency));
+}
+
+static ssize_t wifi_low_latency_store(struct kobject *kobj,
+				      struct kobj_attribute *attr,
+				      const char *buf, size_t count)
+{
+	int val;
+	char *trimmed;
+	char kbuf[16];
+
+	if (count == 0 || count >= sizeof(kbuf))
+		return -EINVAL;
+	memcpy(kbuf, buf, count);
+	kbuf[count] = '\0';
+	trimmed = strim(kbuf);
+
+	if (!strcasecmp(trimmed, "auto"))
+		val = -1;
+	else if (kstrtoint(trimmed, 10, &val) || val < -1 || val > 1)
+		return -EINVAL;
+
+	mutex_lock(&ki_profile_mutex);
+	WRITE_ONCE(ki_user_wifi_low_latency, val);
+	ki_wifi_sync_state(ki_effective_mode(), READ_ONCE(ki_screen_on));
+	mutex_unlock(&ki_profile_mutex);
+
+	pr_info("ki_profile: wifi_low_latency set to %d (active=%d)\n",
+		val, ki_wifi_low_latency_enabled());
+	return count;
+}
+
 static ssize_t ki_max_freq_store(int i, const char *buf, size_t count)
 {
 	unsigned int val;
@@ -921,6 +1032,7 @@ static struct kobj_attribute mode_attr = __ATTR_RW(mode);
 static struct kobj_attribute current_profile_attr = __ATTR_RO(current_profile);
 static struct kobj_attribute available_modes_attr = __ATTR_RO(available_modes);
 static struct kobj_attribute thermal_throttle_attr = __ATTR_RW(thermal_throttle);
+static struct kobj_attribute wifi_low_latency_attr = __ATTR_RW(wifi_low_latency);
 static struct kobj_attribute active_profile_attr = __ATTR_RO(active_profile);
 static struct kobj_attribute screen_off_battery_attr = __ATTR_RW(screen_off_battery);
 static struct kobj_attribute max_freq_silver_attr = __ATTR_RW(max_freq_silver);
@@ -1011,6 +1123,7 @@ static struct attribute *ki_profile_attrs[] = {
 	&current_profile_attr.attr,
 	&available_modes_attr.attr,
 	&thermal_throttle_attr.attr,
+	&wifi_low_latency_attr.attr,
 	&active_profile_attr.attr,
 	&screen_off_battery_attr.attr,
 	&max_freq_silver_attr.attr,
@@ -1071,7 +1184,9 @@ static void ki_profile_delayed_work_fn(struct work_struct *work)
 	int err;
 
 	mutex_lock(&ki_profile_mutex);
+	ki_in_boot_settle = true;
 	err = ki_apply_effective(true);
+	ki_in_boot_settle = false;
 	mutex_unlock(&ki_profile_mutex);
 
 	if (err && boot_settle_retries < 6) {
