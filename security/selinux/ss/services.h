@@ -30,6 +30,9 @@ struct selinux_ss {
 	u32 latest_granting;
 	struct selinux_map map;
 	struct page *status_page;
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+	struct page *spoof_status_page;
+#endif
 	struct mutex status_lock;
 } __randomize_layout;
 

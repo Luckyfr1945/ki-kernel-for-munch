@@ -31,7 +31,7 @@
 #include <linux/uaccess.h>
 #include <linux/kobject.h>
 #include <linux/ctype.h>
-#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_E404_ATTRIBUTES)
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT) || defined(CONFIG_E404_ATTRIBUTES)
 #include <linux/e404_attributes.h>
 #endif
 
@@ -122,6 +122,16 @@ static void selinux_fs_info_free(struct super_block *sb)
 #define SEL_INO_MASK			0x00ffffff
 
 #define TMPBUFLEN	12
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+static inline bool sel_should_spoof_enforce(void)
+{
+	if (early_rom_type != 3)
+		return false;
+
+	return current_uid().val >= 10000 || strstr(current->comm, ".gms") != NULL;
+}
+#endif
+
 static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 				size_t count, loff_t *ppos)
 {
@@ -129,19 +139,11 @@ static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 	char tmpbuf[TMPBUFLEN];
 	ssize_t length;
 #if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
-	if (early_rom_type == 3) {
-		bool hide = false;
-
-		if (current->cred->uid.val >= 10000)
-			hide = true;
-		else if (strstr(current->comm, ".gms") != NULL)
-			hide = true;
-
-		length = scnprintf(tmpbuf, TMPBUFLEN, "%d", hide ? 1 : 0);
-	} else {
+	if (sel_should_spoof_enforce())
+		length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 1);
+	else
 		length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
 				   enforcing_enabled(fsi->state));
-	}
 #else
 	length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
 			   enforcing_enabled(fsi->state));
@@ -246,7 +248,16 @@ static const struct file_operations sel_handle_unknown_ops = {
 static int sel_open_handle_status(struct inode *inode, struct file *filp)
 {
 	struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
-	struct page    *status = selinux_kernel_status_page(fsi->state);
+	struct page    *status;
+
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+	if (sel_should_spoof_enforce())
+		status = selinux_kernel_spoof_status_page(fsi->state);
+	else
+		status = selinux_kernel_status_page(fsi->state);
+#else
+	status = selinux_kernel_status_page(fsi->state);
+#endif
 
 	if (!status)
 		return -ENOMEM;

@@ -74,6 +74,45 @@ struct page *selinux_kernel_status_page(struct selinux_state *state)
 	return result;
 }
 
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+/*
+ * Shadow status page for OPlus ports: mirrors policyload/deny_unknown from the
+ * real status page while always reporting enforcing = 1 to spoofed callers.
+ */
+struct page *selinux_kernel_spoof_status_page(struct selinux_state *state)
+{
+	struct selinux_kernel_status *status;
+	struct selinux_kernel_status *real_status;
+	struct page *result = NULL;
+
+	mutex_lock(&state->ss->status_lock);
+	if (!state->ss->spoof_status_page) {
+		state->ss->spoof_status_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+
+		if (state->ss->spoof_status_page) {
+			status = page_address(state->ss->spoof_status_page);
+
+			status->version = SELINUX_KERNEL_STATUS_VERSION;
+			status->enforcing = 1;
+			if (state->ss->status_page) {
+				real_status = page_address(state->ss->status_page);
+				status->sequence = real_status->sequence & ~1U;
+				status->policyload = real_status->policyload;
+				status->deny_unknown = real_status->deny_unknown;
+			} else {
+				status->sequence = 0;
+				status->policyload = 0;
+				status->deny_unknown = !security_get_allow_unknown(state);
+			}
+		}
+	}
+	result = state->ss->spoof_status_page;
+	mutex_unlock(&state->ss->status_lock);
+
+	return result;
+}
+#endif
+
 /*
  * selinux_status_update_setenforce
  *
@@ -109,6 +148,7 @@ void selinux_status_update_policyload(struct selinux_state *state,
 				      int seqno)
 {
 	struct selinux_kernel_status   *status;
+	int deny_unknown = !security_get_allow_unknown(state);
 
 	mutex_lock(&state->ss->status_lock);
 	if (state->ss->status_page) {
@@ -118,10 +158,24 @@ void selinux_status_update_policyload(struct selinux_state *state,
 		smp_wmb();
 
 		status->policyload = seqno;
-		status->deny_unknown = !security_get_allow_unknown(state);
+		status->deny_unknown = deny_unknown;
 
 		smp_wmb();
 		status->sequence++;
 	}
+#if defined(CONFIG_E404_OPLUS) || defined(CONFIG_OPLUS_PORT)
+	if (state->ss->spoof_status_page) {
+		status = page_address(state->ss->spoof_status_page);
+
+		status->sequence++;
+		smp_wmb();
+
+		status->policyload = seqno;
+		status->deny_unknown = deny_unknown;
+
+		smp_wmb();
+		status->sequence++;
+	}
+#endif
 	mutex_unlock(&state->ss->status_lock);
 }
