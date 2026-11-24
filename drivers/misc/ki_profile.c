@@ -61,6 +61,7 @@ static void (*ki_wifi_ll_cb)(bool enable);
 static bool ki_screen_on = true;
 static bool ki_battery_armed;
 static struct delayed_work ki_screen_work;
+static struct work_struct ki_screen_off_work;
 
 static const char * const profile_names[] = {
 	[KI_PROFILE_BATTERY] = "battery",
@@ -406,7 +407,7 @@ static const struct ki_profile_tune ki_tunes[KI_PROFILE_MAX] = {
 
 bool ki_wifi_low_latency_enabled(void)
 {
-	return READ_ONCE(ki_wifi_low_latency_active);
+	return READ_ONCE(ki_wifi_low_latency_active) && READ_ONCE(ki_screen_on);
 }
 EXPORT_SYMBOL_GPL(ki_wifi_low_latency_enabled);
 
@@ -657,6 +658,38 @@ static int ki_apply_effective(bool force)
 	return ret;
 }
 
+/* Caller must hold ki_profile_mutex. Runs without touching cpufreq policies. */
+static void ki_teardown_screen_off_locked(void)
+{
+	unsigned long flags;
+
+	if (READ_ONCE(ki_screen_on))
+		return;
+
+	if (ki_gpu_perf_applied) {
+		kgsl_set_performance_mode(false);
+		ki_gpu_perf_applied = false;
+	}
+
+	spin_lock_irqsave(&ki_guard_lock, flags);
+	if (!READ_ONCE(ki_thermal_throttle_enabled) || ki_guard_tripped) {
+		WRITE_ONCE(ki_thermal_throttle_enabled, true);
+		ki_guard_tripped = false;
+		ki_guard_parked = false;
+	}
+	spin_unlock_irqrestore(&ki_guard_lock, flags);
+	cancel_delayed_work(&ki_guard_work);
+
+	ki_wifi_sync_state(ki_effective_mode(), false);
+}
+
+static void ki_screen_off_work_fn(struct work_struct *work)
+{
+	mutex_lock(&ki_profile_mutex);
+	ki_teardown_screen_off_locked();
+	mutex_unlock(&ki_profile_mutex);
+}
+
 static unsigned int ki_screen_retry;	/* touched by ki_screen_work_fn and reset on unblank */
 
 static void ki_screen_requeue(void)
@@ -683,6 +716,11 @@ static void ki_screen_work_fn(struct work_struct *work)
 	 * trapped in Battery profile.
 	 */
 	if (!cpu_online(0) || !cpu_online(4) || !cpu_online(7)) {
+		if (!READ_ONCE(ki_screen_on)) {
+			mutex_lock(&ki_profile_mutex);
+			ki_teardown_screen_off_locked();
+			mutex_unlock(&ki_profile_mutex);
+		}
 		ki_screen_requeue();
 		return;
 	}
@@ -744,6 +782,7 @@ static int ki_display_notifier_cb(struct notifier_block *nb,
 		if (READ_ONCE(ki_screen_on)) {
 			WRITE_ONCE(ki_battery_armed, false);
 			WRITE_ONCE(ki_screen_on, false);
+			queue_work(system_power_efficient_wq, &ki_screen_off_work);
 			mod_delayed_work(system_power_efficient_wq, &ki_screen_work,
 					 msecs_to_jiffies(KI_SCREEN_OFF_DELAY_MS));
 		}
@@ -1216,6 +1255,7 @@ static int __init ki_profile_init(void)
 	/* 1. Initialize all delayed work queues BEFORE creating sysfs */
 	INIT_DELAYED_WORK(&ki_guard_work, ki_guard_work_fn);
 	INIT_DELAYED_WORK(&ki_screen_work, ki_screen_work_fn);
+	INIT_WORK(&ki_screen_off_work, ki_screen_off_work_fn);
 	INIT_DELAYED_WORK(&ki_psy_work, ki_psy_work_fn);
 	INIT_DELAYED_WORK(&ki_profile_delayed_work, ki_profile_delayed_work_fn);
 
