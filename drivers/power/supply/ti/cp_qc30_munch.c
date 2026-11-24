@@ -155,17 +155,17 @@ static struct power_supply *cp_get_wireless_psy(void)
 	return pm_state.wireless_psy;
 }
 
-static int cp_get_effective_fcc_val(pm_t pm_state)
+static int cp_get_effective_fcc_val(pm_t *state)
 {
 	int effective_fcc_val = 0;
 
-	if (!pm_state.fcc_votable)
-		pm_state.fcc_votable = find_votable("FCC");
+	if (!state->fcc_votable)
+		state->fcc_votable = find_votable("FCC");
 
-	if (!pm_state.fcc_votable)
+	if (!state->fcc_votable)
 		return -EINVAL;
 
-	effective_fcc_val = get_effective_result(pm_state.fcc_votable);
+	effective_fcc_val = get_effective_result(state->fcc_votable);
 	effective_fcc_val = effective_fcc_val / 1000;
 	pr_info("effective_fcc_val: %d\n", effective_fcc_val);
 	return effective_fcc_val;
@@ -239,7 +239,7 @@ static int qc3_set_bms_fastcharge_mode(bool enable)
 /* get thermal level from battery power supply property */
 static int qc3_get_batt_current_thermal_level(int *level)
 {
-	int ret, rc;
+	int ret;
 	struct power_supply *psy;
 	union power_supply_propval val = {
 		0,
@@ -252,15 +252,15 @@ static int qc3_get_batt_current_thermal_level(int *level)
 	ret = power_supply_get_property(
 		psy, POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &val);
 
-	if (rc < 0) {
-		pr_info("Couldn't get fastcharge mode:%d\n", rc);
-		return rc;
+	if (ret < 0) {
+		pr_info("Couldn't get fastcharge mode:%d\n", ret);
+		return ret;
 	}
 
 	pr_info("val.intval: %d\n", val.intval);
 	pm_state.thermal_l = val.intval;
 	*level = val.intval;
-	return rc;
+	return 0;
 }
 
 /* determine whether to disable cp according to jeita status */
@@ -669,7 +669,7 @@ static int cp_get_qc_pulse_cnt(void)
 
 static int cp_reset_vbus_volt(void)
 {
-	int ret;
+	int ret = 0;
 	int qc3p5_reset_vbus_retry = 0;
 	struct power_supply *psy;
 	union power_supply_propval val = {
@@ -690,6 +690,7 @@ static int cp_reset_vbus_volt(void)
 			       pm_state.bq2597x.vbus_volt);
 			if (qc3p5_reset_vbus_retry > 300) {
 				pr_err("Failed to reset qc3.5 adapter volt to 6.55v or less\n");
+				ret = -ETIMEDOUT;
 				break;
 			}
 		}
@@ -834,8 +835,8 @@ static int cp_flash2_charge(unsigned int port)
 {
 	static int ibus_limit, ibat_limit;
 	int thermal_level = 0;
-	uint16_t effective_fcc_val = cp_get_effective_fcc_val(pm_state);
-	uint16_t effective_ibus_val = cp_get_effective_fcc_val(pm_state) / 2;
+	uint16_t effective_fcc_val = cp_get_effective_fcc_val(&pm_state);
+	uint16_t effective_ibus_val = effective_fcc_val / 2;
 
 	qc3_get_batt_current_thermal_level(&thermal_level);
 	qc3_check_night_charging_enabled();
@@ -1216,7 +1217,7 @@ void cp_statemachine(unsigned int port)
 				pr_info("vbus:%d, retry_times:%d, tuning...\n",
 					pm_state.bq2597x.vbus_volt,
 					tune_vbus_retry);
-#ifdef CONFIG_CHARGER_LN8000
+#if defined(CONFIG_CHARGER_LN8000) || defined(CONFIG_CHARGER_LN8000_MUNCH)
 			} else if (pm_state.bq2597x.vbus_volt <
 				   (pm_state.bq2597x.vbat_volt * 2 +
 				    BUS_VOLT_INIT_UP - 50)) {
@@ -1480,7 +1481,8 @@ static void cp_workfunc(struct work_struct *work)
 				      msecs_to_jiffies(PM_WORK_TIME_500MS));
 	} else if (pm_state.usb_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5) {
 		schedule_delayed_work(&pm_state.qc3_pm_work,
-				      msecs_to_jiffies(PM_WORK_TIME_100MS));
+				      msecs_to_jiffies(pm_state.state == CP_STATE_SW_LOOP ?
+						       2000 : PM_WORK_TIME_100MS));
 	}
 	last_usb_type = pm_state.usb_type;
 }

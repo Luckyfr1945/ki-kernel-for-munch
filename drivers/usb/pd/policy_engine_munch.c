@@ -3654,6 +3654,7 @@ static void handle_disconnect(struct usbpd *pd)
 
 	pd->pps_found = false;
 	pd->pps_insert = false;
+	pd->fix_pdo_5v = false;
 	pd->is_support_2s = false;
 	pd->current_pr = PR_NONE;
 	pd->send_dr_swap = false;
@@ -5564,13 +5565,13 @@ static void usbpd_pdo_workfunc(struct work_struct *w)
 	int pps_max_watts = 0;
 	int pps_max_mwatt = 0;
 
+	pd->fix_pdo_5v = (pd->received_pdos[1] == 0);
+	if (pd->fix_pdo_5v)
+		usbpd_info(&pd->dev, "fixed pdo [2]= %d", pd->fix_pdo_5v);
+
 	for (i = 0; i < ARRAY_SIZE(pd->received_pdos); i++) {
 		u32 pdo = pd->received_pdos[i];
 
-		if (pd->received_pdos[1] == 0) {
-			pd->fix_pdo_5v = true;
-			usbpd_info(&pd->dev,"fixed pdo [2]= %d",pd->fix_pdo_5v);
-			}
 		if (pdo == 0)
 			break;
 

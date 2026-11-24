@@ -616,7 +616,8 @@ static void usbpd_pm_update_cp_status(struct usbpd_pm *pdpm)
 	if (!ret)
 		pdpm->cp.charge_enabled = val.intval;
 
-	if ((pm_config.cp_sec_enable) && (pdpm->cp_sec.charge_enabled))
+	if (pm_config.cp_sec_enable && pdpm->cp_sec_psy &&
+	    pdpm->cp_sec.charge_enabled)
 		ret = power_supply_get_property(
 			pdpm->cp_sec_psy, POWER_SUPPLY_PROP_TI_ALARM_STATUS,
 			&val);
@@ -681,7 +682,7 @@ static void usbpd_pm_update_cp_sec_status(struct usbpd_pm *pdpm)
 		pdpm->cp_sec.ibus_curr = val.intval;
 
 	ret = power_supply_get_property(pdpm->cp_sec_psy,
-					POWER_SUPPLY_PROP_CHARGE_ENABLED, &val);
+					POWER_SUPPLY_PROP_CHARGING_ENABLED, &val);
 	if (!ret)
 		pdpm->cp_sec.charge_enabled = val.intval;
 }
@@ -715,15 +716,16 @@ static int usbpd_pm_check_cp_bus_ovp(struct usbpd_pm *pdpm, bool enable)
 	usbpd_check_cp_sec_psy(pdpm);
 	usbpd_check_cp_psy(pdpm);
 
-	if (!pdpm->cp_sec_psy && !pdpm->cp_sec_psy)
+	if (!pdpm->cp_psy || (pm_config.cp_sec_enable && !pdpm->cp_sec_psy))
 		return -ENODEV;
 
 	val.intval = enable;
-	ret = power_supply_set_property(
-		pdpm->cp_sec_psy,
-		POWER_SUPPLY_PROP_TI_SET_BUS_PROTECTION_FOR_PD, &val);
-
-	msleep(10);
+	if (pdpm->cp_sec_psy) {
+		ret = power_supply_set_property(
+			pdpm->cp_sec_psy,
+			POWER_SUPPLY_PROP_TI_SET_BUS_PROTECTION_FOR_PD, &val);
+		msleep(10);
+	}
 
 	ret = power_supply_set_property(
 		pdpm->cp_psy, POWER_SUPPLY_PROP_TI_SET_BUS_PROTECTION_FOR_PD,
@@ -905,18 +907,31 @@ static void usbpd_pm_evaluate_src_caps(struct usbpd_pm *pdpm)
 		return;
 	}
 
-	pdpm->apdo_max_volt = pm_config.min_adapter_volt_required;
-	pdpm->apdo_max_curr = pm_config.min_adapter_curr_required;
+	{
+		u64 best_power = 0;
 
-	for (i = 0; i < PDO_MAX_NUM; i++) {
-		if (pdpm->pdo[i].type == PD_SRC_PDO_TYPE_AUGMENTED &&
-		    pdpm->pdo[i].pps && pdpm->pdo[i].pos) {
-			if (pdpm->pdo[i].max_volt_mv >= pdpm->apdo_max_volt &&
-			    pdpm->pdo[i].curr_ma >= pdpm->apdo_max_curr) {
-				pdpm->apdo_max_volt = min(pdpm->pdo[i].max_volt_mv, APDO_MAX_VOLT);
-				pdpm->apdo_max_curr = pdpm->pdo[i].curr_ma;
-				pdpm->apdo_selected_pdo = pdpm->pdo[i].pos;
-				pdpm->pps_supported = true;
+		pdpm->pps_supported = false;
+		pdpm->apdo_selected_pdo = 0;
+		pdpm->apdo_max_volt = pm_config.min_adapter_volt_required;
+		pdpm->apdo_max_curr = pm_config.min_adapter_curr_required;
+
+		for (i = 0; i < PDO_MAX_NUM; i++) {
+			if (pdpm->pdo[i].type == PD_SRC_PDO_TYPE_AUGMENTED &&
+			    pdpm->pdo[i].pps && pdpm->pdo[i].pos) {
+				if (pdpm->pdo[i].min_volt_mv <= APDO_MAX_VOLT &&
+				    pdpm->pdo[i].max_volt_mv >= pm_config.min_adapter_volt_required &&
+				    pdpm->pdo[i].curr_ma >= pm_config.min_adapter_curr_required) {
+					int eff_volt = min_t(int, pdpm->pdo[i].max_volt_mv, APDO_MAX_VOLT);
+					u64 power = (u64)eff_volt * pdpm->pdo[i].curr_ma;
+
+					if (!pdpm->pps_supported || power > best_power) {
+						best_power = power;
+						pdpm->apdo_max_volt = eff_volt;
+						pdpm->apdo_max_curr = pdpm->pdo[i].curr_ma;
+						pdpm->apdo_selected_pdo = pdpm->pdo[i].pos;
+						pdpm->pps_supported = true;
+					}
+				}
 			}
 		}
 	}
@@ -927,8 +942,7 @@ static void usbpd_pm_evaluate_src_caps(struct usbpd_pm *pdpm)
 			pdpm->apdo_max_curr);
 		if (pdpm->apdo_max_curr <= LOW_POWER_PPS_CURR_THR)
 			pdpm->apdo_max_curr = XIAOMI_LOW_POWER_PPS_CURR_MAX;
-		pval.intval = (pdpm->apdo_max_volt / 1000) *
-			      (pdpm->apdo_max_curr / 1000);
+		pval.intval = (pdpm->apdo_max_volt * pdpm->apdo_max_curr) / 1000000;
 		power_supply_set_property(pdpm->usb_psy,
 					  POWER_SUPPLY_PROP_APDO_MAX, &pval);
 	} else {
@@ -1276,11 +1290,11 @@ reg[%d-%d-%d-%d-%d],step[%d-%d-%d-%d-%d-%d-%d-%d],pmconfig[%d-%d-%d,%d-%d-%d-%d]
 	} else if (unsupport_pps_status) {
 		pr_err("unsupport pps charger.\n");
 		return PM_ALGO_RET_UNSUPPORT_PPSTA;
-	} else if (pm_config.cp_sec_enable) {
-		pdpm->master_ibus_below_critical_low_count = 0;
 	} else if (pdpm->sw.night_charging) {
 		pr_err("night charging enabled[%d]\n", pdpm->sw.night_charging);
 		return PM_ALGO_RET_NIGHT_CHARGING;
+	} else if (pm_config.cp_sec_enable) {
+		pdpm->master_ibus_below_critical_low_count = 0;
 	}
 
 	if (pdpm->cp.bms_vbat_mv > pm_config.bat_volt_lp_lmt - TAPER_VOL_HYS &&
@@ -1841,14 +1855,14 @@ static void usb_psy_change_work(struct work_struct *work)
 	 */
 	if ((pdpm->pd_active < POWER_SUPPLY_PPS_VERIFIED) &&
 	    (val.intval == POWER_SUPPLY_PD_PPS_ACTIVE)) {
+		union power_supply_propval auth_val = { .intval = 1 };
+
 		msleep(30);
+		power_supply_set_property(pdpm->usb_psy,
+					  POWER_SUPPLY_PROP_PD_AUTHENTICATION,
+					  &auth_val);
 		usbpd_pd_contact(pdpm, POWER_SUPPLY_PPS_VERIFIED);
-		if (pdpm->fcc_votable)
-			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
-	} else if (!pdpm->pd_active &&
-		   (val.intval == POWER_SUPPLY_PD_PPS_ACTIVE)) {
-		usbpd_pd_contact(pdpm, POWER_SUPPLY_PPS_VERIFIED);
-		if (pdpm->fcc_votable)
+		if (pdpm->fcc_votable && pdpm->pps_supported)
 			vote(pdpm->fcc_votable, NON_PPS_PD_FCC_VOTER, false, 0);
 	} else if (pdpm->pd_active && !val.intval) {
 		usbpd_pd_contact(pdpm, POWER_SUPPLY_PPS_INACTIVE);

@@ -1320,12 +1320,12 @@ reg[%d-%d-%d-%d-%d],step[%d-%d-%d-%d-%d-%d-%d-%d],pmconfig[%d-%d-%d,%d-%d-%d-%d]
 	} else if (unsupport_pps_status) {
 		pr_info("unsupport pps charger.\n");
 		return PM_ALGO_RET_UNSUPPORT_PPSTA;
-	} else if (pm_config.cp_sec_enable) {
-		pdpm->master_ibus_below_critical_low_count = 0;
 	} else if (pdpm->sw.night_charging) {
 		pr_info("night charging enabled[%d]\n",
 			pdpm->sw.night_charging);
 		return PM_ALGO_RET_NIGHT_CHARGING;
+	} else if (pm_config.cp_sec_enable) {
+		pdpm->master_ibus_below_critical_low_count = 0;
 	}
 
 	/* charge pump taper charge */
