@@ -365,6 +365,7 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     rm -rf out/
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     scripts/config --file out/.config --set-str LOCALVERSION "${local_version_date_str}"
+    scripts/config --file out/.config -d IKHEADERS
     apply_ksu_config
     apply_droidspaces_config
     make $MAKE_ARGS olddefconfig
@@ -416,6 +417,7 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
     rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/null || true
     make $MAKE_ARGS ${TARGET_DEVICE}_defconfig
     scripts/config --file out/.config --set-str LOCALVERSION "${local_version_date_str}"
+    scripts/config --file out/.config -d IKHEADERS
     apply_ksu_config
     apply_droidspaces_config
 
@@ -455,7 +457,8 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -d CORESIGHT \
         -d IPC_LOGGING \
         -d SCHEDSTATS \
-        -d DEBUG_INFO
+        -d DEBUG_INFO \
+        -d IKHEADERS
 
     make $MAKE_ARGS olddefconfig
     bash scripts/check-droidspaces-config.sh out/.config
@@ -501,41 +504,38 @@ fi
 # ------------------------------------------------------------
 echo ""
 echo ">>> Packaging AnyKernel3 Flashable Zip <<<"
-rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/dtb anykernel/dtb_oc anykernel/dtb_stock anykernel/dtbo.img 2>/dev/null
+rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/Image.xz anykernel/dtb anykernel/dtb_oc anykernel/dtb_stock anykernel/dtbo.img 2>/dev/null
+
+stage_kernel_image() {
+    local src="$1" dst="$2"
+    if command -v xz >/dev/null 2>&1; then
+        xz -6 --check=crc32 -T0 -c "$src" > "${dst}.xz"
+    else
+        cp "$src" "$dst"
+    fi
+}
 
 if [ "$TARGET_OS" == "aosp" ]; then
     mkdir -p anykernel/kernels/aosp/
-    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
-    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
+    stage_kernel_image build_artifacts/aosp/Image anykernel/kernels/aosp/Image
     cp build_artifacts/aosp/dtb_oc anykernel/dtb_oc
     cp build_artifacts/aosp/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/aosp/dtb anykernel/dtb
 elif [ "$TARGET_OS" == "miui" ]; then
     mkdir -p anykernel/kernels/miui/
-    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
+    stage_kernel_image build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
     cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
 elif [ "$TARGET_OS" == "coloros" ]; then
     mkdir -p anykernel/kernels/coloros/
-    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
-    cp build_artifacts/miui/Image anykernel/Image
+    stage_kernel_image build_artifacts/miui/Image anykernel/kernels/coloros/Image
     cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
     cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
 else
-    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/ anykernel/kernels/coloros/
-    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
-    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
-    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
-    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
+    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/
+    stage_kernel_image build_artifacts/aosp/Image anykernel/kernels/aosp/Image
+    stage_kernel_image build_artifacts/miui/Image anykernel/kernels/miui/Image
     cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
     cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
 fi
 
 # DO NOT include dtbo (preserve panel/touch drivers from ROM)
@@ -556,7 +556,7 @@ else
     ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
 fi
 
-zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
+zip -r9 -n .xz "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
 mkdir -p ../release
 cp -f "$ZIP_FILENAME" ../release/
 mkdir -p ../../release 2>/dev/null || true

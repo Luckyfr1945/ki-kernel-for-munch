@@ -155,7 +155,7 @@ jobs:
       - name: Install Dependencies & Cross Compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex zstd \
+          sudo apt-get install -y bc bison build-essential ccache curl flex zstd xz-utils \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             libssl-dev libelf-dev zip python3 python3-pip

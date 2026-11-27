@@ -51,8 +51,27 @@ ui_print "  |                                         |";
 ui_print "  ===========================================";
 ui_print " ";
 
+has_kernel() {
+    [ -f "$1/Image" ] || [ -f "$1/Image.xz" ];
+}
+
+stage_kernel() {
+    if [ -f "$1/Image.xz" ]; then
+        ui_print "  -> Decompressing kernel image...";
+        if command -v xzcat >/dev/null 2>&1; then
+            xzcat "$1/Image.xz" > "$AKHOME/Image" || abort "  ! Failed to decompress $1/Image.xz";
+        elif [ -x "$AKHOME/tools/busybox" ]; then
+            "$AKHOME/tools/busybox" xzcat "$1/Image.xz" > "$AKHOME/Image" || abort "  ! Failed to decompress $1/Image.xz";
+        else
+            abort "  ! xzcat not available to decompress $1/Image.xz";
+        fi;
+    elif [ -f "$1/Image" ]; then
+        [ "$1" != "$AKHOME" ] && cp -f "$1/Image" "$AKHOME/Image";
+    fi;
+}
+
 # Pick kernel Image (Advanced Multi-Stage ROM Detection)
-if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; then
+if has_kernel "$AKHOME/kernels/miui" && has_kernel "$AKHOME/kernels/aosp"; then
     IS_MIUI=0;
     IS_AOSP=0;
     IS_OPLUS=0;
@@ -306,11 +325,11 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
         ui_print "  -> Kernel Target: OEM Display variant (Xiaomi DSI timings)";
         ui_print "  -> Stub Drivers : OPlus Watchdog & Daemons Bypass active";
         rom_arg="rom_port";
-        if [ -f "$AKHOME/kernels/coloros/Image" ]; then
-            cp -f "$AKHOME/kernels/coloros/Image" "$AKHOME/Image";
+        if has_kernel "$AKHOME/kernels/coloros"; then
+            stage_kernel "$AKHOME/kernels/coloros";
             [ -f "$AKHOME/kernels/coloros/dtb" ] && cp -f "$AKHOME/kernels/coloros/dtb" "$AKHOME/dtb_vendor";
         else
-            cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+            stage_kernel "$AKHOME/kernels/miui";
             [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
         fi;
     elif [ "$IS_MIUI" -eq 1 ] && [ "$IS_AOSP" -eq 0 ]; then
@@ -321,7 +340,7 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             ui_print "  -> ROM Detected : ${ROM_TYPE:-Xiaomi MIUI / HyperOS}";
         fi;
         ui_print "  -> Kernel Target: MIUI / HyperOS";
-        cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+        stage_kernel "$AKHOME/kernels/miui";
         [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
     else
         rom_arg="rom_aosp";
@@ -331,34 +350,35 @@ if [ -f "$AKHOME/kernels/miui/Image" ] && [ -f "$AKHOME/kernels/aosp/Image" ]; t
             ui_print "  -> ROM Detected : ${ROM_TYPE:-AOSP / Custom ROM}";
         fi;
         ui_print "  -> Kernel Target: AOSP";
-        cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
+        stage_kernel "$AKHOME/kernels/aosp";
         [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
     fi;
     ui_print "--------------------------------------";
-elif [ -f "$AKHOME/kernels/coloros/Image" ]; then
+elif has_kernel "$AKHOME/kernels/coloros"; then
     rom_arg="rom_port";
     ui_print "--------------------------------------";
     ui_print "  -> Kernel Target: ColorOS / OxygenOS / RealmeUI";
     ui_print "  -> Compatibility: Universal OPlus Port Mode";
     ui_print "--------------------------------------";
-    cp -f "$AKHOME/kernels/coloros/Image" "$AKHOME/Image";
+    stage_kernel "$AKHOME/kernels/coloros";
     [ -f "$AKHOME/kernels/coloros/dtb" ] && cp -f "$AKHOME/kernels/coloros/dtb" "$AKHOME/dtb_vendor";
-elif [ -f "$AKHOME/kernels/miui/Image" ]; then
+elif has_kernel "$AKHOME/kernels/miui"; then
     rom_arg="rom_oem";
     ui_print "  -> Target: MIUI / HyperOS";
-    cp -f "$AKHOME/kernels/miui/Image" "$AKHOME/Image";
+    stage_kernel "$AKHOME/kernels/miui";
     [ -f "$AKHOME/kernels/miui/dtb" ] && cp -f "$AKHOME/kernels/miui/dtb" "$AKHOME/dtb_vendor";
-elif [ -f "$AKHOME/kernels/aosp/Image" ]; then
+elif has_kernel "$AKHOME/kernels/aosp"; then
     rom_arg="rom_aosp";
     ui_print "  -> Target: AOSP";
-    cp -f "$AKHOME/kernels/aosp/Image" "$AKHOME/Image";
+    stage_kernel "$AKHOME/kernels/aosp";
     [ -f "$AKHOME/kernels/aosp/dtb" ] && cp -f "$AKHOME/kernels/aosp/dtb" "$AKHOME/dtb_vendor";
-elif [ -f "$AKHOME/kernels/Image" ]; then
+elif has_kernel "$AKHOME/kernels"; then
     rom_arg="rom_port";
-    cp -f "$AKHOME/kernels/Image" "$AKHOME/Image";
+    stage_kernel "$AKHOME/kernels";
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
-elif [ -f "$AKHOME/Image" ]; then
+elif has_kernel "$AKHOME"; then
     rom_arg="${rom_arg:-rom_port}";
+    stage_kernel "$AKHOME";
     [ -f "$AKHOME/kernels/dtb" ] && cp -f "$AKHOME/kernels/dtb" "$AKHOME/dtb_vendor";
 fi;
 
@@ -496,7 +516,7 @@ fi;
 rm -f "$AKHOME/dtb" "$AKHOME/dtbo.img" "$AKHOME/dtbo" 2>/dev/null;
 
 # Verify that target Image exists before proceeding with flash
-[ -f "$AKHOME/Image" ] || abort "  ! Kernel Image not found in $AKHOME (check kernels/ directory and zip integrity)";
+[ -s "$AKHOME/Image" ] || abort "  ! Kernel Image not found in $AKHOME (check kernels/ directory and zip integrity)";
 
 # 1. Flash Kernel Image to boot partition with e404 dynamic cmdline
 ui_print "- Flashing kernel (boot)...";
